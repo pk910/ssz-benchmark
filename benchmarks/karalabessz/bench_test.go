@@ -79,9 +79,10 @@ func BenchmarkBlockMainnet_Marshal(b *testing.B) {
 	if err := ssz.DecodeFromBytes(blockMainnetData, block); err != nil {
 		b.Fatal(err)
 	}
-	buf := make([]byte, ssz.Size(block))
+	var buf []byte
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
+		buf = make([]byte, ssz.SizeOnFork(block, ssz.ForkDeneb))
 		if err := ssz.EncodeToBytes(buf, block); err != nil {
 			b.Fatal(err)
 		}
@@ -131,9 +132,10 @@ func BenchmarkStateMainnet_Marshal(b *testing.B) {
 	if err := ssz.DecodeFromBytes(stateMainnetData, state); err != nil {
 		b.Fatal(err)
 	}
-	buf := make([]byte, ssz.Size(state))
+	var buf []byte
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
+		buf = make([]byte, ssz.SizeOnFork(state, ssz.ForkDeneb))
 		if err := ssz.EncodeToBytes(buf, state); err != nil {
 			b.Fatal(err)
 		}
