@@ -15,6 +15,12 @@ go mod download
 go test -run=^$ -bench=. -benchmem -count=5 > ../../fastssz_results.txt
 cd "$ROOT_DIR"
 
+echo "Running fastssz-v1 benchmarks..."
+cd benchmarks/fastssz-v1
+go mod download
+go test -run=^$ -bench=. -benchmem -count=5 > ../../fastssz-v1_results.txt
+cd "$ROOT_DIR"
+
 echo "Running dynamic-ssz benchmarks (codegen)..."
 cd benchmarks/dynamicssz
 go mod download
@@ -92,6 +98,7 @@ def format_bytes(b):
 
 # Parse all results
 fastssz = parse_benchmark_results('fastssz_results.txt')
+fastssz_v1 = parse_benchmark_results('fastssz-v1_results.txt')
 dynamicssz = parse_benchmark_results('dynamicssz_results.txt')
 dynamicssz_refl = parse_benchmark_results('dynamicssz_reflection_results.txt')
 karalabessz = parse_benchmark_results('karalabessz_results.txt')
@@ -123,7 +130,9 @@ Last updated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S UTC')}
 
 # Block Mainnet
 for op in ['Unmarshal', 'Marshal', 'HashTreeRoot']:
-    results_md += make_table_row('fastssz', fastssz, f'BenchmarkBlockMainnet_{op}', op)
+    results_md += make_table_row('fastssz (v1)', fastssz_v1, f'BenchmarkBlockMainnet_{op}', op)
+for op in ['Unmarshal', 'Marshal', 'HashTreeRoot']:
+    results_md += make_table_row('fastssz (v2)', fastssz, f'BenchmarkBlockMainnet_{op}', op)
 for op in ['Unmarshal', 'Marshal', 'HashTreeRoot']:
     results_md += make_table_row('dynamic-ssz (codegen)', dynamicssz, f'BenchmarkBlockMainnet_{op}', op)
 for op in ['Unmarshal', 'Marshal', 'HashTreeRoot']:
@@ -140,7 +149,9 @@ results_md += """
 
 # State Mainnet
 for op in ['Unmarshal', 'Marshal', 'HashTreeRoot']:
-    results_md += make_table_row('fastssz', fastssz, f'BenchmarkStateMainnet_{op}', op)
+    results_md += make_table_row('fastssz (v1)', fastssz_v1, f'BenchmarkStateMainnet_{op}', op)
+for op in ['Unmarshal', 'Marshal', 'HashTreeRoot']:
+    results_md += make_table_row('fastssz (v2)', fastssz, f'BenchmarkStateMainnet_{op}', op)
 for op in ['Unmarshal', 'Marshal', 'HashTreeRoot']:
     results_md += make_table_row('dynamic-ssz (codegen)', dynamicssz, f'BenchmarkStateMainnet_{op}', op)
 for op in ['Unmarshal', 'Marshal', 'HashTreeRoot']:
@@ -157,7 +168,7 @@ results_md += """
 
 # Block Minimal (karalabe-ssz doesn't support minimal)
 for op in ['Unmarshal', 'Marshal', 'HashTreeRoot']:
-    results_md += make_table_row('fastssz', fastssz, f'BenchmarkBlockMinimal_{op}', op)
+    results_md += make_table_row('fastssz (v2)', fastssz, f'BenchmarkBlockMinimal_{op}', op)
 for op in ['Unmarshal', 'Marshal', 'HashTreeRoot']:
     results_md += make_table_row('dynamic-ssz (codegen)', dynamicssz, f'BenchmarkBlockMinimal_{op}', op)
 for op in ['Unmarshal', 'Marshal', 'HashTreeRoot']:
@@ -172,7 +183,7 @@ results_md += """
 
 # State Minimal (karalabe-ssz doesn't support minimal)
 for op in ['Unmarshal', 'Marshal', 'HashTreeRoot']:
-    results_md += make_table_row('fastssz', fastssz, f'BenchmarkStateMinimal_{op}', op)
+    results_md += make_table_row('fastssz (v2)', fastssz, f'BenchmarkStateMinimal_{op}', op)
 for op in ['Unmarshal', 'Marshal', 'HashTreeRoot']:
     results_md += make_table_row('dynamic-ssz (codegen)', dynamicssz, f'BenchmarkStateMinimal_{op}', op)
 for op in ['Unmarshal', 'Marshal', 'HashTreeRoot']:
