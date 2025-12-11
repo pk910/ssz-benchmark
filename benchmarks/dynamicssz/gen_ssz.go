@@ -880,7 +880,7 @@ func (t *BeaconBlock) UnmarshalSSZDyn(ds sszutils.DynamicSpecs, buf []byte) (err
 		}
 		size2 = size2 * int(limit)
 	}
-	size1 := size2 + 96 // size expression for '*SyncAggregate'
+	size1 := size2+96 // size expression for '*SyncAggregate'
 	buflen := len(buf)
 	if buflen < 84 {
 		return sszutils.ErrUnexpectedEOF
@@ -3377,7 +3377,7 @@ func (t *BeaconState) UnmarshalSSZDyn(ds sszutils.DynamicSpecs, buf []byte) (err
 		}
 		size5 = size5 * int(limit)
 	}
-	size4 := size5 + 48 // size expression for '*SyncCommittee'
+	size4 := size5+48 // size expression for '*SyncCommittee'
 	exproffset := 0
 	buflen := len(buf)
 	if buflen < size1+size1+size2+size3+size4+size4+429 {
@@ -4794,3 +4794,4 @@ func (t *BeaconState) HashTreeRootWithDyn(ds sszutils.DynamicSpecs, hh sszutils.
 	hh.Merkleize(idx)
 	return nil
 }
+
