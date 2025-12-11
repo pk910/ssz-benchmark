@@ -1,6 +1,6 @@
 module github.com/pk910/ssz-benchmark/benchmarks/karalabessz
 
-go 1.22
+go 1.25.0
 
 require (
 	github.com/holiman/uint256 v1.3.1

@@ -1,6 +1,6 @@
 module github.com/pk910/ssz-benchmark/benchmarks/fastssz
 
-go 1.22
+go 1.25.0
 
 require (
 	github.com/ferranbt/fastssz v0.0.0-20251126100127-9cb620c1e0d0
