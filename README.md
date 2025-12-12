@@ -69,75 +69,87 @@ ssz-benchmark/
 <!-- BENCHMARK_RESULTS_START -->
 ## Benchmark Results
 
-Last updated: 2025-12-11 05:23:45 UTC
+Last updated: 2025-12-12 02:49:35 UTC
 
 ### Block Mainnet Benchmarks
 
 | Library | Operation | Time | Memory | Allocations |
 |---------|-----------|------|--------|-------------|
-| fastssz (v1) | Unmarshal | 718ns | 1.74KB | 13 |
-| fastssz (v1) | Marshal | 346ns | 1.41KB | 1 |
-| fastssz (v1) | HashTreeRoot | 12.21µs | 0B | 0 |
-| fastssz (v2) | Unmarshal | 1.37µs | 2.18KB | 32 |
-| fastssz (v2) | Marshal | 361ns | 1.41KB | 1 |
-| fastssz (v2) | HashTreeRoot | 12.22µs | 0B | 0 |
-| dynamic-ssz (codegen) | Unmarshal | 753ns | 1.74KB | 13 |
-| dynamic-ssz (codegen) | Marshal | 505ns | 1.41KB | 1 |
-| dynamic-ssz (codegen) | HashTreeRoot | 6.39µs | 80B | 3 |
-| dynamic-ssz (reflection) | Unmarshal | 3.18µs | 2.24KB | 34 |
-| dynamic-ssz (reflection) | Marshal | 1.65µs | 1.41KB | 1 |
-| dynamic-ssz (reflection) | HashTreeRoot | 7.73µs | 80B | 3 |
-| karalabe-ssz | Unmarshal | 1.35µs | 1.67KB | 13 |
-| karalabe-ssz | Marshal | 837ns | 1.41KB | 1 |
-| karalabe-ssz | HashTreeRoot | 11.07µs | 0B | 0 |
+| fastssz (v1) | Unmarshal | 1.59µs | 1.74KB | 13 |
+| fastssz (v1) | Marshal | 779ns | 1.41KB | 1 |
+| fastssz (v1) | HashTreeRoot | 6.46µs | 0B | 0 |
+| fastssz (v2) | Unmarshal | 2.71µs | 2.18KB | 32 |
+| fastssz (v2) | Marshal | 830ns | 1.41KB | 1 |
+| fastssz (v2) | HashTreeRoot | 6.48µs | 0B | 0 |
+| dynamic-ssz (codegen) | Unmarshal | 1.59µs | 1.74KB | 13 |
+| dynamic-ssz (codegen) | Marshal | 1.33µs | 1.41KB | 1 |
+| dynamic-ssz (codegen) | HashTreeRoot | 3.99µs | 80B | 3 |
+| dynamic-ssz (reflection) | Unmarshal | 4.22µs | 2.25KB | 34 |
+| dynamic-ssz (reflection) | Marshal | 2.00µs | 1.41KB | 1 |
+| dynamic-ssz (reflection) | HashTreeRoot | 4.55µs | 80B | 3 |
+| dynamic-ssz (reflection) | UnmarshalReader | 6.93µs | 4.55KB | 72 |
+| dynamic-ssz (reflection) | MarshalWriter | 2.87µs | 1.20KB | 29 |
+| karalabe-ssz | Unmarshal | 2.29µs | 1.68KB | 13 |
+| karalabe-ssz | Marshal | 1.52µs | 1.41KB | 1 |
+| karalabe-ssz | HashTreeRoot | 6.66µs | 0B | 0 |
+| karalabe-ssz | UnmarshalReader | 2.86µs | 1.72KB | 14 |
+| karalabe-ssz | MarshalWriter | 347ns | 0B | 0 |
 
 ### State Mainnet Benchmarks
 
 | Library | Operation | Time | Memory | Allocations |
 |---------|-----------|------|--------|-------------|
-| fastssz (v1) | Unmarshal | 3.08ms | 4.81MB | 83550 |
-| fastssz (v1) | Marshal | 729.17µs | 2.81MB | 1 |
-| fastssz (v1) | HashTreeRoot | 11.86ms | 42.59KB | 0 |
-| fastssz (v2) | Unmarshal | 3.01ms | 4.81MB | 83563 |
-| fastssz (v2) | Marshal | 699.63µs | 2.81MB | 1 |
-| fastssz (v2) | HashTreeRoot | 11.90ms | 85.59KB | 0 |
-| dynamic-ssz (codegen) | Unmarshal | 701.20µs | 2.81MB | 607 |
-| dynamic-ssz (codegen) | Marshal | 676.87µs | 2.81MB | 1 |
-| dynamic-ssz (codegen) | HashTreeRoot | 4.19ms | 7.41KB | 0 |
-| dynamic-ssz (reflection) | Unmarshal | 2.30ms | 2.83MB | 1219 |
-| dynamic-ssz (reflection) | Marshal | 2.49ms | 2.81MB | 1 |
-| dynamic-ssz (reflection) | HashTreeRoot | 7.29ms | 64.60KB | 0 |
-| karalabe-ssz | Unmarshal | 966.31µs | 2.83MB | 601 |
-| karalabe-ssz | Marshal | 812.06µs | 2.81MB | 2 |
-| karalabe-ssz | HashTreeRoot | 4.43ms | 35B | 0 |
+| fastssz (v1) | Unmarshal | 4.42ms | 4.81MB | 83550 |
+| fastssz (v1) | Marshal | 1.31ms | 2.81MB | 1 |
+| fastssz (v1) | HashTreeRoot | 6.61ms | 59.30KB | 0 |
+| fastssz (v2) | Unmarshal | 4.66ms | 4.81MB | 83563 |
+| fastssz (v2) | Marshal | 1.25ms | 2.81MB | 1 |
+| fastssz (v2) | HashTreeRoot | 6.62ms | 23.98KB | 0 |
+| dynamic-ssz (codegen) | Unmarshal | 1.52ms | 2.81MB | 607 |
+| dynamic-ssz (codegen) | Marshal | 1.11ms | 2.81MB | 1 |
+| dynamic-ssz (codegen) | HashTreeRoot | 3.41ms | 18.23KB | 0 |
+| dynamic-ssz (reflection) | Unmarshal | 3.10ms | 2.83MB | 1219 |
+| dynamic-ssz (reflection) | Marshal | 2.33ms | 2.81MB | 1 |
+| dynamic-ssz (reflection) | HashTreeRoot | 4.86ms | 43.49KB | 0 |
+| dynamic-ssz (reflection) | UnmarshalReader | 3.55ms | 2.93MB | 12722 |
+| dynamic-ssz (reflection) | MarshalWriter | 1.07ms | 92.94KB | 11493 |
+| karalabe-ssz | Unmarshal | 1.42ms | 2.83MB | 602 |
+| karalabe-ssz | Marshal | 1.16ms | 2.81MB | 2 |
+| karalabe-ssz | HashTreeRoot | 3.57ms | 20B | 0 |
+| karalabe-ssz | UnmarshalReader | 2.02ms | 2.83MB | 603 |
+| karalabe-ssz | MarshalWriter | 321.06µs | 1B | 0 |
 
 ### Block Minimal Benchmarks
 
 | Library | Operation | Time | Memory | Allocations |
 |---------|-----------|------|--------|-------------|
-| fastssz (v2) | Unmarshal | 2.20µs | 3.09KB | 51 |
-| fastssz (v2) | Marshal | 627ns | 2.05KB | 1 |
-| fastssz (v2) | HashTreeRoot | 19.62µs | 0B | 0 |
-| dynamic-ssz (codegen) | Unmarshal | 1.37µs | 2.60KB | 29 |
-| dynamic-ssz (codegen) | Marshal | 759ns | 2.05KB | 1 |
-| dynamic-ssz (codegen) | HashTreeRoot | 10.74µs | 320B | 12 |
-| dynamic-ssz (reflection) | Unmarshal | 5.57µs | 3.47KB | 65 |
-| dynamic-ssz (reflection) | Marshal | 2.62µs | 2.05KB | 1 |
-| dynamic-ssz (reflection) | HashTreeRoot | 12.88µs | 320B | 12 |
+| fastssz (v2) | Unmarshal | 4.33µs | 3.09KB | 51 |
+| fastssz (v2) | Marshal | 1.40µs | 2.05KB | 1 |
+| fastssz (v2) | HashTreeRoot | 10.26µs | 0B | 0 |
+| dynamic-ssz (codegen) | Unmarshal | 2.42µs | 2.60KB | 29 |
+| dynamic-ssz (codegen) | Marshal | 1.50µs | 2.05KB | 1 |
+| dynamic-ssz (codegen) | HashTreeRoot | 6.60µs | 320B | 12 |
+| dynamic-ssz (reflection) | Unmarshal | 7.65µs | 3.47KB | 65 |
+| dynamic-ssz (reflection) | Marshal | 4.17µs | 2.05KB | 1 |
+| dynamic-ssz (reflection) | HashTreeRoot | 7.49µs | 320B | 12 |
+| dynamic-ssz (reflection) | UnmarshalReader | 12.77µs | 5.91KB | 121 |
+| dynamic-ssz (reflection) | MarshalWriter | 3.94µs | 1.34KB | 47 |
 
 ### State Minimal Benchmarks
 
 | Library | Operation | Time | Memory | Allocations |
 |---------|-----------|------|--------|-------------|
-| fastssz (v2) | Unmarshal | 53.82µs | 79.87KB | 698 |
-| fastssz (v2) | Marshal | 20.60µs | 73.73KB | 1 |
-| fastssz (v2) | HashTreeRoot | 585.88µs | 18B | 0 |
-| dynamic-ssz (codegen) | Unmarshal | 28.74µs | 72.39KB | 430 |
-| dynamic-ssz (codegen) | Marshal | 18.75µs | 73.73KB | 1 |
-| dynamic-ssz (codegen) | HashTreeRoot | 263.43µs | 5B | 0 |
-| dynamic-ssz (reflection) | Unmarshal | 139.34µs | 82.75KB | 861 |
-| dynamic-ssz (reflection) | Marshal | 81.70µs | 73.73KB | 1 |
-| dynamic-ssz (reflection) | HashTreeRoot | 349.92µs | 18B | 0 |
+| fastssz (v2) | Unmarshal | 98.56µs | 79.87KB | 698 |
+| fastssz (v2) | Marshal | 41.01µs | 73.73KB | 1 |
+| fastssz (v2) | HashTreeRoot | 309.86µs | 13B | 0 |
+| dynamic-ssz (codegen) | Unmarshal | 55.07µs | 72.39KB | 430 |
+| dynamic-ssz (codegen) | Marshal | 41.52µs | 73.73KB | 1 |
+| dynamic-ssz (codegen) | HashTreeRoot | 180.22µs | 5B | 0 |
+| dynamic-ssz (reflection) | Unmarshal | 177.80µs | 82.86KB | 861 |
+| dynamic-ssz (reflection) | Marshal | 146.06µs | 73.73KB | 1 |
+| dynamic-ssz (reflection) | HashTreeRoot | 216.25µs | 9B | 0 |
+| dynamic-ssz (reflection) | UnmarshalReader | 223.38µs | 110.13KB | 4055 |
+| dynamic-ssz (reflection) | MarshalWriter | 90.72µs | 26.42KB | 3178 |
 
 **Note:** karalabe-ssz does not support minimal preset out of the box.
 

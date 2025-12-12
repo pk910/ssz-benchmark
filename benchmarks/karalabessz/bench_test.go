@@ -56,6 +56,23 @@ func loadHTR(path string) [32]byte {
 	return htr
 }
 
+type TestWriter struct {
+	data []byte
+}
+
+func (w *TestWriter) Write(p []byte) (n int, err error) {
+	w.data = append(w.data, p...)
+	return len(p), nil
+}
+
+func (w *TestWriter) Written() int {
+	return len(w.data)
+}
+
+func (w *TestWriter) Reset() {
+	w.data = w.data[:0]
+}
+
 // ========================= BLOCK MAINNET BENCHMARKS =========================
 
 func BenchmarkBlockMainnet_Unmarshal(b *testing.B) {
@@ -64,6 +81,23 @@ func BenchmarkBlockMainnet_Unmarshal(b *testing.B) {
 	for i := 0; i < b.N; i++ {
 		block = new(SignedBeaconBlockDeneb)
 		if err := ssz.DecodeFromBytes(blockMainnetData, block); err != nil {
+			b.Fatal(err)
+		}
+	}
+	b.StopTimer()
+	htr := ssz.HashSequential(block.Message)
+	if htr != blockMainnetHTR {
+		b.Fatalf("HTR mismatch: got %x, want %x", htr, blockMainnetHTR)
+	}
+}
+
+func BenchmarkBlockMainnet_UnmarshalReader(b *testing.B) {
+	var block *SignedBeaconBlockDeneb
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		block = new(SignedBeaconBlockDeneb)
+		reader := bytes.NewReader(blockMainnetData)
+		if err := ssz.DecodeFromStream(reader, block, uint32(len(blockMainnetData))); err != nil {
 			b.Fatal(err)
 		}
 	}
@@ -89,6 +123,27 @@ func BenchmarkBlockMainnet_Marshal(b *testing.B) {
 	}
 	b.StopTimer()
 	if !bytes.Equal(buf, blockMainnetData) {
+		b.Fatal("marshaled data does not match original")
+	}
+}
+
+func BenchmarkBlockMainnet_MarshalWriter(b *testing.B) {
+	block := new(SignedBeaconBlockDeneb)
+	if err := ssz.DecodeFromBytes(blockMainnetData, block); err != nil {
+		b.Fatal(err)
+	}
+	var writer = &TestWriter{
+		data: make([]byte, 0, len(blockMainnetData)),
+	}
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		writer.Reset()
+		if err := ssz.EncodeToStreamOnFork(writer, block, ssz.ForkDeneb); err != nil {
+			b.Fatal(err)
+		}
+	}
+	b.StopTimer()
+	if !bytes.Equal(writer.data, blockMainnetData) {
 		b.Fatal("marshaled data does not match original")
 	}
 }
@@ -127,6 +182,23 @@ func BenchmarkStateMainnet_Unmarshal(b *testing.B) {
 	}
 }
 
+func BenchmarkStateMainnet_UnmarshalReader(b *testing.B) {
+	var state *BeaconStateDeneb
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		state = new(BeaconStateDeneb)
+		reader := bytes.NewReader(stateMainnetData)
+		if err := ssz.DecodeFromStream(reader, state, uint32(len(stateMainnetData))); err != nil {
+			b.Fatal(err)
+		}
+	}
+	b.StopTimer()
+	htr := ssz.HashSequential(state)
+	if htr != stateMainnetHTR {
+		b.Fatalf("HTR mismatch: got %x, want %x", htr, stateMainnetHTR)
+	}
+}
+
 func BenchmarkStateMainnet_Marshal(b *testing.B) {
 	state := new(BeaconStateDeneb)
 	if err := ssz.DecodeFromBytes(stateMainnetData, state); err != nil {
@@ -142,6 +214,27 @@ func BenchmarkStateMainnet_Marshal(b *testing.B) {
 	}
 	b.StopTimer()
 	if !bytes.Equal(buf, stateMainnetData) {
+		b.Fatal("marshaled data does not match original")
+	}
+}
+
+func BenchmarkStateMainnet_MarshalWriter(b *testing.B) {
+	state := new(BeaconStateDeneb)
+	if err := ssz.DecodeFromBytes(stateMainnetData, state); err != nil {
+		b.Fatal(err)
+	}
+	var writer = &TestWriter{
+		data: make([]byte, 0, len(stateMainnetData)),
+	}
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		writer.Reset()
+		if err := ssz.EncodeToStreamOnFork(writer, state, ssz.ForkDeneb); err != nil {
+			b.Fatal(err)
+		}
+	}
+	b.StopTimer()
+	if !bytes.Equal(writer.data, stateMainnetData) {
 		b.Fatal("marshaled data does not match original")
 	}
 }

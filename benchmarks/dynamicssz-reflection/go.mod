@@ -14,3 +14,5 @@ require (
 	github.com/pk910/hashtree-bindings v0.0.1 // indirect
 	golang.org/x/sys v0.36.0 // indirect
 )
+
+replace github.com/pk910/dynamic-ssz => ../../../dynamic-ssz
