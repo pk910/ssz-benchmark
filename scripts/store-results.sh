@@ -320,6 +320,13 @@ benchmarks = [
         "go_mod_path": "benchmarks/karalabessz/go.mod",
         "package_pattern": r"github\.com/karalabe/ssz",
         "json_file": "results/karalabessz.json"
+    },
+    {
+        "name": "ztyp",
+        "results_file": "ztyp_results.txt",
+        "go_mod_path": "benchmarks/ztyp/go.mod",
+        "package_pattern": r"github\.com/protolambda/zrnt",
+        "json_file": "results/ztyp.json"
     }
 ]
 
@@ -336,6 +343,6 @@ print("\nAll results processed successfully!")
 EOF
 
 # Clean up temporary result files
-rm -f fastssz-v1_results.txt fastssz-v2_results.txt dynamicssz-codegen_results.txt dynamicssz-reflection_results.txt karalabessz_results.txt
+rm -f fastssz-v1_results.txt fastssz-v2_results.txt dynamicssz-codegen_results.txt dynamicssz-reflection_results.txt karalabessz_results.txt ztyp_results.txt
 
 echo "Done!"

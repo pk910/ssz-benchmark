@@ -40,4 +40,10 @@ go mod download
 go test -run=^$ -bench=. -benchmem -count=5 > "$ROOT_DIR/karalabessz_results.txt"
 cd "$ROOT_DIR"
 
+echo "Running ztyp benchmarks..."
+cd benchmarks/ztyp
+go mod download
+go test -run=^$ -bench=. -benchmem -count=5 > "$ROOT_DIR/ztyp_results.txt"
+cd "$ROOT_DIR"
+
 echo "All benchmarks completed!"
