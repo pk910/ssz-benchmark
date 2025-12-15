@@ -1,0 +1,86 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>SSZ Benchmark - Detailed Results</title>
+    <link rel="stylesheet" href="css/styles.css">
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chartjs-adapter-date-fns"></script>
+</head>
+<body>
+    <header>
+        <h1>SSZ Benchmark Results</h1>
+        <nav>
+            <a href="index.html">Comparison</a>
+            <a href="details.html" class="active">Details</a>
+        </nav>
+    </header>
+
+    <main>
+        <div class="details-controls">
+            <div class="control-group">
+                <label for="library-select">Library:</label>
+                <select id="library-select">
+                    <option value="all">All Libraries</option>
+                </select>
+            </div>
+            <div class="control-group">
+                <label for="operation-select">Operation:</label>
+                <select id="operation-select">
+                    <option value="all">All Operations</option>
+                </select>
+            </div>
+            <div class="control-group">
+                <label for="metric-select">Metric:</label>
+                <select id="metric-select">
+                    <option value="time">Time (ns/op)</option>
+                    <option value="memory">Memory (bytes/op)</option>
+                    <option value="allocs">Allocations</option>
+                </select>
+            </div>
+            <div class="control-group">
+                <label class="checkbox-label">
+                    <input type="checkbox" id="show-dev-checkbox">
+                    <span>Show Dev Builds</span>
+                </label>
+            </div>
+        </div>
+
+        <div class="details-chart-container">
+            <div class="chart-wrapper full-width">
+                <h3>Time Over Benchmark Runs (ns/op)</h3>
+                <canvas id="detailsTimeChart"></canvas>
+            </div>
+        </div>
+
+        <div class="details-table-container">
+            <h3>Latest Benchmark Results</h3>
+            <div class="table-scroll">
+                <table id="results-table">
+                    <thead>
+                        <tr>
+                            <th>Library</th>
+                            <th>Version</th>
+                            <th>Operation</th>
+                            <th>Time (ns/op)</th>
+                            <th>Memory (bytes/op)</th>
+                            <th>Allocations</th>
+                            <th>Run Time</th>
+                        </tr>
+                    </thead>
+                    <tbody id="results-body">
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </main>
+
+    <footer>
+        <p>SSZ Benchmark - Comparing Go SSZ Libraries</p>
+    </footer>
+
+    <script src="libraries.js"></script>
+    <script src="js/details.js"></script>
+</body>
+</html>
