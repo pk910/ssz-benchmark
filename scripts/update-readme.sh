@@ -9,35 +9,8 @@ ROOT_DIR="$(dirname "$SCRIPT_DIR")"
 
 cd "$ROOT_DIR"
 
-echo "Running fastssz benchmarks..."
-cd benchmarks/fastssz
-go mod download
-go test -run=^$ -bench=. -benchmem -count=5 > ../../fastssz_results.txt
-cd "$ROOT_DIR"
-
-echo "Running fastssz-v1 benchmarks..."
-cd benchmarks/fastssz-v1
-go mod download
-go test -run=^$ -bench=. -benchmem -count=5 > ../../fastssz-v1_results.txt
-cd "$ROOT_DIR"
-
-echo "Running dynamic-ssz benchmarks (codegen)..."
-cd benchmarks/dynamicssz
-go mod download
-go test -run=^$ -bench=. -benchmem -count=5 > ../../dynamicssz_results.txt
-cd "$ROOT_DIR"
-
-echo "Running dynamic-ssz benchmarks (reflection)..."
-cd benchmarks/dynamicssz-reflection
-go mod download
-go test -run=^$ -bench=. -benchmem -count=5 > ../../dynamicssz_reflection_results.txt
-cd "$ROOT_DIR"
-
-echo "Running karalabe-ssz benchmarks..."
-cd benchmarks/karalabessz
-go mod download
-go test -run=^$ -bench=. -benchmem -count=5 > ../../karalabessz_results.txt
-cd "$ROOT_DIR"
+# Run all benchmarks using shared script
+"$SCRIPT_DIR/run-benchmarks.sh"
 
 echo "Updating README..."
 python3 << 'EOF'
@@ -97,10 +70,10 @@ def format_bytes(b):
         return f"{int(b)}B"
 
 # Parse all results
-fastssz = parse_benchmark_results('fastssz_results.txt')
 fastssz_v1 = parse_benchmark_results('fastssz-v1_results.txt')
-dynamicssz = parse_benchmark_results('dynamicssz_results.txt')
-dynamicssz_refl = parse_benchmark_results('dynamicssz_reflection_results.txt')
+fastssz_v2 = parse_benchmark_results('fastssz-v2_results.txt')
+dynamicssz_codegen = parse_benchmark_results('dynamicssz-codegen_results.txt')
+dynamicssz_refl = parse_benchmark_results('dynamicssz-reflection_results.txt')
 karalabessz = parse_benchmark_results('karalabessz_results.txt')
 
 def get_benchmark_value(results, key, field):
@@ -132,9 +105,9 @@ Last updated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S UTC')}
 for op in ['Unmarshal', 'Marshal', 'HashTreeRoot']:
     results_md += make_table_row('fastssz (v1)', fastssz_v1, f'BenchmarkBlockMainnet_{op}', op)
 for op in ['Unmarshal', 'Marshal', 'HashTreeRoot']:
-    results_md += make_table_row('fastssz (v2)', fastssz, f'BenchmarkBlockMainnet_{op}', op)
+    results_md += make_table_row('fastssz (v2)', fastssz_v2, f'BenchmarkBlockMainnet_{op}', op)
 for op in ['Unmarshal', 'Marshal', 'HashTreeRoot']:
-    results_md += make_table_row('dynamic-ssz (codegen)', dynamicssz, f'BenchmarkBlockMainnet_{op}', op)
+    results_md += make_table_row('dynamic-ssz (codegen)', dynamicssz_codegen, f'BenchmarkBlockMainnet_{op}', op)
 for op in ['Unmarshal', 'Marshal', 'HashTreeRoot']:
     results_md += make_table_row('dynamic-ssz (reflection)', dynamicssz_refl, f'BenchmarkBlockMainnet_{op}', op)
 for op in ['Unmarshal', 'Marshal', 'HashTreeRoot']:
@@ -151,9 +124,9 @@ results_md += """
 for op in ['Unmarshal', 'Marshal', 'HashTreeRoot']:
     results_md += make_table_row('fastssz (v1)', fastssz_v1, f'BenchmarkStateMainnet_{op}', op)
 for op in ['Unmarshal', 'Marshal', 'HashTreeRoot']:
-    results_md += make_table_row('fastssz (v2)', fastssz, f'BenchmarkStateMainnet_{op}', op)
+    results_md += make_table_row('fastssz (v2)', fastssz_v2, f'BenchmarkStateMainnet_{op}', op)
 for op in ['Unmarshal', 'Marshal', 'HashTreeRoot']:
-    results_md += make_table_row('dynamic-ssz (codegen)', dynamicssz, f'BenchmarkStateMainnet_{op}', op)
+    results_md += make_table_row('dynamic-ssz (codegen)', dynamicssz_codegen, f'BenchmarkStateMainnet_{op}', op)
 for op in ['Unmarshal', 'Marshal', 'HashTreeRoot']:
     results_md += make_table_row('dynamic-ssz (reflection)', dynamicssz_refl, f'BenchmarkStateMainnet_{op}', op)
 for op in ['Unmarshal', 'Marshal', 'HashTreeRoot']:
@@ -168,9 +141,9 @@ results_md += """
 
 # Block Minimal (karalabe-ssz doesn't support minimal)
 for op in ['Unmarshal', 'Marshal', 'HashTreeRoot']:
-    results_md += make_table_row('fastssz (v2)', fastssz, f'BenchmarkBlockMinimal_{op}', op)
+    results_md += make_table_row('fastssz (v2)', fastssz_v2, f'BenchmarkBlockMinimal_{op}', op)
 for op in ['Unmarshal', 'Marshal', 'HashTreeRoot']:
-    results_md += make_table_row('dynamic-ssz (codegen)', dynamicssz, f'BenchmarkBlockMinimal_{op}', op)
+    results_md += make_table_row('dynamic-ssz (codegen)', dynamicssz_codegen, f'BenchmarkBlockMinimal_{op}', op)
 for op in ['Unmarshal', 'Marshal', 'HashTreeRoot']:
     results_md += make_table_row('dynamic-ssz (reflection)', dynamicssz_refl, f'BenchmarkBlockMinimal_{op}', op)
 
@@ -183,9 +156,9 @@ results_md += """
 
 # State Minimal (karalabe-ssz doesn't support minimal)
 for op in ['Unmarshal', 'Marshal', 'HashTreeRoot']:
-    results_md += make_table_row('fastssz (v2)', fastssz, f'BenchmarkStateMinimal_{op}', op)
+    results_md += make_table_row('fastssz (v2)', fastssz_v2, f'BenchmarkStateMinimal_{op}', op)
 for op in ['Unmarshal', 'Marshal', 'HashTreeRoot']:
-    results_md += make_table_row('dynamic-ssz (codegen)', dynamicssz, f'BenchmarkStateMinimal_{op}', op)
+    results_md += make_table_row('dynamic-ssz (codegen)', dynamicssz_codegen, f'BenchmarkStateMinimal_{op}', op)
 for op in ['Unmarshal', 'Marshal', 'HashTreeRoot']:
     results_md += make_table_row('dynamic-ssz (reflection)', dynamicssz_refl, f'BenchmarkStateMinimal_{op}', op)
 
@@ -215,6 +188,6 @@ print("README.md updated successfully")
 EOF
 
 # Clean up result files
-rm -f fastssz_results.txt dynamicssz_results.txt dynamicssz_reflection_results.txt karalabessz_results.txt
+rm -f fastssz-v1_results.txt fastssz-v2_results.txt dynamicssz-codegen_results.txt dynamicssz-reflection_results.txt karalabessz_results.txt
 
 echo "Done!"

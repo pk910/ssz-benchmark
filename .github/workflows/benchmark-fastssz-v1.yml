@@ -1,4 +1,4 @@
-name: Benchmark fastssz
+name: Benchmark fastssz-v1
 
 on:
   push:

@@ -1,0 +1,104 @@
+# Minimal preset - Phase0
+
+# Misc
+# ---------------------------------------------------------------
+MAX_COMMITTEES_PER_SLOT: 4
+TARGET_COMMITTEE_SIZE: 4
+MAX_VALIDATORS_PER_COMMITTEE: 2048
+SHUFFLE_ROUND_COUNT: 10
+HYSTERESIS_QUOTIENT: 4
+HYSTERESIS_DOWNWARD_MULTIPLIER: 1
+HYSTERESIS_UPWARD_MULTIPLIER: 5
+
+# Gwei values
+# ---------------------------------------------------------------
+MIN_DEPOSIT_AMOUNT: 1000000000
+MAX_EFFECTIVE_BALANCE: 32000000000
+EFFECTIVE_BALANCE_INCREMENT: 1000000000
+
+# Time parameters
+# ---------------------------------------------------------------
+MIN_ATTESTATION_INCLUSION_DELAY: 1
+SLOTS_PER_EPOCH: 8
+MIN_SEED_LOOKAHEAD: 1
+MAX_SEED_LOOKAHEAD: 4
+EPOCHS_PER_ETH1_VOTING_PERIOD: 4
+SLOTS_PER_HISTORICAL_ROOT: 64
+MIN_EPOCHS_TO_INACTIVITY_PENALTY: 4
+
+# State list lengths
+# ---------------------------------------------------------------
+EPOCHS_PER_HISTORICAL_VECTOR: 64
+EPOCHS_PER_SLASHINGS_VECTOR: 64
+HISTORICAL_ROOTS_LIMIT: 16777216
+VALIDATOR_REGISTRY_LIMIT: 1099511627776
+
+# Rewards and penalties
+# ---------------------------------------------------------------
+BASE_REWARD_FACTOR: 64
+WHISTLEBLOWER_REWARD_QUOTIENT: 512
+PROPOSER_REWARD_QUOTIENT: 8
+INACTIVITY_PENALTY_QUOTIENT: 33554432
+MIN_SLASHING_PENALTY_QUOTIENT: 64
+PROPORTIONAL_SLASHING_MULTIPLIER: 2
+
+# Max operations per block
+# ---------------------------------------------------------------
+MAX_PROPOSER_SLASHINGS: 16
+MAX_ATTESTER_SLASHINGS: 2
+MAX_ATTESTATIONS: 128
+MAX_DEPOSITS: 16
+MAX_VOLUNTARY_EXITS: 16
+
+# Minimal preset - Altair
+
+# Rewards and penalties
+# ---------------------------------------------------------------
+INACTIVITY_PENALTY_QUOTIENT_ALTAIR: 50331648
+MIN_SLASHING_PENALTY_QUOTIENT_ALTAIR: 64
+PROPORTIONAL_SLASHING_MULTIPLIER_ALTAIR: 2
+
+# Sync committee
+# ---------------------------------------------------------------
+SYNC_COMMITTEE_SIZE: 32
+EPOCHS_PER_SYNC_COMMITTEE_PERIOD: 8
+
+# Sync protocol
+# ---------------------------------------------------------------
+MIN_SYNC_COMMITTEE_PARTICIPANTS: 1
+UPDATE_TIMEOUT: 64
+
+# Minimal preset - Bellatrix
+
+# Rewards and penalties
+# ---------------------------------------------------------------
+INACTIVITY_PENALTY_QUOTIENT_BELLATRIX: 16777216
+MIN_SLASHING_PENALTY_QUOTIENT_BELLATRIX: 32
+PROPORTIONAL_SLASHING_MULTIPLIER_BELLATRIX: 3
+
+# Execution
+# ---------------------------------------------------------------
+MAX_BYTES_PER_TRANSACTION: 1073741824
+MAX_TRANSACTIONS_PER_PAYLOAD: 1048576
+BYTES_PER_LOGS_BLOOM: 256
+MAX_EXTRA_DATA_BYTES: 32
+
+# Minimal preset - Capella
+
+# Max operations per block
+# ---------------------------------------------------------------
+MAX_BLS_TO_EXECUTION_CHANGES: 16
+
+# Execution
+# ---------------------------------------------------------------
+MAX_WITHDRAWALS_PER_PAYLOAD: 4
+
+# Withdrawals processing
+# ---------------------------------------------------------------
+MAX_VALIDATORS_PER_WITHDRAWALS_SWEEP: 16
+
+# Minimal preset - Deneb
+
+# Execution
+# ---------------------------------------------------------------
+MAX_BLOB_COMMITMENTS_PER_BLOCK: 32
