@@ -1,10 +1,10 @@
-name: Store Benchmark Results
+name: Daily Scheduled Benchmarks
 
 on:
   workflow_dispatch:
-  #schedule:
-    # Run weekly on Sunday at midnight UTC
-    #- cron: '0 0 * * 0'
+  schedule:
+    # Run daily at midnight UTC
+    - cron: '0 6 30 * *'
 
 permissions:
   contents: write
@@ -22,8 +22,24 @@ jobs:
         with:
           go-version: '1.25'
 
-      - name: Run benchmarks and store results
-        run: ./scripts/store-results.sh
+      - name: Get workflow timestamp
+        id: timestamp
+        run: echo "ts=$(date +%s)" >> "$GITHUB_OUTPUT"
+
+      - name: Run benchmarks and store results (stable versions)
+        run: ./scripts/store-results.sh --timestamp ${{ steps.timestamp.outputs.ts }}
+
+      - name: Update to latest dev versions
+        run: ./scripts/update-dev-versions.sh
+
+      - name: Run benchmarks and store results (dev versions)
+        run: ./scripts/store-results.sh --dev --timestamp ${{ steps.timestamp.outputs.ts }}
+
+      - name: Clean up dev version changes
+        run: |
+          # Restore all modified files to their original state
+          # This removes changes from update-dev-versions.sh before checkout
+          git checkout -- .
 
       - name: Push results to benchmark-results branch
         env:
@@ -49,6 +65,7 @@ jobs:
           fi
 
           # Copy results back from temporary location
+          rm -rf results
           cp -r /tmp/benchmark-results results
 
           # Add and commit

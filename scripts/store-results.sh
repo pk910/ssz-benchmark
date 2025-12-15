@@ -1,38 +1,70 @@
 #!/bin/bash
 # Script to run all SSZ benchmarks and store results in JSON format
-# Usage: ./scripts/store-results.sh
+# Usage: ./scripts/store-results.sh [--dev] [--timestamp UNIX_TIMESTAMP]
+#   --dev: Mark results as dev builds (uses pseudo-version from git HEAD)
+#   --timestamp: Use specified Unix timestamp instead of current time
 
 set -e
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT_DIR="$(dirname "$SCRIPT_DIR")"
 
+# Parse arguments
+DEV_MODE="false"
+TIMESTAMP=""
+while [ $# -gt 0 ]; do
+    case "$1" in
+        --dev)
+            DEV_MODE="true"
+            shift
+            ;;
+        --timestamp)
+            TIMESTAMP="$2"
+            shift 2
+            ;;
+        *)
+            shift
+            ;;
+    esac
+done
+
 cd "$ROOT_DIR"
 
 # Create results directory if it doesn't exist
 mkdir -p results
 
-# Try to fetch existing results from benchmark-results branch
-echo "Fetching existing results from benchmark-results branch..."
-if git ls-remote --heads origin benchmark-results 2>/dev/null | grep -q benchmark-results; then
-    git fetch origin benchmark-results
-    # Extract existing JSON files from the branch
-    git archive origin/benchmark-results -- results/ 2>/dev/null | tar -x 2>/dev/null || echo "No existing results found"
+# Try to fetch existing results from benchmark-results branch (only if results dir is empty)
+if [ -d "results" ] && [ -n "$(ls -A results 2>/dev/null)" ]; then
+    echo "Results directory already contains files, skipping download"
 else
-    echo "No benchmark-results branch found, starting fresh"
+    echo "Fetching existing results from benchmark-results branch..."
+    if git ls-remote --heads origin benchmark-results 2>/dev/null | grep -q benchmark-results; then
+        git fetch origin benchmark-results
+        # Extract existing JSON files from the branch
+        git archive origin/benchmark-results -- results/ 2>/dev/null | tar -x 2>/dev/null || echo "No existing results found"
+    else
+        echo "No benchmark-results branch found, starting fresh"
+    fi
 fi
 
 # Run all benchmarks using shared script
 "$SCRIPT_DIR/run-benchmarks.sh"
 
 echo "Processing results and updating JSON files..."
-python3 << 'EOF'
+DEV_MODE_ENV="$DEV_MODE" TIMESTAMP_ENV="$TIMESTAMP" python3 << 'EOF'
 import re
 import json
 import os
 import time
 
 MAX_RESULTS = 1000
+DEV_MODE = os.environ.get('DEV_MODE_ENV', 'false').lower() == 'true'
+TIMESTAMP = os.environ.get('TIMESTAMP_ENV', '')
+TIMESTAMP = int(TIMESTAMP) if TIMESTAMP else int(time.time())
+
+if DEV_MODE:
+    print("Running in DEV mode - results will be marked as dev builds")
+print(f"Using timestamp: {TIMESTAMP}")
 
 def parse_benchmark_results(filename):
     """Parse benchmark results from Go test output."""
@@ -70,7 +102,8 @@ def extract_version(go_mod_path, package_pattern):
     try:
         with open(go_mod_path, 'r') as f:
             content = f.read()
-        match = re.search(rf'{package_pattern}\s+(v[\d.]+(?:-[\w.]+)?)', content)
+        # Match versions like v1.0.0 or pseudo-versions like v0.0.0-20251126100127-9cb620c1e0d0
+        match = re.search(rf'{package_pattern}\s+(v[\d.]+(?:-[\w.-]+)?)', content)
         if match:
             return match.group(1)
     except FileNotFoundError:
@@ -125,9 +158,9 @@ def load_existing_aggregation(filepath):
         print(f"  No existing aggregation at {filepath}, starting fresh")
     return {"aggregations": []}
 
-def update_aggregation(existing_aggregation, version, new_results):
+def update_aggregation(existing_aggregation, version, new_results, timestamp):
     """Update aggregation data incrementally for a specific version."""
-    # Find existing entry for this version
+    # Find existing entry for this version (and dev status)
     version_entry = None
     for entry in existing_aggregation.get("aggregations", []):
         if entry.get("version") == version:
@@ -138,9 +171,17 @@ def update_aggregation(existing_aggregation, version, new_results):
     if version_entry is None:
         version_entry = {
             "version": version,
+            "first": timestamp,
+            "last": timestamp,
             "results": {}
         }
         existing_aggregation["aggregations"].append(version_entry)
+    else:
+        # Update first/last timestamps
+        if "first" not in version_entry or timestamp < version_entry["first"]:
+            version_entry["first"] = timestamp
+        if "last" not in version_entry or timestamp > version_entry["last"]:
+            version_entry["last"] = timestamp
 
     # Update each benchmark result incrementally
     for key, values in new_results.items():
@@ -204,13 +245,26 @@ def process_benchmark(name, results_file, go_mod_path, package_pattern, json_fil
 
     # Create new benchmark entry
     new_entry = {
-        "time": int(time.time()),
+        "time": TIMESTAMP,
         "version": version,
         "results": formatted_results
     }
+    if DEV_MODE:
+        new_entry["dev"] = True
 
-    # Load existing data and append
+    # Load existing data
     data = load_existing_json(json_file)
+
+    # Skip dev entries if a stable (non-dev) entry with the same version exists
+    if DEV_MODE:
+        stable_exists = any(
+            entry.get("version") == version and not entry.get("dev", False)
+            for entry in data["benchmarks"]
+        )
+        if stable_exists:
+            print(f"  Skipping dev entry - stable version {version} already exists")
+            return
+
     data["benchmarks"].append(new_entry)
 
     # Apply retention - keep only the last MAX_RESULTS
@@ -226,7 +280,7 @@ def process_benchmark(name, results_file, go_mod_path, package_pattern, json_fil
     # Load existing aggregation and update incrementally
     aggregation_file = json_file.replace('.json', '-aggregation.json')
     aggregation_data = load_existing_aggregation(aggregation_file)
-    aggregation_data = update_aggregation(aggregation_data, version, formatted_results)
+    aggregation_data = update_aggregation(aggregation_data, version, formatted_results, new_entry["time"])
     save_json(aggregation_file, aggregation_data, pretty=True)
     print(f"  Updated aggregation ({len(aggregation_data['aggregations'])} versions) in {aggregation_file}")
 

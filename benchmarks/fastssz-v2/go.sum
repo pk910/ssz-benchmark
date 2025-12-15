@@ -2,8 +2,8 @@ github.com/davecgh/go-spew v1.1.1 h1:vj9j/u1bqnvCEfJOwUhtlOARqs3+rkHYY13jYWTU97c
 github.com/davecgh/go-spew v1.1.1/go.mod h1:J7Y8YcW2NihsgmVo/mv3lAwl/skON4iLHjSsI+c5H38=
 github.com/emicklei/dot v1.9.1 h1:SBySmOPaQ6+fpmnqEaG1bCHj5hW65A0jJpcPpz+TG3w=
 github.com/emicklei/dot v1.9.1/go.mod h1:DeV7GvQtIw4h2u73RKBkkFdvVAz0D9fzeJrgPW6gy/s=
-github.com/ferranbt/fastssz v0.0.0-20251126100127-9cb620c1e0d0 h1:rCdkHNV9sPM/HFDQphH5ooh3anMUBmOas5xqIDV9iYQ=
-github.com/ferranbt/fastssz v0.0.0-20251126100127-9cb620c1e0d0/go.mod h1:o5km+pb3JXQ1l0i1jbgtuWtJ69L8iEofK+z/Tqv2+o8=
+github.com/ferranbt/fastssz v0.0.0-20250808103907-ac370aa5f7e4 h1:YbbGeqraTVgyh0DlX09NOVNb0/XC9CgPc+IWJkq74ow=
+github.com/ferranbt/fastssz v0.0.0-20250808103907-ac370aa5f7e4/go.mod h1:Ea3+oeoRGGLGm5shYAeDgu6PGUlcvQhE2fILyD9+tGg=
 github.com/klauspost/cpuid/v2 v2.0.4/go.mod h1:FInQzS24/EEf25PyTYn52gqo7WaD8xa0213Md/qVLRg=
 github.com/klauspost/cpuid/v2 v2.0.9 h1:lgaqFMSdTdQYdZ04uHyN2d/eKdOMyi2YLSvlQIBFYa4=
 github.com/klauspost/cpuid/v2 v2.0.9/go.mod h1:FInQzS24/EEf25PyTYn52gqo7WaD8xa0213Md/qVLRg=
