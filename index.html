@@ -1,0 +1,172 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>SSZ Benchmark Results</title>
+    <link rel="stylesheet" href="css/styles.css">
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chartjs-adapter-date-fns"></script>
+</head>
+<body>
+    <header>
+        <h1>SSZ Benchmark Results</h1>
+        <nav>
+            <a href="index.html" class="active">Comparison</a>
+            <a href="details.html">Details</a>
+        </nav>
+    </header>
+
+    <main>
+        <section class="overview-section">
+            <h2>Overview - Latest Versions</h2>
+            <div class="selector-row">
+                <div class="selector-group">
+                    <span class="selector-label">Preset:</span>
+                    <div class="tabs">
+                        <button class="tab-btn active" data-tab="mainnet">Mainnet</button>
+                        <button class="tab-btn" data-tab="minimal">Minimal</button>
+                    </div>
+                </div>
+                <div class="selector-group">
+                    <span class="selector-label">Data Type:</span>
+                    <div class="tabs">
+                        <button class="tab-btn active" data-type="Block">Block</button>
+                        <button class="tab-btn" data-type="State">State</button>
+                    </div>
+                </div>
+                <div class="type-metadata" id="type-metadata">
+                    <span class="metadata-item"><span class="metadata-label">Fork:</span> <span id="metadata-fork">-</span></span>
+                    <span class="metadata-item"><span class="metadata-label">Size:</span> <span id="metadata-size">-</span></span>
+                </div>
+                <div class="selector-group">
+                    <span class="selector-label">Libraries:</span>
+                    <div class="multiselect" id="library-multiselect">
+                        <button class="multiselect-btn" id="library-btn">All Libraries</button>
+                        <div class="multiselect-dropdown" id="library-dropdown"></div>
+                    </div>
+                </div>
+                <div class="selector-group">
+                    <span class="selector-label">Mode:</span>
+                    <div class="multiselect" id="mode-multiselect">
+                        <button class="multiselect-btn" id="mode-btn">Buffer</button>
+                        <div class="multiselect-dropdown" id="mode-dropdown"></div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Chart Rows by Metric -->
+            <div class="metric-section">
+                <h3>Time (ns/op)</h3>
+                <div class="chart-row">
+                    <div class="chart-cell">
+                        <div class="chart-label">Unmarshal</div>
+                        <canvas id="chart-time-unmarshal"></canvas>
+                    </div>
+                    <div class="chart-cell">
+                        <div class="chart-label">Marshal</div>
+                        <canvas id="chart-time-marshal"></canvas>
+                    </div>
+                    <div class="chart-cell">
+                        <div class="chart-label">HashTreeRoot</div>
+                        <canvas id="chart-time-hashtreeroot"></canvas>
+                    </div>
+                </div>
+            </div>
+
+            <div class="metric-section">
+                <h3>Memory (bytes/op)</h3>
+                <div class="chart-row">
+                    <div class="chart-cell">
+                        <div class="chart-label">Unmarshal</div>
+                        <canvas id="chart-memory-unmarshal"></canvas>
+                    </div>
+                    <div class="chart-cell">
+                        <div class="chart-label">Marshal</div>
+                        <canvas id="chart-memory-marshal"></canvas>
+                    </div>
+                    <div class="chart-cell">
+                        <div class="chart-label">HashTreeRoot</div>
+                        <canvas id="chart-memory-hashtreeroot"></canvas>
+                    </div>
+                </div>
+            </div>
+
+            <div class="metric-section">
+                <h3>Allocations (allocs/op)</h3>
+                <div class="chart-row">
+                    <div class="chart-cell">
+                        <div class="chart-label">Unmarshal</div>
+                        <canvas id="chart-alloc-unmarshal"></canvas>
+                    </div>
+                    <div class="chart-cell">
+                        <div class="chart-label">Marshal</div>
+                        <canvas id="chart-alloc-marshal"></canvas>
+                    </div>
+                    <div class="chart-cell">
+                        <div class="chart-label">HashTreeRoot</div>
+                        <canvas id="chart-alloc-hashtreeroot"></canvas>
+                    </div>
+                </div>
+            </div>
+
+            <div class="legend-info">
+                <p>Showing latest stable version for each library. Hover over bars for detailed information.</p>
+            </div>
+        </section>
+
+        <section class="timeline-section">
+            <h2>Performance Over Time</h2>
+
+            <div class="timeline-controls">
+                <div class="control-group">
+                    <label for="timeline-range">Time Range:</label>
+                    <select id="timeline-range">
+                        <option value="30">Last 30 days</option>
+                        <option value="90">Last 90 days</option>
+                        <option value="365">Last year</option>
+                        <option value="all">All time</option>
+                    </select>
+                </div>
+                <div class="control-group">
+                    <label for="timeline-operation">Operation:</label>
+                    <select id="timeline-operation">
+                        <option value="Unmarshal">Unmarshal</option>
+                        <option value="Marshal">Marshal</option>
+                        <option value="HashTreeRoot">HashTreeRoot</option>
+                    </select>
+                </div>
+                <div class="control-group">
+                    <label for="timeline-metric">Metric:</label>
+                    <select id="timeline-metric">
+                        <option value="time">Time (ns/op)</option>
+                        <option value="memory">Memory (bytes/op)</option>
+                        <option value="alloc">Allocations</option>
+                    </select>
+                </div>
+                <div class="control-group">
+                    <label class="checkbox-label">
+                        <input type="checkbox" id="show-dev-versions">
+                        <span>Show dev versions</span>
+                    </label>
+                </div>
+            </div>
+
+            <div class="timeline-chart-wrapper">
+                <canvas id="timeline-chart"></canvas>
+            </div>
+
+            <div class="legend-info">
+                <p>Each line represents a library version over its active period. Similar colors indicate the same library. Dashed lines indicate dev versions.</p>
+            </div>
+        </section>
+    </main>
+
+    <footer>
+        <p>SSZ Benchmark - Comparing Go SSZ Libraries</p>
+    </footer>
+
+    <script src="libraries.js"></script>
+    <script src="js/app.js"></script>
+</body>
+</html>
