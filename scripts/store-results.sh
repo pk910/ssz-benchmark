@@ -158,19 +158,38 @@ def load_existing_aggregation(filepath):
         print(f"  No existing aggregation at {filepath}, starting fresh")
     return {"aggregations": []}
 
-def update_aggregation(existing_aggregation, version, new_results, timestamp):
+def update_aggregation(existing_aggregation, version, new_results, timestamp, is_dev):
     """Update aggregation data incrementally for a specific version."""
-    # Find existing entry for this version (and dev status)
+    # Find existing entry for this version
     version_entry = None
-    for entry in existing_aggregation.get("aggregations", []):
+    version_entry_index = None
+    for i, entry in enumerate(existing_aggregation.get("aggregations", [])):
         if entry.get("version") == version:
             version_entry = entry
+            version_entry_index = i
             break
+
+    # Handle dev/stable version conflicts
+    if version_entry is not None:
+        existing_is_dev = version_entry.get("dev", False)
+
+        # If existing is stable (dev: false) and new is dev, skip
+        if not existing_is_dev and is_dev:
+            print(f"    Skipping dev aggregation - stable version {version} already exists")
+            return existing_aggregation
+
+        # If existing is dev and new is stable, reset the entry
+        if existing_is_dev and not is_dev:
+            print(f"    Overriding dev aggregation with stable version {version}")
+            version_entry = None
+            # Remove the old dev entry
+            existing_aggregation["aggregations"].pop(version_entry_index)
 
     # If no existing entry, create new one
     if version_entry is None:
         version_entry = {
             "version": version,
+            "dev": is_dev,
             "first": timestamp,
             "last": timestamp,
             "results": {}
@@ -280,7 +299,7 @@ def process_benchmark(name, results_file, go_mod_path, package_pattern, json_fil
     # Load existing aggregation and update incrementally
     aggregation_file = json_file.replace('.json', '-aggregation.json')
     aggregation_data = load_existing_aggregation(aggregation_file)
-    aggregation_data = update_aggregation(aggregation_data, version, formatted_results, new_entry["time"])
+    aggregation_data = update_aggregation(aggregation_data, version, formatted_results, new_entry["time"], DEV_MODE)
     save_json(aggregation_file, aggregation_data, pretty=True)
     print(f"  Updated aggregation ({len(aggregation_data['aggregations'])} versions) in {aggregation_file}")
 

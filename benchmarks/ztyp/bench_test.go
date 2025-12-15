@@ -115,11 +115,12 @@ func BenchmarkBlockMainnet_Marshal(b *testing.B) {
 		b.Fatal(err)
 	}
 
-	var buf bytes.Buffer
+	var buf *bytes.Buffer
+
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		buf.Reset()
-		if err := block.Serialize(specMainnet, codec.NewEncodingWriter(&buf)); err != nil {
+		buf = new(bytes.Buffer)
+		if err := block.Serialize(specMainnet, codec.NewEncodingWriter(buf)); err != nil {
 			b.Fatal(err)
 		}
 	}
@@ -182,11 +183,12 @@ func BenchmarkStateMainnet_Marshal(b *testing.B) {
 		b.Fatal(err)
 	}
 
-	var buf bytes.Buffer
+	var buf *bytes.Buffer
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		buf.Reset()
-		if err := state.Serialize(specMainnet, codec.NewEncodingWriter(&buf)); err != nil {
+		buf = new(bytes.Buffer)
+
+		if err := state.Serialize(specMainnet, codec.NewEncodingWriter(buf)); err != nil {
 			b.Fatal(err)
 		}
 	}
@@ -250,11 +252,11 @@ func BenchmarkStateMainnet_HashTreeRoot(b *testing.B) {
 // 		b.Fatal(err)
 // 	}
 
-// 	var buf bytes.Buffer
+// 	var buf *bytes.Buffer
 // 	b.ResetTimer()
 // 	for i := 0; i < b.N; i++ {
-// 		buf.Reset()
-// 		if err := block.Serialize(specMinimal, codec.NewEncodingWriter(&buf)); err != nil {
+// 		buf = new(bytes.Buffer)
+// 		if err := block.Serialize(specMinimal, codec.NewEncodingWriter(buf)); err != nil {
 // 			b.Fatal(err)
 // 		}
 // 	}
@@ -318,11 +320,11 @@ func BenchmarkStateMainnet_HashTreeRoot(b *testing.B) {
 // 		b.Fatal(err)
 // 	}
 
-// 	var buf bytes.Buffer
+// 	var buf *bytes.Buffer
 // 	b.ResetTimer()
 // 	for i := 0; i < b.N; i++ {
-// 		buf.Reset()
-// 		if err := state.Serialize(specMinimal, codec.NewEncodingWriter(&buf)); err != nil {
+// 		buf = new(bytes.Buffer)
+// 		if err := state.Serialize(specMinimal, codec.NewEncodingWriter(buf)); err != nil {
 // 			b.Fatal(err)
 // 		}
 // 	}
