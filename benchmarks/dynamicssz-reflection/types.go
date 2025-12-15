@@ -84,7 +84,7 @@ type AttestationData struct {
 
 // IndexedAttestation represents an indexed attestation
 type IndexedAttestation struct {
-	AttestingIndices []uint64         `ssz-max:"2048"`
+	AttestingIndices []uint64 `ssz-max:"2048"`
 	Data             *AttestationData
 	Signature        BLSSignature `ssz-size:"96"`
 }
@@ -97,15 +97,15 @@ type AttesterSlashing struct {
 
 // Attestation represents an attestation
 type Attestation struct {
-	AggregationBits bitfield.Bitlist `ssz-max:"2048"`
+	AggregationBits bitfield.Bitlist `ssz-max:"2048" ssz-type:"bitlist"`
 	Data            *AttestationData
 	Signature       BLSSignature `ssz-size:"96"`
 }
 
 // DepositData represents deposit data
 type DepositData struct {
-	Pubkey                BLSPubKey    `ssz-size:"48"`
-	WithdrawalCredentials Hash32       `ssz-size:"32"`
+	Pubkey                BLSPubKey `ssz-size:"48"`
+	WithdrawalCredentials Hash32    `ssz-size:"32"`
 	Amount                Gwei
 	Signature             BLSSignature `ssz-size:"96"`
 }
@@ -211,14 +211,14 @@ type ExecutionPayloadHeader struct {
 
 // BeaconBlockBody represents a beacon block body (Deneb)
 type BeaconBlockBody struct {
-	RANDAOReveal          BLSSignature                  `ssz-size:"96"`
+	RANDAOReveal          BLSSignature `ssz-size:"96"`
 	ETH1Data              *ETH1Data
-	Graffiti              Hash32                        `ssz-size:"32"`
-	ProposerSlashings     []*ProposerSlashing           `dynssz-max:"MAX_PROPOSER_SLASHINGS" ssz-max:"16"`
-	AttesterSlashings     []*AttesterSlashing           `dynssz-max:"MAX_ATTESTER_SLASHINGS" ssz-max:"2"`
-	Attestations          []*Attestation                `dynssz-max:"MAX_ATTESTATIONS" ssz-max:"128"`
-	Deposits              []*Deposit                    `dynssz-max:"MAX_DEPOSITS" ssz-max:"16"`
-	VoluntaryExits        []*SignedVoluntaryExit        `dynssz-max:"MAX_VOLUNTARY_EXITS" ssz-max:"16"`
+	Graffiti              Hash32                 `ssz-size:"32"`
+	ProposerSlashings     []*ProposerSlashing    `dynssz-max:"MAX_PROPOSER_SLASHINGS" ssz-max:"16"`
+	AttesterSlashings     []*AttesterSlashing    `dynssz-max:"MAX_ATTESTER_SLASHINGS" ssz-max:"2"`
+	Attestations          []*Attestation         `dynssz-max:"MAX_ATTESTATIONS" ssz-max:"128"`
+	Deposits              []*Deposit             `dynssz-max:"MAX_DEPOSITS" ssz-max:"16"`
+	VoluntaryExits        []*SignedVoluntaryExit `dynssz-max:"MAX_VOLUNTARY_EXITS" ssz-max:"16"`
 	SyncAggregate         *SyncAggregate
 	ExecutionPayload      *ExecutionPayload
 	BLSToExecutionChanges []*SignedBLSToExecutionChange `dynssz-max:"MAX_BLS_TO_EXECUTION_CHANGES" ssz-max:"16"`
@@ -247,11 +247,11 @@ type BeaconState struct {
 	Slot                         Slot
 	Fork                         *Fork
 	LatestBlockHeader            *BeaconBlockHeader
-	BlockRoots                   []Root               `dynssz-size:"SLOTS_PER_HISTORICAL_ROOT,32" ssz-size:"8192,32"`
-	StateRoots                   []Root               `dynssz-size:"SLOTS_PER_HISTORICAL_ROOT,32" ssz-size:"8192,32"`
-	HistoricalRoots              []Root               `dynssz-max:"HISTORICAL_ROOTS_LIMIT" ssz-max:"16777216" ssz-size:"?,32"`
+	BlockRoots                   []Root `dynssz-size:"SLOTS_PER_HISTORICAL_ROOT,32" ssz-size:"8192,32"`
+	StateRoots                   []Root `dynssz-size:"SLOTS_PER_HISTORICAL_ROOT,32" ssz-size:"8192,32"`
+	HistoricalRoots              []Root `dynssz-max:"HISTORICAL_ROOTS_LIMIT" ssz-max:"16777216" ssz-size:"?,32"`
 	ETH1Data                     *ETH1Data
-	ETH1DataVotes                []*ETH1Data          `dynssz-max:"EPOCHS_PER_ETH1_VOTING_PERIOD*SLOTS_PER_EPOCH" ssz-max:"2048"`
+	ETH1DataVotes                []*ETH1Data `dynssz-max:"EPOCHS_PER_ETH1_VOTING_PERIOD*SLOTS_PER_EPOCH" ssz-max:"2048"`
 	ETH1DepositIndex             uint64
 	Validators                   []*Validator         `dynssz-max:"VALIDATOR_REGISTRY_LIMIT" ssz-max:"1099511627776"`
 	Balances                     []Gwei               `dynssz-max:"VALIDATOR_REGISTRY_LIMIT" ssz-max:"1099511627776"`
@@ -263,7 +263,7 @@ type BeaconState struct {
 	PreviousJustifiedCheckpoint  *Checkpoint
 	CurrentJustifiedCheckpoint   *Checkpoint
 	FinalizedCheckpoint          *Checkpoint
-	InactivityScores             []uint64             `dynssz-max:"VALIDATOR_REGISTRY_LIMIT" ssz-max:"1099511627776"`
+	InactivityScores             []uint64 `dynssz-max:"VALIDATOR_REGISTRY_LIMIT" ssz-max:"1099511627776"`
 	CurrentSyncCommittee         *SyncCommittee
 	NextSyncCommittee            *SyncCommittee
 	LatestExecutionPayloadHeader *ExecutionPayloadHeader

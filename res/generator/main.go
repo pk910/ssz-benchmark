@@ -143,7 +143,6 @@ func runGenerator(cfg *Config) error {
 
 		// Create DynSsz instance
 		dynSsz := dynssz.NewDynSsz(specs)
-		dynSsz.NoFastSsz = true
 
 		// Generate block
 		block := generateBlock(cfg, &preset.values)
@@ -152,7 +151,7 @@ func runGenerator(cfg *Config) error {
 			return fmt.Errorf("failed to marshal %s block: %w", preset.name, err)
 		}
 
-		blockHtr, err := dynSsz.HashTreeRoot(block)
+		blockHtr, err := dynSsz.HashTreeRoot(block.Message)
 		if err != nil {
 			return fmt.Errorf("failed to compute %s block HTR: %w", preset.name, err)
 		}

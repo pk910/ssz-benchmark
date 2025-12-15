@@ -97,7 +97,7 @@ type AttesterSlashing struct {
 
 // Attestation represents an attestation
 type Attestation struct {
-	AggregationBits bitfield.Bitlist `ssz-max:"2048"`
+	AggregationBits bitfield.Bitlist `ssz-max:"2048" ssz-type:"bitlist"`
 	Data            *AttestationData
 	Signature       BLSSignature `ssz-size:"96"`
 }
