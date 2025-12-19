@@ -74,9 +74,17 @@ ssz-benchmark/
 
 ## Benchmark Results
 
-![SSZ Benchmark Results](https://pk910.github.io/ssz-benchmark/benchmark-table.svg)
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="https://pk910.github.io/ssz-benchmark/benchmark-table.svg">
+  <source media="(prefers-color-scheme: light)" srcset="https://pk910.github.io/ssz-benchmark/benchmark-table-light.svg">
+  <img alt="SSZ Benchmark Results" src="https://pk910.github.io/ssz-benchmark/benchmark-table-light.svg">
+</picture>
 
-![SSZ Benchmark Charts](https://pk910.github.io/ssz-benchmark/benchmark-charts.svg)
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="https://pk910.github.io/ssz-benchmark/benchmark-charts.svg">
+  <source media="(prefers-color-scheme: light)" srcset="https://pk910.github.io/ssz-benchmark/benchmark-charts-light.svg">
+  <img alt="SSZ Benchmark Charts" src="https://pk910.github.io/ssz-benchmark/benchmark-charts-light.svg">
+</picture>
 
 View interactive benchmark results and historical trends at: https://pk910.github.io/ssz-benchmark/
 
