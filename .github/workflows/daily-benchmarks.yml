@@ -22,6 +22,11 @@ jobs:
         with:
           go-version: '1.25'
 
+      - name: Install Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
       - name: Get workflow timestamp
         id: timestamp
         run: echo "ts=$(date +%s)" >> "$GITHUB_OUTPUT"
@@ -72,17 +77,26 @@ jobs:
           git add results/
 
           # Check if there are changes to commit
-          if ! git diff --staged --quiet; then
-            if git log --oneline -1 2>/dev/null | grep -q .; then
-              # Branch has history, amend the commit
-              git commit --amend -m "Update benchmark results"
-            else
-              # First commit on the branch
-              git commit -m "Update benchmark results"
-            fi
-
-            # Force push to update the branch
-            git push --force origin benchmark-results
-          else
+          if git diff --staged --quiet; then
             echo "No changes to commit"
+            exit 0
           fi
+
+          # Rebuild the SVGs
+          ./svg-gen/generate-svg-charts.js
+          ./svg-gen/generate-svg-table.js
+
+          # Add the SVGs to the commit
+          git add *.svg
+
+          # Commit the changes
+          if git log --oneline -1 2>/dev/null | grep -q .; then
+            # Branch has history, amend the commit
+            git commit --amend -m "Update benchmark results"
+          else
+            # First commit on the branch
+            git commit -m "Update benchmark results"
+          fi
+
+          # Force push to update the branch
+          git push --force origin benchmark-results

@@ -74,7 +74,11 @@ ssz-benchmark/
 
 ## Benchmark Results
 
-View the latest benchmark results and historical trends at: https://pk910.github.io/ssz-benchmark/
+![SSZ Benchmark Results](https://pk910.github.io/ssz-benchmark/benchmark-table.svg)
+
+![SSZ Benchmark Charts](https://pk910.github.io/ssz-benchmark/benchmark-charts.svg)
+
+View interactive benchmark results and historical trends at: https://pk910.github.io/ssz-benchmark/
 
 ## Contributing
 
