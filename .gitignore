@@ -1,2 +1,4 @@
 tmp-*
+results/
 *_results.txt
+res/generator/generator

@@ -1,0 +1,45 @@
+name: Monthly Result Backup
+
+on:
+  schedule:
+    # Run on the 1st of every month at 00:00 UTC
+    - cron: '0 5 1 * *'
+  workflow_dispatch: # Allow manual trigger
+
+permissions:
+  contents: write
+
+jobs:
+  backup-results:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Backup benchmark results
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+          # Fetch benchmark-results branch
+          if git ls-remote --heads origin benchmark-results | grep -q benchmark-results; then
+            git fetch origin benchmark-results
+
+            # Remove old backup files
+            rm -rf results-backup
+            mkdir -p results-backup
+
+            # Extract results from benchmark-results branch
+            git archive origin/benchmark-results -- results/ | tar -x --strip-components=1 -C results-backup
+
+            # Check if there are changes to commit
+            git add results-backup
+            if git diff --cached --quiet; then
+              echo "No changes to backup"
+            else
+              git commit -m "Monthly backup of benchmark results ($(date +%Y-%m))"
+              git push
+            fi
+          else
+            echo "No benchmark-results branch found, skipping backup"
+          fi
