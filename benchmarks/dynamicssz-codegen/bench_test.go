@@ -8,7 +8,6 @@ import (
 	"testing"
 
 	ssz "github.com/pk910/dynamic-ssz"
-	"github.com/pk910/dynamic-ssz/sszutils"
 	"gopkg.in/yaml.v2"
 )
 
@@ -210,46 +209,6 @@ func BenchmarkBlockMainnet_HashTreeRoot(b *testing.B) {
 	}
 }
 
-func BenchmarkBlockMainnet_UnmarshalStreamBuffer(b *testing.B) {
-	var block *SignedBeaconBlock
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
-		block = new(SignedBeaconBlock)
-		dec := sszutils.NewBufferDecoder(blockMainnetData)
-		if err := block.UnmarshalSSZDecoder(dynSszMainnet, dec); err != nil {
-			b.Fatal(err)
-		}
-	}
-	b.StopTimer()
-	htr, err := dynSszMainnet.HashTreeRoot(block.Message)
-	if err != nil {
-		b.Fatal(err)
-	}
-	if htr != blockMainnetHTR {
-		b.Fatalf("HTR mismatch: got %x, want %x", htr, blockMainnetHTR)
-	}
-}
-
-func BenchmarkBlockMainnet_MarshalStreamBuffer(b *testing.B) {
-	block := new(SignedBeaconBlock)
-	if err := dynSszMainnet.UnmarshalSSZ(block, blockMainnetData); err != nil {
-		b.Fatal(err)
-	}
-	bufSize := len(blockMainnetData)
-	var enc *sszutils.BufferEncoder
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
-		enc = sszutils.NewBufferEncoder(make([]byte, 0, bufSize))
-		if err := block.MarshalSSZEncoder(dynSszMainnet, enc); err != nil {
-			b.Fatal(err)
-		}
-	}
-	b.StopTimer()
-	if !bytes.Equal(enc.GetBuffer(), blockMainnetData) {
-		b.Fatal("marshaled data does not match original")
-	}
-}
-
 // ========================= STATE MAINNET BENCHMARKS =========================
 
 func BenchmarkStateMainnet_Unmarshal(b *testing.B) {
@@ -350,46 +309,6 @@ func BenchmarkStateMainnet_HashTreeRoot(b *testing.B) {
 	b.StopTimer()
 	if htr != stateMainnetHTR {
 		b.Fatalf("HTR mismatch: got %x, want %x", htr, stateMainnetHTR)
-	}
-}
-
-func BenchmarkStateMainnet_UnmarshalStreamBuffer(b *testing.B) {
-	var state *BeaconState
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
-		state = new(BeaconState)
-		dec := sszutils.NewBufferDecoder(stateMainnetData)
-		if err := state.UnmarshalSSZDecoder(dynSszMainnet, dec); err != nil {
-			b.Fatal(err)
-		}
-	}
-	b.StopTimer()
-	htr, err := dynSszMainnet.HashTreeRoot(state)
-	if err != nil {
-		b.Fatal(err)
-	}
-	if htr != stateMainnetHTR {
-		b.Fatalf("HTR mismatch: got %x, want %x", htr, stateMainnetHTR)
-	}
-}
-
-func BenchmarkStateMainnet_MarshalStreamBuffer(b *testing.B) {
-	state := new(BeaconState)
-	if err := dynSszMainnet.UnmarshalSSZ(state, stateMainnetData); err != nil {
-		b.Fatal(err)
-	}
-	bufSize := len(stateMainnetData)
-	var enc *sszutils.BufferEncoder
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
-		enc = sszutils.NewBufferEncoder(make([]byte, 0, bufSize))
-		if err := state.MarshalSSZEncoder(dynSszMainnet, enc); err != nil {
-			b.Fatal(err)
-		}
-	}
-	b.StopTimer()
-	if !bytes.Equal(enc.GetBuffer(), stateMainnetData) {
-		b.Fatal("marshaled data does not match original")
 	}
 }
 
@@ -504,46 +423,6 @@ func BenchmarkBlockMinimal_HashTreeRoot(b *testing.B) {
 	}
 }
 
-func BenchmarkBlockMinimal_UnmarshalStreamBuffer(b *testing.B) {
-	var block *SignedBeaconBlock
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
-		block = new(SignedBeaconBlock)
-		dec := sszutils.NewBufferDecoder(blockMinimalData)
-		if err := block.UnmarshalSSZDecoder(dynSszMinimal, dec); err != nil {
-			b.Fatal(err)
-		}
-	}
-	b.StopTimer()
-	htr, err := dynSszMinimal.HashTreeRoot(block.Message)
-	if err != nil {
-		b.Fatal(err)
-	}
-	if htr != blockMinimalHTR {
-		b.Fatalf("HTR mismatch: got %x, want %x", htr, blockMinimalHTR)
-	}
-}
-
-func BenchmarkBlockMinimal_MarshalStreamBuffer(b *testing.B) {
-	block := new(SignedBeaconBlock)
-	if err := dynSszMinimal.UnmarshalSSZ(block, blockMinimalData); err != nil {
-		b.Fatal(err)
-	}
-	bufSize := len(blockMinimalData)
-	var enc *sszutils.BufferEncoder
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
-		enc = sszutils.NewBufferEncoder(make([]byte, 0, bufSize))
-		if err := block.MarshalSSZEncoder(dynSszMinimal, enc); err != nil {
-			b.Fatal(err)
-		}
-	}
-	b.StopTimer()
-	if !bytes.Equal(enc.GetBuffer(), blockMinimalData) {
-		b.Fatal("marshaled data does not match original")
-	}
-}
-
 // ========================= STATE MINIMAL BENCHMARKS =========================
 
 func BenchmarkStateMinimal_Unmarshal(b *testing.B) {
@@ -644,45 +523,5 @@ func BenchmarkStateMinimal_HashTreeRoot(b *testing.B) {
 	b.StopTimer()
 	if htr != stateMinimalHTR {
 		b.Fatalf("HTR mismatch: got %x, want %x", htr, stateMinimalHTR)
-	}
-}
-
-func BenchmarkStateMinimal_UnmarshalStreamBuffer(b *testing.B) {
-	var state *BeaconState
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
-		state = new(BeaconState)
-		dec := sszutils.NewBufferDecoder(stateMinimalData)
-		if err := state.UnmarshalSSZDecoder(dynSszMinimal, dec); err != nil {
-			b.Fatal(err)
-		}
-	}
-	b.StopTimer()
-	htr, err := dynSszMinimal.HashTreeRoot(state)
-	if err != nil {
-		b.Fatal(err)
-	}
-	if htr != stateMinimalHTR {
-		b.Fatalf("HTR mismatch: got %x, want %x", htr, stateMinimalHTR)
-	}
-}
-
-func BenchmarkStateMinimal_MarshalStreamBuffer(b *testing.B) {
-	state := new(BeaconState)
-	if err := dynSszMinimal.UnmarshalSSZ(state, stateMinimalData); err != nil {
-		b.Fatal(err)
-	}
-	bufSize := len(stateMinimalData)
-	var enc *sszutils.BufferEncoder
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
-		enc = sszutils.NewBufferEncoder(make([]byte, 0, bufSize))
-		if err := state.MarshalSSZEncoder(dynSszMinimal, enc); err != nil {
-			b.Fatal(err)
-		}
-	}
-	b.StopTimer()
-	if !bytes.Equal(enc.GetBuffer(), stateMinimalData) {
-		b.Fatal("marshaled data does not match original")
 	}
 }
