@@ -106,11 +106,11 @@ for op in ['Unmarshal', 'Marshal', 'HashTreeRoot']:
     results_md += make_table_row('fastssz (v1)', fastssz_v1, f'BenchmarkBlockMainnet_{op}', op)
 for op in ['Unmarshal', 'Marshal', 'HashTreeRoot']:
     results_md += make_table_row('fastssz (v2)', fastssz_v2, f'BenchmarkBlockMainnet_{op}', op)
-for op in ['Unmarshal', 'Marshal', 'HashTreeRoot']:
+for op in ['Unmarshal', 'UnmarshalReader', 'Marshal', 'MarshalWriter', 'HashTreeRoot']:
     results_md += make_table_row('dynamic-ssz (codegen)', dynamicssz_codegen, f'BenchmarkBlockMainnet_{op}', op)
-for op in ['Unmarshal', 'Marshal', 'HashTreeRoot']:
+for op in ['Unmarshal', 'UnmarshalReader', 'Marshal', 'MarshalWriter', 'HashTreeRoot']:
     results_md += make_table_row('dynamic-ssz (reflection)', dynamicssz_refl, f'BenchmarkBlockMainnet_{op}', op)
-for op in ['Unmarshal', 'Marshal', 'HashTreeRoot']:
+for op in ['Unmarshal', 'UnmarshalReader', 'Marshal', 'MarshalWriter', 'HashTreeRoot']:
     results_md += make_table_row('karalabe-ssz', karalabessz, f'BenchmarkBlockMainnet_{op}', op)
 
 results_md += """
@@ -125,11 +125,11 @@ for op in ['Unmarshal', 'Marshal', 'HashTreeRoot']:
     results_md += make_table_row('fastssz (v1)', fastssz_v1, f'BenchmarkStateMainnet_{op}', op)
 for op in ['Unmarshal', 'Marshal', 'HashTreeRoot']:
     results_md += make_table_row('fastssz (v2)', fastssz_v2, f'BenchmarkStateMainnet_{op}', op)
-for op in ['Unmarshal', 'Marshal', 'HashTreeRoot']:
+for op in ['Unmarshal', 'UnmarshalReader', 'Marshal', 'MarshalWriter', 'HashTreeRoot']:
     results_md += make_table_row('dynamic-ssz (codegen)', dynamicssz_codegen, f'BenchmarkStateMainnet_{op}', op)
-for op in ['Unmarshal', 'Marshal', 'HashTreeRoot']:
+for op in ['Unmarshal', 'UnmarshalReader', 'Marshal', 'MarshalWriter', 'HashTreeRoot']:
     results_md += make_table_row('dynamic-ssz (reflection)', dynamicssz_refl, f'BenchmarkStateMainnet_{op}', op)
-for op in ['Unmarshal', 'Marshal', 'HashTreeRoot']:
+for op in ['Unmarshal', 'UnmarshalReader', 'Marshal', 'MarshalWriter', 'HashTreeRoot']:
     results_md += make_table_row('karalabe-ssz', karalabessz, f'BenchmarkStateMainnet_{op}', op)
 
 results_md += """
@@ -142,9 +142,9 @@ results_md += """
 # Block Minimal (karalabe-ssz doesn't support minimal)
 for op in ['Unmarshal', 'Marshal', 'HashTreeRoot']:
     results_md += make_table_row('fastssz (v2)', fastssz_v2, f'BenchmarkBlockMinimal_{op}', op)
-for op in ['Unmarshal', 'Marshal', 'HashTreeRoot']:
+for op in ['Unmarshal', 'UnmarshalReader', 'Marshal', 'MarshalWriter', 'HashTreeRoot']:
     results_md += make_table_row('dynamic-ssz (codegen)', dynamicssz_codegen, f'BenchmarkBlockMinimal_{op}', op)
-for op in ['Unmarshal', 'Marshal', 'HashTreeRoot']:
+for op in ['Unmarshal', 'UnmarshalReader', 'Marshal', 'MarshalWriter', 'HashTreeRoot']:
     results_md += make_table_row('dynamic-ssz (reflection)', dynamicssz_refl, f'BenchmarkBlockMinimal_{op}', op)
 
 results_md += """
@@ -157,9 +157,9 @@ results_md += """
 # State Minimal (karalabe-ssz doesn't support minimal)
 for op in ['Unmarshal', 'Marshal', 'HashTreeRoot']:
     results_md += make_table_row('fastssz (v2)', fastssz_v2, f'BenchmarkStateMinimal_{op}', op)
-for op in ['Unmarshal', 'Marshal', 'HashTreeRoot']:
+for op in ['Unmarshal', 'UnmarshalReader', 'Marshal', 'MarshalWriter', 'HashTreeRoot']:
     results_md += make_table_row('dynamic-ssz (codegen)', dynamicssz_codegen, f'BenchmarkStateMinimal_{op}', op)
-for op in ['Unmarshal', 'Marshal', 'HashTreeRoot']:
+for op in ['Unmarshal', 'UnmarshalReader', 'Marshal', 'MarshalWriter', 'HashTreeRoot']:
     results_md += make_table_row('dynamic-ssz (reflection)', dynamicssz_refl, f'BenchmarkStateMinimal_{op}', op)
 
 results_md += """

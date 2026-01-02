@@ -70,11 +70,8 @@ func init() {
 
 	// Initialize dynamic SSZ with pure reflection mode (NoFastSsz=true)
 	// This disables any generated SSZ code and uses only reflection
-	dynSszMainnet = dynssz.NewDynSsz(nil)
-	dynSszMainnet.NoFastSsz = true // Force pure reflection mode
-
-	dynSszMinimal = dynssz.NewDynSsz(minimalSpecs)
-	dynSszMinimal.NoFastSsz = true // Force pure reflection mode
+	dynSszMainnet = dynssz.NewDynSsz(nil, dynssz.WithNoFastSsz())
+	dynSszMinimal = dynssz.NewDynSsz(minimalSpecs, dynssz.WithNoFastSsz())
 }
 
 func loadHTR(path string) [32]byte {
@@ -95,6 +92,23 @@ func loadHTR(path string) [32]byte {
 	return htr
 }
 
+type TestWriter struct {
+	data []byte
+}
+
+func (w *TestWriter) Write(p []byte) (n int, err error) {
+	w.data = append(w.data, p...)
+	return len(p), nil
+}
+
+func (w *TestWriter) Written() int {
+	return len(w.data)
+}
+
+func (w *TestWriter) Reset() {
+	w.data = w.data[:0]
+}
+
 // ========================= BLOCK MAINNET BENCHMARKS =========================
 
 func BenchmarkBlockMainnet_Unmarshal(b *testing.B) {
@@ -103,6 +117,26 @@ func BenchmarkBlockMainnet_Unmarshal(b *testing.B) {
 	for i := 0; i < b.N; i++ {
 		block = new(SignedBeaconBlock)
 		if err := dynSszMainnet.UnmarshalSSZ(block, blockMainnetData); err != nil {
+			b.Fatal(err)
+		}
+	}
+	b.StopTimer()
+	htr, err := dynSszMainnet.HashTreeRoot(block.Message)
+	if err != nil {
+		b.Fatal(err)
+	}
+	if htr != blockMainnetHTR {
+		b.Fatalf("HTR mismatch: got %x, want %x", htr, blockMainnetHTR)
+	}
+}
+
+func BenchmarkBlockMainnet_UnmarshalReader(b *testing.B) {
+	var block *SignedBeaconBlock
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		block = new(SignedBeaconBlock)
+		reader := bytes.NewReader(blockMainnetData)
+		if err := dynSszMainnet.UnmarshalSSZReader(block, reader, len(blockMainnetData)); err != nil {
 			b.Fatal(err)
 		}
 	}
@@ -132,6 +166,28 @@ func BenchmarkBlockMainnet_Marshal(b *testing.B) {
 	}
 	b.StopTimer()
 	if !bytes.Equal(data, blockMainnetData) {
+		b.Fatal("marshaled data does not match original")
+	}
+}
+
+func BenchmarkBlockMainnet_MarshalWriter(b *testing.B) {
+	block := new(SignedBeaconBlock)
+	if err := dynSszMainnet.UnmarshalSSZ(block, blockMainnetData); err != nil {
+		b.Fatal(err)
+	}
+	var writer = &TestWriter{
+		data: make([]byte, 0, len(blockMainnetData)),
+	}
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		writer.Reset()
+		err := dynSszMainnet.MarshalSSZWriter(block, writer)
+		if err != nil {
+			b.Fatal(err)
+		}
+	}
+	b.StopTimer()
+	if !bytes.Equal(writer.data, blockMainnetData) {
 		b.Fatal("marshaled data does not match original")
 	}
 }
@@ -177,6 +233,26 @@ func BenchmarkStateMainnet_Unmarshal(b *testing.B) {
 	}
 }
 
+func BenchmarkStateMainnet_UnmarshalReader(b *testing.B) {
+	var state *BeaconState
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		state = new(BeaconState)
+		reader := bytes.NewReader(stateMainnetData)
+		if err := dynSszMainnet.UnmarshalSSZReader(state, reader, len(stateMainnetData)); err != nil {
+			b.Fatal(err)
+		}
+	}
+	b.StopTimer()
+	htr, err := dynSszMainnet.HashTreeRoot(state)
+	if err != nil {
+		b.Fatal(err)
+	}
+	if htr != stateMainnetHTR {
+		b.Fatalf("HTR mismatch: got %x, want %x", htr, stateMainnetHTR)
+	}
+}
+
 func BenchmarkStateMainnet_Marshal(b *testing.B) {
 	state := new(BeaconState)
 	if err := dynSszMainnet.UnmarshalSSZ(state, stateMainnetData); err != nil {
@@ -193,6 +269,28 @@ func BenchmarkStateMainnet_Marshal(b *testing.B) {
 	}
 	b.StopTimer()
 	if !bytes.Equal(data, stateMainnetData) {
+		b.Fatal("marshaled data does not match original")
+	}
+}
+
+func BenchmarkStateMainnet_MarshalWriter(b *testing.B) {
+	state := new(BeaconState)
+	if err := dynSszMainnet.UnmarshalSSZ(state, stateMainnetData); err != nil {
+		b.Fatal(err)
+	}
+	var writer = &TestWriter{
+		data: make([]byte, 0, len(stateMainnetData)),
+	}
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		writer.Reset()
+		err := dynSszMainnet.MarshalSSZWriter(state, writer)
+		if err != nil {
+			b.Fatal(err)
+		}
+	}
+	b.StopTimer()
+	if !bytes.Equal(writer.data, stateMainnetData) {
 		b.Fatal("marshaled data does not match original")
 	}
 }
@@ -238,6 +336,26 @@ func BenchmarkBlockMinimal_Unmarshal(b *testing.B) {
 	}
 }
 
+func BenchmarkBlockMinimal_UnmarshalReader(b *testing.B) {
+	var block *SignedBeaconBlock
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		block = new(SignedBeaconBlock)
+		reader := bytes.NewReader(blockMinimalData)
+		if err := dynSszMinimal.UnmarshalSSZReader(block, reader, len(blockMinimalData)); err != nil {
+			b.Fatal(err)
+		}
+	}
+	b.StopTimer()
+	htr, err := dynSszMinimal.HashTreeRoot(block.Message)
+	if err != nil {
+		b.Fatal(err)
+	}
+	if htr != blockMinimalHTR {
+		b.Fatalf("HTR mismatch: got %x, want %x", htr, blockMinimalHTR)
+	}
+}
+
 func BenchmarkBlockMinimal_Marshal(b *testing.B) {
 	block := new(SignedBeaconBlock)
 	if err := dynSszMinimal.UnmarshalSSZ(block, blockMinimalData); err != nil {
@@ -254,6 +372,36 @@ func BenchmarkBlockMinimal_Marshal(b *testing.B) {
 	}
 	b.StopTimer()
 	if !bytes.Equal(data, blockMinimalData) {
+		b.Fatal("marshaled data does not match original")
+	}
+}
+
+func BenchmarkBlockMinimal_MarshalWriter(b *testing.B) {
+	block := new(SignedBeaconBlock)
+	if err := dynSszMinimal.UnmarshalSSZ(block, blockMinimalData); err != nil {
+		b.Fatal(err)
+	}
+	var writer = &TestWriter{
+		data: make([]byte, 0, len(blockMinimalData)),
+	}
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		writer.Reset()
+		err := dynSszMinimal.MarshalSSZWriter(block, writer)
+		if err != nil {
+			b.Fatal(err)
+		}
+	}
+	b.StopTimer()
+	if !bytes.Equal(writer.data, blockMinimalData) {
+		for i := 0; i < len(writer.data); i++ {
+			if i >= len(blockMinimalData) {
+				b.Fatalf("marshaled data is longer than original: %d > %d", len(writer.data), len(blockMinimalData))
+			}
+			if writer.data[i] != blockMinimalData[i] {
+				b.Fatalf("marshaled data does not match original at index %d: got %x, want %x", i, writer.data[i], blockMinimalData[i])
+			}
+		}
 		b.Fatal("marshaled data does not match original")
 	}
 }
@@ -299,6 +447,26 @@ func BenchmarkStateMinimal_Unmarshal(b *testing.B) {
 	}
 }
 
+func BenchmarkStateMinimal_UnmarshalReader(b *testing.B) {
+	var state *BeaconState
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		state = new(BeaconState)
+		reader := bytes.NewReader(stateMinimalData)
+		if err := dynSszMinimal.UnmarshalSSZReader(state, reader, len(stateMinimalData)); err != nil {
+			b.Fatal(err)
+		}
+	}
+	b.StopTimer()
+	htr, err := dynSszMinimal.HashTreeRoot(state)
+	if err != nil {
+		b.Fatal(err)
+	}
+	if htr != stateMinimalHTR {
+		b.Fatalf("HTR mismatch: got %x, want %x", htr, stateMinimalHTR)
+	}
+}
+
 func BenchmarkStateMinimal_Marshal(b *testing.B) {
 	state := new(BeaconState)
 	if err := dynSszMinimal.UnmarshalSSZ(state, stateMinimalData); err != nil {
@@ -315,6 +483,28 @@ func BenchmarkStateMinimal_Marshal(b *testing.B) {
 	}
 	b.StopTimer()
 	if !bytes.Equal(data, stateMinimalData) {
+		b.Fatal("marshaled data does not match original")
+	}
+}
+
+func BenchmarkStateMinimal_MarshalWriter(b *testing.B) {
+	state := new(BeaconState)
+	if err := dynSszMinimal.UnmarshalSSZ(state, stateMinimalData); err != nil {
+		b.Fatal(err)
+	}
+	var writer = &TestWriter{
+		data: make([]byte, 0, len(stateMinimalData)),
+	}
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		writer.Reset()
+		err := dynSszMinimal.MarshalSSZWriter(state, writer)
+		if err != nil {
+			b.Fatal(err)
+		}
+	}
+	b.StopTimer()
+	if !bytes.Equal(writer.data, stateMinimalData) {
 		b.Fatal("marshaled data does not match original")
 	}
 }
