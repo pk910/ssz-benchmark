@@ -70,11 +70,8 @@ func init() {
 
 	// Initialize dynamic SSZ with pure reflection mode (NoFastSsz=true)
 	// This disables any generated SSZ code and uses only reflection
-	dynSszMainnet = dynssz.NewDynSsz(nil)
-	dynSszMainnet.NoFastSsz = true // Force pure reflection mode
-
-	dynSszMinimal = dynssz.NewDynSsz(minimalSpecs)
-	dynSszMinimal.NoFastSsz = true // Force pure reflection mode
+	dynSszMainnet = dynssz.NewDynSsz(nil, dynssz.WithNoFastSsz())
+	dynSszMinimal = dynssz.NewDynSsz(minimalSpecs, dynssz.WithNoFastSsz())
 }
 
 func loadHTR(path string) [32]byte {
@@ -139,7 +136,7 @@ func BenchmarkBlockMainnet_UnmarshalReader(b *testing.B) {
 	for i := 0; i < b.N; i++ {
 		block = new(SignedBeaconBlock)
 		reader := bytes.NewReader(blockMainnetData)
-		if err := dynSszMainnet.UnmarshalSSZReader(block, reader, -1); err != nil {
+		if err := dynSszMainnet.UnmarshalSSZReader(block, reader, len(blockMainnetData)); err != nil {
 			b.Fatal(err)
 		}
 	}
@@ -242,7 +239,7 @@ func BenchmarkStateMainnet_UnmarshalReader(b *testing.B) {
 	for i := 0; i < b.N; i++ {
 		state = new(BeaconState)
 		reader := bytes.NewReader(stateMainnetData)
-		if err := dynSszMainnet.UnmarshalSSZReader(state, reader, -1); err != nil {
+		if err := dynSszMainnet.UnmarshalSSZReader(state, reader, len(stateMainnetData)); err != nil {
 			b.Fatal(err)
 		}
 	}
@@ -345,7 +342,7 @@ func BenchmarkBlockMinimal_UnmarshalReader(b *testing.B) {
 	for i := 0; i < b.N; i++ {
 		block = new(SignedBeaconBlock)
 		reader := bytes.NewReader(blockMinimalData)
-		if err := dynSszMinimal.UnmarshalSSZReader(block, reader, -1); err != nil {
+		if err := dynSszMinimal.UnmarshalSSZReader(block, reader, len(blockMinimalData)); err != nil {
 			b.Fatal(err)
 		}
 	}
@@ -456,7 +453,7 @@ func BenchmarkStateMinimal_UnmarshalReader(b *testing.B) {
 	for i := 0; i < b.N; i++ {
 		state = new(BeaconState)
 		reader := bytes.NewReader(stateMinimalData)
-		if err := dynSszMinimal.UnmarshalSSZReader(state, reader, -1); err != nil {
+		if err := dynSszMinimal.UnmarshalSSZReader(state, reader, len(stateMinimalData)); err != nil {
 			b.Fatal(err)
 		}
 	}

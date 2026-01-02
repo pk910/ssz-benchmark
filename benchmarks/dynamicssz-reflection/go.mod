@@ -3,7 +3,7 @@ module github.com/pk910/ssz-benchmark/benchmarks/dynamicssz-reflection
 go 1.25.0
 
 require (
-	github.com/pk910/dynamic-ssz v1.1.2
+	github.com/pk910/dynamic-ssz v1.2.0
 	github.com/prysmaticlabs/go-bitfield v0.0.0-20240618144021-706c95b2dd15
 	gopkg.in/yaml.v2 v2.4.0
 )
@@ -14,5 +14,3 @@ require (
 	github.com/pk910/hashtree-bindings v0.0.1 // indirect
 	golang.org/x/sys v0.36.0 // indirect
 )
-
-replace github.com/pk910/dynamic-ssz => ../../../dynamic-ssz

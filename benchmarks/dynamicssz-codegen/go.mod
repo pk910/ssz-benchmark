@@ -3,7 +3,7 @@ module github.com/pk910/ssz-benchmark/benchmarks/dynamicssz
 go 1.25.0
 
 require (
-	github.com/pk910/dynamic-ssz v0.0.0-20251230180814-9edadc012644
+	github.com/pk910/dynamic-ssz v1.2.0
 	github.com/prysmaticlabs/go-bitfield v0.0.0-20240618144021-706c95b2dd15
 	gopkg.in/yaml.v2 v2.4.0
 )
