@@ -38,12 +38,25 @@ if [ -d "results" ] && [ -n "$(ls -A results 2>/dev/null)" ]; then
     echo "Results directory already contains files, skipping download"
 else
     echo "Fetching existing results from benchmark-results branch..."
-    if git ls-remote --heads origin benchmark-results 2>/dev/null | grep -q benchmark-results; then
+    # Retry git ls-remote up to 3 times to handle transient GitHub API failures
+    BRANCH_EXISTS=false
+    for attempt in 1 2 3; do
+        if git ls-remote --heads origin benchmark-results 2>&1 | grep -q benchmark-results; then
+            BRANCH_EXISTS=true
+            break
+        fi
+        if [ "$attempt" -lt 3 ]; then
+            echo "  git ls-remote attempt $attempt failed, retrying in 5s..."
+            sleep 5
+        fi
+    done
+
+    if [ "$BRANCH_EXISTS" = true ]; then
         git fetch origin benchmark-results
         # Extract existing JSON files from the branch
         git archive origin/benchmark-results -- results/ 2>/dev/null | tar -x 2>/dev/null || echo "No existing results found"
     else
-        echo "No benchmark-results branch found, starting fresh"
+        echo "WARNING: No benchmark-results branch found after 3 attempts, starting fresh"
     fi
 fi
 

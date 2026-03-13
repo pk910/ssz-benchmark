@@ -61,6 +61,36 @@ jobs:
 
           # Check if benchmark-results branch exists remotely
           if git ls-remote --heads origin benchmark-results | grep -q benchmark-results; then
+            # Safety check: compare new result count against existing to prevent data loss
+            NEW_COUNT=$(python3 -c "
+          import json, os
+          total = 0
+          for f in os.listdir('/tmp/benchmark-results'):
+              if f.endswith('.json') and 'aggregation' not in f:
+                  with open(os.path.join('/tmp/benchmark-results', f)) as fh:
+                      total += len(json.load(fh).get('benchmarks', []))
+          print(total)
+          ")
+            mkdir -p /tmp/old-results
+            git archive origin/benchmark-results -- results/ 2>/dev/null | tar -x -C /tmp/old-results --strip-components=1 2>/dev/null || true
+            OLD_COUNT=$(python3 -c "
+          import json, os
+          total = 0
+          d = '/tmp/old-results'
+          if os.path.isdir(d):
+              for f in os.listdir(d):
+                  if f.endswith('.json') and 'aggregation' not in f:
+                      with open(os.path.join(d, f)) as fh:
+                          total += len(json.load(fh).get('benchmarks', []))
+          print(total)
+          ")
+            rm -rf /tmp/old-results
+            echo "Result count: new=$NEW_COUNT, existing=$OLD_COUNT"
+            if [ "$OLD_COUNT" -gt 10 ] && [ "$NEW_COUNT" -lt $((OLD_COUNT / 2)) ]; then
+              echo "ERROR: New results ($NEW_COUNT) are less than half of existing ($OLD_COUNT). Aborting to prevent data loss."
+              exit 1
+            fi
+
             # Branch exists, fetch and checkout
             git checkout -B benchmark-results origin/benchmark-results
           else
