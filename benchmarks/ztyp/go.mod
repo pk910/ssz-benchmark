@@ -3,7 +3,7 @@ module github.com/pk910/ssz-benchmark/benchmarks/ztyp
 go 1.23
 
 require (
-	github.com/protolambda/zrnt v0.32.2
+	github.com/protolambda/zrnt v0.34.1
 	github.com/protolambda/ztyp v0.2.2
 )
 

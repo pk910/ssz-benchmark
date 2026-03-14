@@ -1,0 +1,120 @@
+name: Daily Library Update
+
+on:
+  workflow_dispatch:
+  schedule:
+    # Run daily at 04:30 UTC (2h after the first benchmark at 02:30 UTC)
+    - cron: '30 4 * * *'
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  update-libraries:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.25'
+
+      - name: Run update scripts
+        id: update
+        run: |
+          UPDATE_FAILED=""
+          for dir in benchmarks/*/; do
+            name=$(basename "$dir")
+            if [ "$name" = "common" ] || [ ! -f "$dir/update.sh" ]; then
+              continue
+            fi
+            echo "::group::Updating $name"
+            if ! bash "$dir/update.sh"; then
+              echo "::error::Update failed for $name"
+              UPDATE_FAILED="$UPDATE_FAILED $name"
+            fi
+            echo "::endgroup::"
+          done
+
+          if [ -n "$UPDATE_FAILED" ]; then
+            echo "update_failed=true" >> "$GITHUB_OUTPUT"
+            echo "UPDATE_FAILED=$UPDATE_FAILED" >> "$GITHUB_ENV"
+          fi
+
+      - name: Check for changes
+        id: changes
+        run: |
+          if git diff --quiet && [ -z "$(git ls-files --others --exclude-standard)" ]; then
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+            echo "No changes detected, all libraries are up to date."
+          else
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+            echo "Changes detected:"
+            git diff --stat
+          fi
+
+      - name: Quick benchmark test
+        if: steps.changes.outputs.changed == 'true'
+        id: test
+        run: |
+          TEST_FAILED=""
+          for dir in benchmarks/*/; do
+            name=$(basename "$dir")
+            if [ "$name" = "common" ]; then
+              continue
+            fi
+            echo "::group::Testing $name"
+            if ! (cd "$dir" && go test -run=^$ -bench=. -benchmem -count=1 -timeout 10m); then
+              echo "::error::Benchmark test failed for $name"
+              TEST_FAILED="$TEST_FAILED $name"
+            fi
+            echo "::endgroup::"
+          done
+
+          if [ -n "$TEST_FAILED" ]; then
+            echo "test_passed=false" >> "$GITHUB_OUTPUT"
+            echo "TEST_FAILED=$TEST_FAILED" >> "$GITHUB_ENV"
+          else
+            echo "test_passed=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Commit and push on success
+        if: steps.changes.outputs.changed == 'true' && steps.test.outputs.test_passed == 'true' && steps.update.outputs.update_failed != 'true'
+        run: |
+          git config --local user.email "github-actions[bot]@users.noreply.github.com"
+          git config --local user.name "github-actions[bot]"
+          git add -A
+          git commit -m "Update SSZ library versions to latest releases"
+          git push
+
+      - name: Create PR on failure
+        if: steps.changes.outputs.changed == 'true' && (steps.test.outputs.test_passed != 'true' || steps.update.outputs.update_failed == 'true')
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          BRANCH="auto-update/$(date +%Y%m%d%H%M%S)"
+          git config --local user.email "github-actions[bot]@users.noreply.github.com"
+          git config --local user.name "github-actions[bot]"
+          git checkout -b "$BRANCH"
+          git add -A
+          git commit -m "Update SSZ library versions (needs review)"
+          git push -u origin "$BRANCH"
+
+          BODY="Automated library version update failed and needs manual review."
+          BODY="$BODY"$'\n\n'
+          if [ -n "$UPDATE_FAILED" ]; then
+            BODY="$BODY**Update failures:**$UPDATE_FAILED"$'\n\n'
+          fi
+          if [ -n "$TEST_FAILED" ]; then
+            BODY="$BODY**Benchmark test failures:**$TEST_FAILED"$'\n\n'
+          fi
+          BODY="$BODY"$'\n'"cc @pk910"
+
+          gh pr create \
+            --title "Auto-update SSZ library versions ($(date +%Y-%m-%d))" \
+            --body "$BODY" \
+            --assignee pk910
