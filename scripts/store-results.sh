@@ -354,6 +354,13 @@ benchmarks = [
         "json_file": "results/karalabessz.json"
     },
     {
+        "name": "prysmssz",
+        "results_file": "prysmssz_results.txt",
+        "go_mod_path": "benchmarks/prysmssz/go.mod",
+        "package_pattern": r"github\.com/prysmaticlabs/fastssz",
+        "json_file": "results/prysmssz.json"
+    },
+    {
         "name": "ztyp",
         "results_file": "ztyp_results.txt",
         "go_mod_path": "benchmarks/ztyp/go.mod",
@@ -375,6 +382,6 @@ print("\nAll results processed successfully!")
 EOF
 
 # Clean up temporary result files
-rm -f fastssz-v1_results.txt fastssz-v2_results.txt dynamicssz-codegen_results.txt dynamicssz-reflection_results.txt karalabessz_results.txt ztyp_results.txt
+rm -f fastssz-v1_results.txt fastssz-v2_results.txt dynamicssz-codegen_results.txt dynamicssz-reflection_results.txt karalabessz_results.txt prysmssz_results.txt ztyp_results.txt
 
 echo "Done!"

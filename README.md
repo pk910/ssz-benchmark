@@ -7,6 +7,7 @@ A comprehensive benchmarking suite for comparing SSZ (Simple Serialize) library 
 - **[fastssz](https://github.com/ferranbt/fastssz)** - Code generation based SSZ library
 - **[dynamic-ssz](https://github.com/pk910/dynamic-ssz)** - Dynamic SSZ library with support for both reflection and code generation modes
 - **[karalabe-ssz](https://github.com/karalabe/ssz)** - High-performance SSZ library
+- **[prysm-ssz](https://github.com/OffchainLabs/fastssz)** - Prysm's fork of fastssz
 - **[ztyp](https://github.com/protolambda/ztyp)** / **[zrnt](https://github.com/protolambda/zrnt)** - Typed SSZ library focused on merkle-tree representations (uses zrnt's pre-defined Ethereum types)
 
 ## Test Data
@@ -49,6 +50,10 @@ go test -run=^$ -bench=. -benchmem
 cd benchmarks/karalabessz
 go test -run=^$ -bench=. -benchmem
 
+# Run prysm-ssz benchmarks
+cd benchmarks/prysmssz
+go test -run=^$ -bench=. -benchmem
+
 # Run ztyp/zrnt benchmarks
 cd benchmarks/ztyp
 go test -run=^$ -bench=. -benchmem
@@ -63,6 +68,7 @@ ssz-benchmark/
 │   ├── dynamicssz/           # dynamic-ssz with generated code
 │   ├── dynamicssz-reflection/# dynamic-ssz pure reflection (no codegen)
 │   ├── karalabessz/          # karalabe-ssz benchmark module
+│   ├── prysmssz/             # prysm-ssz benchmark module
 │   └── ztyp/                 # ztyp/zrnt benchmark module
 ├── res/                      # Test data files
 │   ├── block-mainnet.ssz

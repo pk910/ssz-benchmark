@@ -75,6 +75,7 @@ fastssz_v2 = parse_benchmark_results('fastssz-v2_results.txt')
 dynamicssz_codegen = parse_benchmark_results('dynamicssz-codegen_results.txt')
 dynamicssz_refl = parse_benchmark_results('dynamicssz-reflection_results.txt')
 karalabessz = parse_benchmark_results('karalabessz_results.txt')
+prysmssz = parse_benchmark_results('prysmssz_results.txt')
 
 def get_benchmark_value(results, key, field):
     if key in results:
@@ -112,6 +113,8 @@ for op in ['Unmarshal', 'UnmarshalReader', 'Marshal', 'MarshalWriter', 'HashTree
     results_md += make_table_row('dynamic-ssz (reflection)', dynamicssz_refl, f'BenchmarkBlockMainnet_{op}', op)
 for op in ['Unmarshal', 'UnmarshalReader', 'Marshal', 'MarshalWriter', 'HashTreeRoot']:
     results_md += make_table_row('karalabe-ssz', karalabessz, f'BenchmarkBlockMainnet_{op}', op)
+for op in ['Unmarshal', 'Marshal', 'HashTreeRoot']:
+    results_md += make_table_row('prysm-ssz', prysmssz, f'BenchmarkBlockMainnet_{op}', op)
 
 results_md += """
 ### State Mainnet Benchmarks
@@ -131,6 +134,8 @@ for op in ['Unmarshal', 'UnmarshalReader', 'Marshal', 'MarshalWriter', 'HashTree
     results_md += make_table_row('dynamic-ssz (reflection)', dynamicssz_refl, f'BenchmarkStateMainnet_{op}', op)
 for op in ['Unmarshal', 'UnmarshalReader', 'Marshal', 'MarshalWriter', 'HashTreeRoot']:
     results_md += make_table_row('karalabe-ssz', karalabessz, f'BenchmarkStateMainnet_{op}', op)
+for op in ['Unmarshal', 'Marshal', 'HashTreeRoot']:
+    results_md += make_table_row('prysm-ssz', prysmssz, f'BenchmarkStateMainnet_{op}', op)
 
 results_md += """
 ### Block Minimal Benchmarks
@@ -163,7 +168,7 @@ for op in ['Unmarshal', 'UnmarshalReader', 'Marshal', 'MarshalWriter', 'HashTree
     results_md += make_table_row('dynamic-ssz (reflection)', dynamicssz_refl, f'BenchmarkStateMinimal_{op}', op)
 
 results_md += """
-**Note:** karalabe-ssz does not support minimal preset out of the box.
+**Note:** karalabe-ssz and prysm-ssz do not support minimal preset out of the box.
 """
 
 # Read current README
@@ -188,6 +193,6 @@ print("README.md updated successfully")
 EOF
 
 # Clean up result files
-rm -f fastssz-v1_results.txt fastssz-v2_results.txt dynamicssz-codegen_results.txt dynamicssz-reflection_results.txt karalabessz_results.txt
+rm -f fastssz-v1_results.txt fastssz-v2_results.txt dynamicssz-codegen_results.txt dynamicssz-reflection_results.txt karalabessz_results.txt prysmssz_results.txt
 
 echo "Done!"

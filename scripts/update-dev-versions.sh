@@ -144,6 +144,16 @@ update_go_mod "$ROOT_DIR/benchmarks/karalabessz/go.mod" "github.com/karalabe/ssz
 update_generate_sh "$ROOT_DIR/benchmarks/karalabessz/generate.sh" "github.com/karalabe/ssz/cmd/sszgen" "$KARALABESSZ_VERSION"
 run_go_commands "$ROOT_DIR/benchmarks/karalabessz"
 
+# Update prysmssz
+echo ""
+echo "--- Updating prysmssz ---"
+PRYSMSSZ_VERSION=$(get_pseudo_version "github.com/prysmaticlabs/fastssz")
+echo "Latest prysmaticlabs/fastssz version: $PRYSMSSZ_VERSION"
+
+update_go_mod "$ROOT_DIR/benchmarks/prysmssz/go.mod" "github.com/prysmaticlabs/fastssz" "$PRYSMSSZ_VERSION"
+update_generate_go "$ROOT_DIR/benchmarks/prysmssz/generate.go" "github.com/prysmaticlabs/fastssz/sszgen" "$PRYSMSSZ_VERSION"
+run_go_commands "$ROOT_DIR/benchmarks/prysmssz"
+
 # Update dynamicssz-codegen
 echo ""
 echo "--- Updating dynamicssz-codegen ---"
