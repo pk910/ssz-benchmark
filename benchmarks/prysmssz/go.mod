@@ -3,7 +3,7 @@ module github.com/pk910/ssz-benchmark/benchmarks/prysmssz
 go 1.25.0
 
 require (
-	github.com/prysmaticlabs/fastssz v0.0.0-20251103153600-259302269bfc
+	github.com/prysmaticlabs/fastssz v0.0.0-20260401175048-c57e478b88da
 	github.com/prysmaticlabs/go-bitfield v0.0.0-20240618144021-706c95b2dd15
 )
 
