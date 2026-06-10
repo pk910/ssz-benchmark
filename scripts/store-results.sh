@@ -1,7 +1,10 @@
 #!/bin/bash
 # Script to run all SSZ benchmarks and store results in JSON format
-# Usage: ./scripts/store-results.sh [--dev] [--timestamp UNIX_TIMESTAMP]
+# Usage: ./scripts/store-results.sh [--dev] [--skip-run] [--timestamp UNIX_TIMESTAMP]
 #   --dev: Mark results as dev builds (uses pseudo-version from git HEAD)
+#   --skip-run: Do not run benchmarks; process pre-existing *_results.txt files.
+#               Used when benchmarks ran elsewhere (e.g. a dedicated cloud host)
+#               and only the result files were copied into the repo root.
 #   --timestamp: Use specified Unix timestamp instead of current time
 
 set -e
@@ -11,11 +14,16 @@ ROOT_DIR="$(dirname "$SCRIPT_DIR")"
 
 # Parse arguments
 DEV_MODE="false"
+SKIP_RUN="false"
 TIMESTAMP=""
 while [ $# -gt 0 ]; do
     case "$1" in
         --dev)
             DEV_MODE="true"
+            shift
+            ;;
+        --skip-run)
+            SKIP_RUN="true"
             shift
             ;;
         --timestamp)
@@ -60,8 +68,12 @@ else
     fi
 fi
 
-# Run all benchmarks using shared script
-"$SCRIPT_DIR/run-benchmarks.sh"
+# Run all benchmarks using shared script (unless results were produced elsewhere)
+if [ "$SKIP_RUN" = "true" ]; then
+    echo "Skipping benchmark run (--skip-run); using existing *_results.txt files"
+else
+    "$SCRIPT_DIR/run-benchmarks.sh"
+fi
 
 echo "Processing results and updating JSON files..."
 DEV_MODE_ENV="$DEV_MODE" TIMESTAMP_ENV="$TIMESTAMP" python3 << 'EOF'
@@ -86,8 +98,10 @@ def parse_benchmark_results(filename):
         with open(filename, 'r') as f:
             content = f.read()
 
-        # Parse benchmark lines
-        pattern = r'(Benchmark\w+)-\d+\s+(\d+)\s+([\d.]+)\s+ns/op\s+(\d+)\s+B/op\s+(\d+)\s+allocs/op'
+        # Parse benchmark lines. The `-N` suffix is the GOMAXPROCS count, which
+        # Go omits when GOMAXPROCS=1 (e.g. when pinned to a single core), so it
+        # is matched optionally.
+        pattern = r'(Benchmark\w+)(?:-\d+)?\s+(\d+)\s+([\d.]+)\s+ns/op\s+(\d+)\s+B/op\s+(\d+)\s+allocs/op'
         matches = re.findall(pattern, content)
 
         for match in matches:

@@ -1,0 +1,32 @@
+name: Reap Stale Benchmark Servers
+
+# Safety net for the Hetzner-based benchmark runner: if a benchmark workflow
+# crashes hard (runner killed, job cancelled) before its teardown step runs, it
+# can leak a billed server. This sweeps any benchmark server/key older than the
+# threshold below. A normal run finishes well within that window and cleans up
+# after itself.
+
+on:
+  schedule:
+    - cron: '15 * * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: reap-benchmark-servers
+  cancel-in-progress: false
+
+jobs:
+  reap:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Reap stale servers
+        env:
+          HCLOUD_TOKEN: ${{ secrets.HCLOUD_TOKEN }}
+          MAX_AGE_MIN: '90'
+        run: ./scripts/hetzner/reap.sh
