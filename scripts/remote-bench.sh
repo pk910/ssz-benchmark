@@ -69,13 +69,13 @@ fi
 echo "=== Installing Go ${GO_VERSION} ==="
 if [ ! -x /usr/local/go/bin/go ] \
     || ! /usr/local/go/bin/go version | grep -q "go${GO_VERSION} "; then
-    go_tarball="go${GO_VERSION}.linux-amd64.tar.gz"
-    curl -fsSL "https://go.dev/dl/${go_tarball}" -o /tmp/go.tgz
-    curl -fsSL "https://go.dev/dl/${go_tarball}.sha256" -o /tmp/go.tgz.sha256
-    echo "$(cat /tmp/go.tgz.sha256)  /tmp/go.tgz" | sha256sum -c -
+    # Download over HTTPS (authenticated by TLS); a corrupt archive fails the
+    # extraction below. The Go release server does not serve a usable .sha256
+    # sidecar (it redirects to HTML), so we don't attempt a separate checksum.
+    curl -fsSL "https://go.dev/dl/go${GO_VERSION}.linux-amd64.tar.gz" -o /tmp/go.tgz
     rm -rf /usr/local/go
     tar -C /usr/local -xzf /tmp/go.tgz
-    rm -f /tmp/go.tgz /tmp/go.tgz.sha256
+    rm -f /tmp/go.tgz
 fi
 export GOPATH="/root/go"
 export PATH="/usr/local/go/bin:${GOPATH}/bin:${PATH}"
