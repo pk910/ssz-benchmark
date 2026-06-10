@@ -59,6 +59,38 @@ cd benchmarks/ztyp
 go test -run=^$ -bench=. -benchmem
 ```
 
+## Continuous Benchmarking
+
+Scheduled benchmarks run twice daily via GitHub Actions
+(`.github/workflows/daily-benchmarks.yml`). To keep results stable, the
+GitHub runner is used only for orchestration and "accounting" — the actual
+benchmarks run on a freshly provisioned **Hetzner Cloud dedicated-vCPU**
+server, which avoids the noisy-neighbour jitter of shared CI runners.
+
+Each run:
+1. Provisions an ephemeral server (`ccx23` by default, 4 dedicated vCPU).
+2. Syncs the repo to it, installs Go + a C toolchain (CGO is required by
+   dynamic-ssz's `hashtree-bindings` for fast hashing), and runs the suite for
+   both stable and dev library versions with `-count=10`, pinned via `taskset`
+   to a single dedicated core (the other cores absorb OS/background noise). This
+   brought intra-run spread down from ~37% (median, shared runners) to ~3%.
+3. Pulls the raw results back; the runner processes them into JSON and SVGs
+   and pushes to the `benchmark-results` branch.
+4. Tears the server down (in an `always()` step).
+
+A separate hourly workflow (`reap-benchmark-servers.yml`) deletes any
+benchmark server older than an hour, as a safety net against leaks from a
+hard-crashed run.
+
+### Required configuration
+
+Set a repository secret **`HCLOUD_TOKEN`** to a Hetzner Cloud API token
+(Read & Write) for a project dedicated to these ephemeral servers. All
+provisioned resources are labelled `purpose=ssz-benchmark`.
+
+The server type and location can be overridden when triggering the workflow
+manually (`workflow_dispatch` inputs `server_type` / `location`).
+
 ## Project Structure
 
 ```

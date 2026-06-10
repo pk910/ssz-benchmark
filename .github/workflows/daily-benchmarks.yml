@@ -2,131 +2,107 @@ name: Daily Scheduled Benchmarks
 
 on:
   workflow_dispatch:
+    inputs:
+      server_type:
+        description: 'Hetzner server type (dedicated vCPU recommended)'
+        default: 'ccx23'
+        type: choice
+        options:
+          - ccx23
+          - ccx13
+      location:
+        description: 'Hetzner location'
+        default: 'fsn1'
   schedule:
-    # Run daily at midnight UTC
+    # Run twice daily
     - cron: '30 2,14 * * *'
 
 permissions:
   contents: write
 
+# Never run two benchmark jobs at once: they would compete for the same
+# benchmark-results branch and spin up redundant servers.
+concurrency:
+  group: daily-benchmarks
+  cancel-in-progress: false
+
 jobs:
   store-results:
     runs-on: ubuntu-latest
+    # Bounds the run well above a normal ~50 min execution. On timeout the
+    # teardown step (if: always()) still runs, and the reaper (90 min) is the
+    # backstop for a hard-killed runner.
+    timeout-minutes: 80
+
+    env:
+      SERVER_NAME: ssz-bench-${{ github.run_id }}-${{ github.run_attempt }}
+      SERVER_TYPE: ${{ inputs.server_type || 'ccx23' }}
+      LOCATION: ${{ inputs.location || 'fsn1' }}
+      SERVER_IMAGE: ubuntu-24.04
+      # Benchmarks run on a dedicated-vCPU box and take more samples than the old
+      # shared-runner setup. CPU pinning (BENCH_CPUS) is auto-derived per box in
+      # remote-bench.sh (single core; see the pinning note there).
+      BENCH_COUNT: '10'
+      GO_VERSION: '1.25.0'
 
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
-
-      - name: Set up Go
-        uses: actions/setup-go@v5
-        with:
-          go-version: '1.25'
 
       - name: Install Node.js
         uses: actions/setup-node@v4
         with:
           node-version: '22'
 
+      - name: Generate ephemeral SSH key
+        run: |
+          ssh-keygen -t ed25519 -N '' -f /tmp/bench_key -C "$SERVER_NAME"
+          echo "SSH_PUBLIC_KEY=$(cat /tmp/bench_key.pub)" >> "$GITHUB_ENV"
+
+      - name: Provision Hetzner benchmark server
+        id: provision
+        env:
+          HCLOUD_TOKEN: ${{ secrets.HCLOUD_TOKEN }}
+        run: ./scripts/hetzner/provision.sh
+
       - name: Get workflow timestamp
         id: timestamp
         run: echo "ts=$(date +%s)" >> "$GITHUB_OUTPUT"
 
-      - name: Run benchmarks and store results (stable versions)
-        run: ./scripts/store-results.sh --timestamp ${{ steps.timestamp.outputs.ts }}
+      - name: Run benchmarks on remote server
+        env:
+          SERVER_IP: ${{ steps.provision.outputs.ip }}
+        run: ./scripts/hetzner/run-remote.sh
 
-      - name: Update to latest dev versions
-        run: ./scripts/update-dev-versions.sh
+      - name: Tear down Hetzner benchmark server
+        if: always()
+        env:
+          HCLOUD_TOKEN: ${{ secrets.HCLOUD_TOKEN }}
+        run: ./scripts/hetzner/teardown.sh
 
-      - name: Run benchmarks and store results (dev versions)
-        run: ./scripts/store-results.sh --dev --timestamp ${{ steps.timestamp.outputs.ts }}
-
-      - name: Clean up dev version changes
+      - name: Process results (stable versions)
         run: |
-          # Restore all modified files to their original state
-          # This removes changes from update-dev-versions.sh before checkout
-          git checkout -- .
+          cp bench-output/stable/*_results.txt .
+          ./scripts/store-results.sh --skip-run --timestamp ${{ steps.timestamp.outputs.ts }}
+
+      - name: Process results (dev versions)
+        run: |
+          # The dev phase is best-effort on the remote, so dev results may be
+          # absent; skip processing gracefully when they are.
+          if ls bench-output/dev/*_results.txt >/dev/null 2>&1; then
+            cp bench-output/dev/*_results.txt .
+            # Overlay the dev go.mod files so version extraction reads the
+            # pseudo-versions that were actually benchmarked on the remote.
+            for f in bench-output/dev/gomod/*.mod; do
+              lib="$(basename "$f" .mod)"
+              cp "$f" "benchmarks/$lib/go.mod"
+            done
+            ./scripts/store-results.sh --dev --skip-run --timestamp ${{ steps.timestamp.outputs.ts }}
+            # Restore the stable go.mod files before committing.
+            git checkout -- benchmarks
+          else
+            echo "No dev results present; skipping dev processing"
+          fi
 
       - name: Push results to benchmark-results branch
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          git config --local user.email "github-actions[bot]@users.noreply.github.com"
-          git config --local user.name "github-actions[bot]"
-
-          # Save the generated results to a temporary location
-          cp -r results /tmp/benchmark-results
-
-          # Fetch all branches
-          git fetch origin
-
-          # Check if benchmark-results branch exists remotely
-          if git ls-remote --heads origin benchmark-results | grep -q benchmark-results; then
-            # Safety check: compare new result count against existing to prevent data loss
-            NEW_COUNT=$(python3 -c "
-          import json, os
-          total = 0
-          for f in os.listdir('/tmp/benchmark-results'):
-              if f.endswith('.json') and 'aggregation' not in f:
-                  with open(os.path.join('/tmp/benchmark-results', f)) as fh:
-                      total += len(json.load(fh).get('benchmarks', []))
-          print(total)
-          ")
-            mkdir -p /tmp/old-results
-            git archive origin/benchmark-results -- results/ 2>/dev/null | tar -x -C /tmp/old-results --strip-components=1 2>/dev/null || true
-            OLD_COUNT=$(python3 -c "
-          import json, os
-          total = 0
-          d = '/tmp/old-results'
-          if os.path.isdir(d):
-              for f in os.listdir(d):
-                  if f.endswith('.json') and 'aggregation' not in f:
-                      with open(os.path.join(d, f)) as fh:
-                          total += len(json.load(fh).get('benchmarks', []))
-          print(total)
-          ")
-            rm -rf /tmp/old-results
-            echo "Result count: new=$NEW_COUNT, existing=$OLD_COUNT"
-            if [ "$OLD_COUNT" -gt 10 ] && [ "$NEW_COUNT" -lt $((OLD_COUNT / 2)) ]; then
-              echo "ERROR: New results ($NEW_COUNT) are less than half of existing ($OLD_COUNT). Aborting to prevent data loss."
-              exit 1
-            fi
-
-            # Branch exists, fetch and checkout
-            git checkout -B benchmark-results origin/benchmark-results
-          else
-            # Branch doesn't exist, create orphan branch
-            git checkout --orphan benchmark-results
-            git rm -rf . || true
-          fi
-
-          # Copy results back from temporary location
-          rm -rf results
-          cp -r /tmp/benchmark-results results
-
-          # Add and commit
-          git add results/
-
-          # Check if there are changes to commit
-          if git diff --staged --quiet; then
-            echo "No changes to commit"
-            exit 0
-          fi
-
-          # Rebuild the SVGs
-          ./svg-gen/generate-svg-charts.js
-          ./svg-gen/generate-svg-table.js
-
-          # Add the SVGs to the commit
-          git add *.svg
-
-          # Commit the changes
-          if git log --oneline -1 2>/dev/null | grep -q .; then
-            # Branch has history, amend the commit
-            git commit --amend -m "Update benchmark results"
-          else
-            # First commit on the branch
-            git commit -m "Update benchmark results"
-          fi
-
-          # Force push to update the branch
-          git push --force origin benchmark-results
+        run: ./scripts/push-results.sh

@@ -2,6 +2,14 @@
 # Shared script to run all SSZ benchmarks
 # Writes results to <library>_results.txt files in the root directory
 # Usage: ./scripts/run-benchmarks.sh
+#
+# Optional env:
+#   BENCH_COUNT  - value passed to `go test -count` (default 5)
+#   BENCH_CPUS   - CPU list to pin `go test` to via taskset, e.g. "1".
+#                  Empty (default) means no pinning. Used on dedicated hosts to
+#                  reduce timing jitter. A single core is best: it keeps the
+#                  benchmark goroutine cache-hot (pinning to 2+ cores lets it
+#                  migrate and measured ~3x noisier on a dedicated box).
 
 set -e
 
@@ -10,46 +18,31 @@ ROOT_DIR="$(dirname "$SCRIPT_DIR")"
 
 cd "$ROOT_DIR"
 
-echo "Running fastssz-v1 benchmarks..."
-cd benchmarks/fastssz-v1
-go mod download
-go test -run=^$ -bench=. -benchmem -count=5 > "$ROOT_DIR/fastssz-v1_results.txt"
-cd "$ROOT_DIR"
+BENCH_COUNT="${BENCH_COUNT:-5}"
+BENCH_CPUS="${BENCH_CPUS:-}"
 
-echo "Running fastssz-v2 benchmarks..."
-cd benchmarks/fastssz-v2
-go mod download
-go test -run=^$ -bench=. -benchmem -count=5 > "$ROOT_DIR/fastssz-v2_results.txt"
-cd "$ROOT_DIR"
+# Build an optional taskset prefix for pinning to dedicated cores.
+RUN_PREFIX=()
+if [ -n "$BENCH_CPUS" ]; then
+    if command -v taskset >/dev/null 2>&1; then
+        RUN_PREFIX=(taskset -c "$BENCH_CPUS")
+        echo "Pinning benchmarks to CPUs: $BENCH_CPUS"
+    else
+        echo "WARNING: BENCH_CPUS=$BENCH_CPUS set but taskset not found; running unpinned"
+    fi
+fi
+echo "Benchmark iterations (-count): $BENCH_COUNT"
 
-echo "Running dynamicssz-codegen benchmarks..."
-cd benchmarks/dynamicssz-codegen
-go mod download
-go test -run=^$ -bench=. -benchmem -count=5 > "$ROOT_DIR/dynamicssz-codegen_results.txt"
-cd "$ROOT_DIR"
+# Libraries to benchmark, in run order.
+LIBS="fastssz-v1 fastssz-v2 dynamicssz-codegen dynamicssz-reflection karalabessz prysmssz ztyp"
 
-echo "Running dynamicssz-reflection benchmarks..."
-cd benchmarks/dynamicssz-reflection
-go mod download
-go test -run=^$ -bench=. -benchmem -count=5 > "$ROOT_DIR/dynamicssz-reflection_results.txt"
-cd "$ROOT_DIR"
-
-echo "Running karalabessz benchmarks..."
-cd benchmarks/karalabessz
-go mod download
-go test -run=^$ -bench=. -benchmem -count=5 > "$ROOT_DIR/karalabessz_results.txt"
-cd "$ROOT_DIR"
-
-echo "Running prysmssz benchmarks..."
-cd benchmarks/prysmssz
-go mod download
-go test -run=^$ -bench=. -benchmem -count=5 > "$ROOT_DIR/prysmssz_results.txt"
-cd "$ROOT_DIR"
-
-echo "Running ztyp benchmarks..."
-cd benchmarks/ztyp
-go mod download
-go test -run=^$ -bench=. -benchmem -count=5 > "$ROOT_DIR/ztyp_results.txt"
-cd "$ROOT_DIR"
+for lib in $LIBS; do
+    echo "Running $lib benchmarks..."
+    cd "benchmarks/$lib"
+    go mod download
+    "${RUN_PREFIX[@]}" go test -run=^$ -bench=. -benchmem -count="$BENCH_COUNT" \
+        > "$ROOT_DIR/${lib}_results.txt"
+    cd "$ROOT_DIR"
+done
 
 echo "All benchmarks completed!"
