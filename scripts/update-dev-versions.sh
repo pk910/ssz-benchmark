@@ -8,6 +8,20 @@ set -e
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT_DIR="$(dirname "$SCRIPT_DIR")"
 
+# The versions resolved below are pseudo-versions of commits that are often only
+# hours old, and this job is usually the first thing on the internet to ask for
+# them. sum.golang.org has no entry for an unseen version, so its first lookup
+# kicks off an asynchronous fetch and answers "500 Internal Server Error" after
+# ~60s; only a later request sees the warmed entry. That is why the 02:30 run
+# died in `go mod tidy` while the 14:30 run -- resolving the very same
+# pseudo-version -- succeeded.
+#
+# Skip the checksum database for the libraries we deliberately track at git HEAD.
+# They are still fetched through GOPROXY over TLS and still recorded in go.sum;
+# we only drop the transparency-log cross-check, which cannot be satisfied for a
+# version nobody has published yet.
+export GONOSUMDB="github.com/pk910/dynamic-ssz,github.com/ferranbt/fastssz,github.com/karalabe/ssz,github.com/prysmaticlabs/fastssz${GONOSUMDB:+,$GONOSUMDB}"
+
 # Function to get the latest pseudo-version for a git repository
 # Arguments: $1 = repository URL (e.g., github.com/ferranbt/fastssz)
 # Returns: pseudo-version in format v0.0.0-YYYYMMDDHHMMSS-<12 char commit hash>

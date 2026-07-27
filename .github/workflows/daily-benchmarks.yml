@@ -101,7 +101,9 @@ jobs:
             # Restore the stable go.mod files before committing.
             git checkout -- benchmarks
           else
-            echo "No dev results present; skipping dev processing"
+            # Best-effort does not mean invisible: without an annotation the run
+            # stays green and a persistently broken dev phase goes unnoticed.
+            echo "::warning title=Dev benchmarks missing::The dev phase failed on the remote; only stable results were stored. See the 'Run benchmarks on remote server' log."
           fi
 
       - name: Push results to benchmark-results branch
