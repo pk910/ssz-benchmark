@@ -2,8 +2,8 @@ github.com/casbin/govaluate v1.10.0 h1:ffGw51/hYH3w3rZcxO/KcaUIDOLP84w7nsidMVgaD
 github.com/casbin/govaluate v1.10.0/go.mod h1:G/UnbIjZk/0uMNaLwZZmFQrR72tYRZWQkO70si/iR7A=
 github.com/klauspost/cpuid/v2 v2.3.0 h1:S4CRMLnYUhGeDFDqkGriYKdfoFlDnMtqTiI/sFzhA9Y=
 github.com/klauspost/cpuid/v2 v2.3.0/go.mod h1:hqwkgyIinND0mEev00jJYCxPNVRVXFQeu1XKlok6oO0=
-github.com/pk910/dynamic-ssz v1.3.2 h1:65UR/O+ss+U2Dn86Rdl7LwehHo3u2ElutduS/pcuUXE=
-github.com/pk910/dynamic-ssz v1.3.2/go.mod h1:lqmnou2bjr2UWQ3C/L3082TGW0SFl/SwT7ionwM0+FU=
+github.com/pk910/dynamic-ssz v1.3.3 h1:b1Oj8+NGg5MAKldrtDajFISDAeX4oaOz/EWVwYi57Ow=
+github.com/pk910/dynamic-ssz v1.3.3/go.mod h1:lqmnou2bjr2UWQ3C/L3082TGW0SFl/SwT7ionwM0+FU=
 github.com/pk910/hashtree-bindings v0.2.2 h1:gkczxxekBW2NeMK9N3OLj7Jepe7zPmJGVwr8LyofGsA=
 github.com/pk910/hashtree-bindings v0.2.2/go.mod h1:zrWt88783JmhBfcgni6kkIMYRdXTZi/FL//OyI5T/l4=
 github.com/prysmaticlabs/go-bitfield v0.0.0-20240618144021-706c95b2dd15 h1:lC8kiphgdOBTcbTvo8MwkvpKjO0SlAgjv4xIK5FGJ94=
