@@ -59,6 +59,8 @@
     allocs: { key: 'Allocs', label: 'Allocations', unit: 'allocs/op', fmt: fmtNum },
   };
   let metric = localStorage.getItem('metric') || 'cycles';
+  // The job charts show the change in percent, or the measured values.
+  let chartMode = localStorage.getItem('chartMode') === 'abs' ? 'abs' : 'rel';
   // The counters see the measured thread only. An async engine does its
   // work on other threads, so its cycles and instructions say nothing; its
   // cells show wall time on those tabs.
@@ -415,6 +417,75 @@
     };
   }
 
+  // absLabels writes each bar's value at its end and marks the base value
+  // of our own engines with a tick.
+  const absLabels = {
+    id: 'absLabels',
+    afterDatasetsDraw(c, args, opts) {
+      const ctx = c.ctx, x = c.scales.x;
+      ctx.save();
+      ctx.font = '11px ' + Chart.defaults.font.family;
+      ctx.textBaseline = 'middle';
+      ctx.textAlign = 'left';
+      c.data.datasets.forEach((ds, di) => {
+        const meta = c.getDatasetMeta(di);
+        if (meta.hidden) return;
+        meta.data.forEach((bar, i) => {
+          const v = ds.data[i];
+          if (v === null || v === undefined) return;
+          const h = Math.max(4, bar.height);
+          if (ds.baseVals && ds.baseVals[i] > 0) {
+            ctx.fillStyle = getComputedStyle(document.body).getPropertyValue('--fg').trim() || '#fff';
+            ctx.fillRect(x.getPixelForValue(ds.baseVals[i]) - 1, bar.y - h / 2, 2, h);
+          }
+          ctx.fillStyle = ds.borderColor;
+          ctx.fillText(opts.fmt(v), Math.max(bar.x, ds.baseVals && ds.baseVals[i] > 0 ? x.getPixelForValue(ds.baseVals[i]) : 0) + 5, bar.y);
+        });
+      });
+      ctx.restore();
+    },
+  };
+  // absChartCfg: per operation the measured head value of every engine and
+  // reference library on a logarithmic axis (operations of one object span
+  // nanoseconds to seconds). An engine whose values are in another unit on
+  // this tab (the async engines on the counter tabs) is left out.
+  function absChartCfg(mx, m, jobID) {
+    const labels = mx.ops;
+    const all = [...mx.engines, ...mx.asyncEngines, ...mx.baselines].filter(e => metricFor(m, e) === m);
+    const datasets = all.map((e, i) => {
+      const color = COLORS[i % COLORS.length], ref = mx.baselines.includes(e);
+      const cells = labels.map(op => { const r = mx.cells[e + '/' + op]; return r && !unmeasured(r[m.key]) && r[m.key].Head > 0 ? r : null; });
+      return {
+        label: e + (ref ? ' (library)' : ''), type: 'bar', backgroundColor: color + (ref ? '55' : 'aa'), borderColor: color, borderWidth: 1,
+        data: cells.map(r => r ? r[m.key].Head : null),
+        baseVals: ref ? null : cells.map(r => r ? r[m.key].Base : null),
+        meta: cells, engine: e, skipNull: true,
+        barPercentage: 0.85, categoryPercentage: 0.85, minBarLength: 3,
+      };
+    });
+    const vals = datasets.flatMap(d => d.data.filter(v => v !== null));
+    return {
+      data: { labels, datasets },
+      plugins: [absLabels],
+      options: {
+        indexAxis: 'y', responsive: true, maintainAspectRatio: false, animation: false,
+        onClick: (ev, els) => { if (els.length && jobID && !mx.baselines.includes(datasets[els[0].datasetIndex].engine)) location.hash = `#/job/${jobID}/leaf/${datasets[els[0].datasetIndex].engine}/${mx.obj}/${labels[els[0].index]}`; },
+        scales: {
+          x: { type: 'logarithmic', min: vals.length ? Math.min(...vals) / 2 : undefined, max: vals.length ? Math.max(...vals) * 4 : undefined, ticks: { callback: v => m.fmt(v), maxTicksLimit: 10 }, title: { display: true, text: `${m.label} ${m.unit}, logarithmic` } },
+          y: { grid: { display: false } },
+        },
+        plugins: {
+          legend: { labels: { boxWidth: 12 } },
+          absLabels: { fmt: m.fmt },
+          tooltip: { callbacks: { label: ctx => {
+            const c = ctx.dataset.meta[ctx.dataIndex], M = c[m.key];
+            return ctx.dataset.baseVals ? `${ctx.dataset.label}: ${m.fmt(M.Base)} → ${m.fmt(M.Head)} (${pct(M.Delta)})` : `${ctx.dataset.label}: ${m.fmt(M.Head)}`;
+          } } },
+        },
+      },
+    };
+  }
+
   async function viewJob(id) {
     const d = await get('/api/job/' + id);
     repo = d.Repo;
@@ -433,13 +504,14 @@
         <div class="card"><h3>Ratio per engine <span class="muted" style="text-transform:none">(cycles when counted, else time)</span></h3><div class="chips">${engineTotals(d.Summaries || []).map(x => `<span class="chip" title="geomean of head/base ${x.Cycles ? 'cycles' : 'time'} over ${x.N} operations of every object">${x.Engine} <b>${pct(x.Geomean, 1)}</b></span>`).join('') || '<span class="muted">-</span>'}</div><details class="small" style="margin-top:6px"><summary>per object</summary><div class="chips" style="margin-top:4px">${(d.Summaries || []).map(x => `<span class="chip">${x.Engine}·${x.Object} <b>${pct(x.Geomean, 1)}</b></span>`).join('')}</div></details></div>
       </div>
       ${j.Note ? `<p class="note">${esc(j.Note)}</p>` : ''}${d.BaselineJob ? `<p class="note">Other libraries: values from the reference job <a href="#/job/${d.BaselineJob}">#${d.BaselineJob}</a> on the same machine and payload. They cannot hash Gloas objects unless they implement progressive merkleization (PrysmSSZ does), and none but PrysmSSZ can express the Gloas state.</p>` : ''}${j.Error ? `<pre class="err">${esc(j.Error)}</pre>` : ''}
-      <div class="toolbar">${metricTabs()}<span class="muted">${m.label} ${m.unit}: base → head and Δ per engine and operation. Green/red: |Δ| exceeds this operation's noise floor (p95 of the self-comparisons, at least 0.5%); bold: |Δ| ≥ 5%; grey: within noise. Click a bar or cell for every sample.</span></div>
-      ${mxs.map((mx, i) => `<h2>${objName(mx.obj)}</h2><div class="chart" style="height:${mx.ops.length * Math.max(30, ([...mx.engines, ...mx.asyncEngines].length) * 14 + 8) + 70}px"><canvas id="dc${i}"></canvas></div><p class="note">One bar per engine (colours in the legend) per operation: the bar spans the ${m.label.toLowerCase()} deltas of the single runs (each run compares head and base measured minutes apart), the white tick and the number are the mean over the runs. A long bar means the runs disagreed. The grey band behind each row is that operation's noise floor on this machine: how far two measurements of the same code differ (p95 over the master-vs-master noise jobs, at least 0.5%). A result inside the band is not a change. Async engines appear only on HashTreeRoot.</p>${matrixTable(mx, m, j.ID)}`).join('') || '<p class="muted">no results yet</p>'}
+      <div class="toolbar">${metricTabs()}<div class="tabs" id="modeTabs"><button data-mode="rel" class="${chartMode === 'rel' ? 'active' : ''}" title="charts show head against base in percent">change in %</button><button data-mode="abs" class="${chartMode === 'abs' ? 'active' : ''}" title="charts show the measured values of every engine and library">measured values</button></div><span class="muted">${m.label} ${m.unit}: base → head and Δ per engine and operation. Green/red: |Δ| exceeds this operation's noise floor (p95 of the self-comparisons, at least 0.5%); bold: |Δ| ≥ 5%; grey: within noise. Click a bar or cell for every sample.</span></div>
+      ${mxs.map((mx, i) => { const bars = chartMode === 'abs' ? [...mx.engines, ...mx.asyncEngines, ...mx.baselines].filter(e => metricFor(m, e) === m).length : [...mx.engines, ...mx.asyncEngines].length; return `<h2>${objName(mx.obj)}</h2><div class="chart" style="height:${mx.ops.length * Math.max(30, bars * 14 + 8) + 80}px"><canvas id="dc${i}"></canvas></div><p class="note">${chartMode === 'abs' ? `One bar per engine and reference library per operation: the measured ${m.label.toLowerCase()} of the head, on a logarithmic axis because the operations of one object span several orders of magnitude. The white tick on a bar of our own engines is the base value. Paler bars are the other libraries, from the latest reference job.` : `One bar per engine (colours in the legend) per operation: the bar spans the ${m.label.toLowerCase()} deltas of the single runs (each run compares head and base measured minutes apart), the white tick and the number are the mean over the runs. A long bar means the runs disagreed. The grey band behind each row is that operation's noise floor on this machine: how far two measurements of the same code differ (p95 over the master-vs-master noise jobs, at least 0.5%). A result inside the band is not a change. Async engines appear only on HashTreeRoot.`}</p>${matrixTable(mx, m, j.ID)}`; }).join('') || '<p class="muted">no results yet</p>'}
       ${d.Noise && d.Noise.Jobs ? `<p class="note">Noise floor over ${d.Noise.Jobs} self-comparisons: median |Δ time| ${d.Noise.MedianAbs.toFixed(2)}%, p95 ${d.Noise.P95Abs.toFixed(2)}%.</p>` : ''}
       <details><summary>Raw files</summary><p class="mono">${(d.Files || []).map(f => `<a href="/raw/${j.ID}/${f}" target="_blank">${f}</a>`).join(' · ')}</p></details>`;
     bindMetricTabs(() => viewJob(id));
     destroyCharts();
-    mxs.forEach((mx, i) => chart('dc' + i, deltaChartCfg(mx, m, j.ID)));
+    mxs.forEach((mx, i) => chart('dc' + i, (chartMode === 'abs' ? absChartCfg : deltaChartCfg)(mx, m, j.ID)));
+    document.querySelectorAll('#modeTabs button').forEach(b => b.onclick = () => { chartMode = b.dataset.mode; localStorage.setItem('chartMode', chartMode); viewJob(id); });
     if (d.Live) scheduleRefresh(20000);
   }
 
