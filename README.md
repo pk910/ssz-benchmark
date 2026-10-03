@@ -302,8 +302,11 @@ lists every runner with its state.
   rest the sixteen most recently used worktrees and builds stay.
 - The Go build cache trims itself (entries unused for five days); the
   module cache only grows with new dependencies.
-- Job logs (`/srv/benchd/jobs/<id>`, about half a megabyte per job) and
-  the database are kept.
+- Job logs (`/srv/benchd/jobs/<id>`) are gzipped when the job finishes
+  (about 55 KB per job) and kept; the UI serves them as plain text.
+- The database keeps jobs and results. The single-run samples of a job
+  are deleted two years after it finished (`-sample-retention`); its leaf
+  pages then show the results without the single runs.
 
 ## GitHub integration
 

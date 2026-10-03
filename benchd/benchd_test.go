@@ -350,3 +350,59 @@ func TestSeedRotation(t *testing.T) {
 		}
 	}
 }
+
+func TestJobLogCompression(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "job.log")
+	if err := os.WriteFile(path, []byte("first\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := compressJobLogs(dir); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(path); err == nil {
+		t.Fatal("the plain file is still there")
+	}
+	// A line logged after the compression joins the compressed file.
+	if err := os.WriteFile(path, []byte("second\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := compressJobLogs(dir); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte("third\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if files := jobFiles(dir); len(files) != 1 || files[0] != "job.log" {
+		t.Fatalf("files %v", files)
+	}
+	rec := httptest.NewRecorder()
+	serveJobFile(rec, httptest.NewRequest("GET", "/raw/1/job.log", nil), path)
+	if got := rec.Body.String(); got != "first\nsecond\nthird\n" {
+		t.Fatalf("served %q", got)
+	}
+}
+
+func TestPruneSamples(t *testing.T) {
+	db, err := openDB(filepath.Join(t.TempDir(), "t.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now()
+	for id, finished := range map[int64]time.Time{1: now.Add(-800 * 24 * time.Hour), 2: now.Add(-time.Hour)} {
+		if _, err := db.db.Exec(`INSERT INTO jobs (id, kind, state, head_sha, base_sha, created, finished) VALUES (?, 'commit', 'done', 'h', 'b', ?, ?)`, id, finished.Unix(), finished.Unix()); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := db.db.Exec(`INSERT INTO samples (job_id, side, engine, object, op, seed, pass, iters, ns, bytes, allocs) VALUES (?, 'head', 'e', 'o', 'p', '1', 0, 1, 1, 0, 0)`, id); err != nil {
+			t.Fatal(err)
+		}
+	}
+	n, err := db.pruneSamples(now.Add(-2 * 365 * 24 * time.Hour))
+	if err != nil || n != 1 {
+		t.Fatalf("pruned %d, %v", n, err)
+	}
+	var left int64
+	if err := db.db.QueryRow(`SELECT job_id FROM samples`).Scan(&left); err != nil || left != 2 {
+		t.Fatalf("left job %d, %v", left, err)
+	}
+}

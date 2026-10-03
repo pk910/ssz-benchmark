@@ -326,6 +326,12 @@ func (s *store) refreshResults(key string) error {
 			if err != nil {
 				return err
 			}
+			if len(prev) == 0 {
+				// The samples of an earlier run are gone (retention): the
+				// stored results rest on more than can be recomputed.
+				pooled = nil
+				break
+			}
 			pooled = append(pooled, prev...)
 		}
 		if len(pooled) == 0 {

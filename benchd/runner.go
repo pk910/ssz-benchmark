@@ -87,6 +87,9 @@ func (r *runner) loop(ctx context.Context) {
 		ok := r.runJob(ctx, j)
 		if ctx.Err() == nil {
 			r.prune()
+			if err := compressJobLogs(filepath.Join(r.cfg.dataDir, "jobs", strconv.FormatInt(j.ID, 10))); err != nil {
+				log.Printf("job %d: compress logs: %v", j.ID, err)
+			}
 		}
 		if !ok {
 			// A failing environment must not spin through jobs.

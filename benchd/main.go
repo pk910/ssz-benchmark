@@ -43,6 +43,7 @@ type config struct {
 	ghInstallationID string
 	ghAppKey         string
 	baselineInterval time.Duration
+	sampleRetention  time.Duration
 	outlierPct       float64 // re-measure a sample this far off the leaf's running median
 	target           time.Duration
 	poll             time.Duration
@@ -88,6 +89,7 @@ func main() {
 	flag.IntVar(&cfg.minPasses, "min-passes", 0, "passes a job runs at least, regardless of the budget (0: one per layout seed)")
 	flag.Float64Var(&cfg.outlierPct, "outlier", 4, "a measurement whose cycles (or time without counters) deviate this many percent from the median of the leaf's earlier measurements on the same side is repeated once")
 	flag.DurationVar(&cfg.target, "target", 12*time.Minute, "measurement budget per job (passes are fitted to it)")
+	flag.DurationVar(&cfg.sampleRetention, "sample-retention", 2*365*24*time.Hour, "single-run samples of a job are deleted this long after it finished; jobs and results stay (0: keep)")
 	flag.DurationVar(&cfg.poll, "poll", 60*time.Second, "how often the mirror is fetched")
 	flag.StringVar(&cfg.mainBranch, "main", "master", "main branch")
 	flag.StringVar(&baselines, "baselines", "FastSSZ", "harness engines that are library references (measured on the head binary only)")
@@ -182,6 +184,8 @@ func main() {
 		if err := db.requeueRunning(cfg.name); err != nil {
 			log.Fatal(err)
 		}
+		compressAllJobLogs(cfg.dataDir)
+		go retentionLoop(ctx, db, cfg.sampleRetention)
 		r := &runner{cfg: cfg, store: local, git: git, name: cfg.name, sched: sched}
 		sched.runner = r
 		go sched.loop(ctx)

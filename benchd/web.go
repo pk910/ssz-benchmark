@@ -276,7 +276,7 @@ func (w *webServer) handleRaw(rw http.ResponseWriter, req *http.Request) {
 		return
 	}
 	rw.Header().Set("Content-Type", "text/plain; charset=utf-8")
-	http.ServeFile(rw, req, filepath.Join(w.cfg.dataDir, "jobs", parts[0], parts[1]))
+	serveJobFile(rw, req, filepath.Join(w.cfg.dataDir, "jobs", parts[0], parts[1]))
 }
 
 func (w *webServer) apiStatus(rw http.ResponseWriter, req *http.Request) {
@@ -365,11 +365,7 @@ func (w *webServer) apiJob(rw http.ResponseWriter, req *http.Request) {
 		if results == nil {
 			results = []result{}
 		}
-		entries, _ := os.ReadDir(filepath.Join(w.cfg.dataDir, "jobs", strconv.FormatInt(j.ID, 10)))
-		files := []string{}
-		for _, e := range entries {
-			files = append(files, e.Name())
-		}
+		files := jobFiles(filepath.Join(w.cfg.dataDir, "jobs", strconv.FormatInt(j.ID, 10)))
 		steal := 0
 		for _, r := range results {
 			steal += r.Steal
