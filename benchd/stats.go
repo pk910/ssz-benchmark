@@ -49,6 +49,20 @@ func percentile(xs []float64, p float64) float64 {
 	return s[lo] + (s[hi]-s[lo])*(idx-float64(lo))
 }
 
+// middleHalf returns the bounds of the middle half of the values by
+// rank: the lowest and the highest quarter (one value each at four) are
+// left out, without interpolating towards them, so a single value far off
+// does not stretch the range. Fewer than four values keep their full range.
+func middleHalf(xs []float64) (lo, hi float64) {
+	if len(xs) == 0 {
+		return 0, 0
+	}
+	s := append([]float64{}, xs...)
+	sort.Float64s(s)
+	k := len(s) / 4
+	return s[k], s[len(s)-1-k]
+}
+
 // welch compares two samples: the difference of means with its 95% interval
 // and the two-sided p-value of Welch's t-test.
 func welch(a, b []float64) (diff, lo, hi, p float64) {
@@ -183,7 +197,7 @@ func compareMetric(base, head []float64) metric {
 	}
 	// The samples of both sides are in pass order, so pairs are the two
 	// sides of one pass: their deltas show how far single runs diverged.
-	m.HQ1, m.HQ3 = percentile(head, 0.25), percentile(head, 0.75)
+	m.HQ1, m.HQ3 = middleHalf(head)
 	m.DMin, m.DMax = m.Delta, m.Delta
 	m.PMed, m.PQ1, m.PQ3 = m.Delta, m.Delta, m.Delta
 	if len(base) == len(head) {
@@ -201,8 +215,15 @@ func compareMetric(base, head []float64) metric {
 			// The median over the passes: one layout under which one side
 			// runs far off its usual cost does not move it.
 			m.PMed = median(ds)
-			m.PQ1, m.PQ3 = percentile(ds, 0.25), percentile(ds, 0.75)
-			m.PSpread = math.Sqrt(variance(ds, mean(ds)))
+			m.PQ1, m.PQ3 = middleHalf(ds)
+			// The spread is taken from the median absolute deviation (scaled
+			// to a standard deviation), so that one pass far off does not
+			// widen the band of the result either.
+			dev := make([]float64, len(ds))
+			for i, d := range ds {
+				dev[i] = math.Abs(d - m.PMed)
+			}
+			m.PSpread = 1.4826 * median(dev)
 			m.PN = float64(len(ds))
 			for _, d := range ds {
 				if (d > 0) == (m.PMed > 0) && d != 0 {
@@ -216,7 +237,8 @@ func compareMetric(base, head []float64) metric {
 
 // band is how far a result's median may lie from zero without being a
 // change: the larger of the given floor and twice the standard error of
-// the per-pass deltas, which carries what the layouts did to this pair.
+// the per-pass deltas (from their robust spread), which carries what the
+// layouts did to this pair.
 func (m metric) band(floor float64) float64 {
 	b := floor
 	if m.PN > 1 {

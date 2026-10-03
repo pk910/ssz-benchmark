@@ -103,7 +103,8 @@ type metric struct {
 	HMin, HMax       float64 // smallest and largest head value of a single run
 	// The comparison by pass: base and head of one pass are linked with the
 	// same seed and measured minutes apart. PMed is the median of the
-	// per-pass deltas (percent), PSpread their standard deviation, PAgree
+	// per-pass deltas (percent), PSpread their spread (a standard deviation
+	// estimated from the median absolute deviation), PAgree
 	// how many of the PN passes point the way of the median.
 	PMed, PSpread float64
 	PAgree, PN    float64
@@ -291,7 +292,7 @@ func openDB(path string) (*store, error) {
 		_, _ = db.Exec(stmt) // fails when the column exists
 	}
 	s := &store{db: db, dataDir: filepath.Dir(path)}
-	if err := s.refreshResults("results:quartiles"); err != nil {
+	if err := s.refreshResults("results:robust-spread"); err != nil {
 		return nil, err
 	}
 	return s, nil

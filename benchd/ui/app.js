@@ -333,6 +333,12 @@
     if (M.DMin === M.DMax && M.DMin === 0 && M.Delta !== 0) return [M.Delta, M.Delta];
     return [Math.min(M.DMin, delta(M)), Math.max(M.DMax, delta(M))];
   }
+  // body is the middle half of the per-pass deltas (first to third
+  // quartile): the thick part of a candle. The whisker is range().
+  function body(M) {
+    if (!(M.PN > 1)) return [delta(M), delta(M)];
+    return [Math.min(M.PQ1, delta(M)), Math.max(M.PQ3, delta(M))];
+  }
   // barLabels draws the mean as a tick on each bar and writes it beyond
   // the bar's far end.
   const barLabels = {
@@ -348,15 +354,30 @@
         meta.data.forEach((bar, i) => {
           const r = ds.meta[i];
           if (!r) return;
-          const M = r[ds.mkey || key], [lo, hi] = range(M);
-          const h = Math.max(4, bar.height);
+          const M = r[ds.mkey || key], [lo, hi] = range(M), [b0, b1] = body(M);
+          const h = Math.max(4, bar.height), area = c.chartArea;
+          // whisker: every pass, a thin line clipped to the chart
+          const wl = Math.max(area.left, x.getPixelForValue(lo)), wr = Math.min(area.right, x.getPixelForValue(hi));
+          ctx.strokeStyle = ds.borderColor;
+          ctx.lineWidth = 1.5;
+          ctx.beginPath();
+          ctx.moveTo(wl, bar.y); ctx.lineTo(wr, bar.y);
+          // end caps, or an arrow head where the whisker leaves the chart
+          [[lo, wl, -1], [hi, wr, 1]].forEach(([v, px, dir]) => {
+            const out = dir < 0 ? x.getPixelForValue(v) < area.left : x.getPixelForValue(v) > area.right;
+            if (out) { ctx.moveTo(px - dir * 5, bar.y - 3); ctx.lineTo(px, bar.y); ctx.lineTo(px - dir * 5, bar.y + 3); }
+            else { ctx.moveTo(px, bar.y - 3); ctx.lineTo(px, bar.y + 3); }
+          });
+          ctx.stroke();
+          // median
           const xm = x.getPixelForValue(delta(M));
           ctx.fillStyle = getComputedStyle(document.body).getPropertyValue('--fg').trim() || '#fff';
-          ctx.fillRect(xm - 1, bar.y - h / 2, 2, h);
+          ctx.fillRect(xm - 1, bar.y - h / 2 - 1, 2, h + 2);
           const right = delta(M) >= 0;
           ctx.textAlign = right ? 'left' : 'right';
           ctx.fillStyle = ds.borderColor;
-          ctx.fillText((delta(M) > 0 ? '+' : '') + delta(M).toFixed(2) + '%', x.getPixelForValue(right ? Math.max(hi, 0) : Math.min(lo, 0)) + (right ? 5 : -5), bar.y);
+          const edge = right ? Math.min(area.right - 44, Math.max(x.getPixelForValue(Math.max(b1, 0)), wr)) : Math.max(area.left + 44, Math.min(x.getPixelForValue(Math.min(b0, 0)), wl));
+          ctx.fillText((delta(M) > 0 ? '+' : '') + delta(M).toFixed(2) + '%', edge + (right ? 6 : -6), bar.y);
         });
       });
       ctx.restore();
@@ -391,14 +412,19 @@
       const cells = labels.map(op => { const r = mx.cells[e + '/' + op]; return r && !unmeasured(r[em.key]) ? r : null; });
       datasets.push({
         label: e + (em !== m ? ' (time)' : ''), type: 'bar', backgroundColor: color + 'aa', borderColor: color, borderWidth: 1, mkey: em.key,
-        data: cells.map(r => r ? range(r[em.key]) : null),
+        data: cells.map(r => r ? body(r[em.key]) : null),
         meta: cells,
         barPercentage: 0.8, categoryPercentage: 0.8, minBarLength: 3,
       });
     });
     const floors = labels.map(op => Math.max(...all.map(e => { const r = mx.cells[e + '/' + op]; const M = r && r[metricFor(m, e).key]; return M && !unmeasured(M) ? bandOf(M, e + '/' + mx.obj + '/' + op) : 0; })));
-    const raw = Math.min(100, Math.max(0.5, ...datasets.flatMap(d => d.data.filter(v => v !== null).flat().map(Math.abs))) * 1.4);
-    const lim = raw < 2 ? Math.ceil(raw * 4) / 4 : raw < 10 ? Math.ceil(raw) : Math.ceil(raw / 5) * 5;
+    // The axis shows every candle with both ends of its thin line, zero
+    // and the bands, with room for the labels; it need not be symmetric.
+    const ends = datasets.flatMap(d => d.meta.filter(Boolean).flatMap(r => range(r[d.mkey || m.key])));
+    const maxFloor = Math.max(0.5, ...floors);
+    let lo = Math.min(0, -maxFloor, ...ends), hi = Math.max(0, maxFloor, ...ends);
+    const pad = (hi - lo) * 0.09;
+    lo -= pad; hi += pad;
     return {
       data: { labels, datasets },
       plugins: [noiseBand, barLabels],
@@ -407,7 +433,7 @@
         onClick: (ev, els, c) => { if (els.length && jobID) location.hash = `#/job/${jobID}/leaf/${all[els[0].datasetIndex]}/${mx.obj}/${labels[els[0].index]}`; },
         onHover: (ev, els) => { ev.native.target.style.cursor = els.length ? 'pointer' : 'default'; },
         scales: {
-          x: { min: -lim, max: lim, ticks: { callback: v => (v > 0 ? '+' : '') + (Math.round(v * 100) / 100) + '%', maxTicksLimit: 9 }, grid: { color: ctx => ctx.tick.value === 0 ? getComputedStyle(document.body).getPropertyValue('--fg') : getComputedStyle(document.body).getPropertyValue('--line2') } },
+          x: { min: lo, max: hi, ticks: { callback: v => (v > 0 ? '+' : '') + (Math.round(v * 100) / 100) + '%', maxTicksLimit: 9 }, grid: { color: ctx => ctx.tick.value === 0 ? getComputedStyle(document.body).getPropertyValue('--fg') : getComputedStyle(document.body).getPropertyValue('--line2') } },
           y: { grid: { display: false } },
         },
         plugins: {
@@ -433,6 +459,11 @@
     if (!(M.HMax > 0)) return [M.Head, M.Head];
     return [Math.min(M.HMin, M.Head), Math.max(M.HMax, M.Head)];
   }
+  // headBody is the middle half of the single runs' head values.
+  function headBody(M) {
+    if (!(M.HQ3 > 0)) return [M.Head, M.Head];
+    return [M.HQ1, M.HQ3];
+  }
   // absLabels marks the mean on each bar with a white tick, the base mean
   // of our own engines with a grey one, and writes the mean beyond the bar.
   const absLabels = {
@@ -450,7 +481,15 @@
           const r = ds.meta[i];
           if (!r) return;
           const M = r[opts.key], h = Math.max(4, bar.height);
-          let right = x.getPixelForValue(headRange(M)[1]);
+          const [hlo, hhi] = headRange(M);
+          ctx.strokeStyle = ds.borderColor;
+          ctx.lineWidth = 1.5;
+          ctx.beginPath();
+          ctx.moveTo(x.getPixelForValue(hlo), bar.y); ctx.lineTo(x.getPixelForValue(hhi), bar.y);
+          ctx.moveTo(x.getPixelForValue(hlo), bar.y - 3); ctx.lineTo(x.getPixelForValue(hlo), bar.y + 3);
+          ctx.moveTo(x.getPixelForValue(hhi), bar.y - 3); ctx.lineTo(x.getPixelForValue(hhi), bar.y + 3);
+          ctx.stroke();
+          let right = x.getPixelForValue(hhi);
           if (ds.own && M.Base > 0) {
             ctx.fillStyle = muted;
             ctx.fillRect(x.getPixelForValue(M.Base) - 1, bar.y - h / 2, 2, h);
@@ -483,7 +522,7 @@
       const cells = labels.map(op => { const r = mx.cells[e + '/' + op]; return r && !unmeasured(r[m.key]) && r[m.key].Head > 0 ? r : null; });
       return {
         label: e + (ref ? ' (library)' : ''), type: 'bar', backgroundColor: color + (ref ? '55' : 'aa'), borderColor: color, borderWidth: 1,
-        data: cells.map(r => r ? headRange(r[m.key]) : null),
+        data: cells.map(r => r ? headBody(r[m.key]) : null),
         meta: cells, engine: e, own: !ref, skipNull: true,
         barThickness: 9, minBarLength: 3,
       };
@@ -530,7 +569,7 @@
       </div>
       ${j.Note ? `<p class="note">${esc(j.Note)}</p>` : ''}${d.BaselineJob ? `<p class="note">Other libraries: values from the reference job <a href="#/job/${d.BaselineJob}">#${d.BaselineJob}</a> on the same machine and payload. They cannot hash Gloas objects unless they implement progressive merkleization (PrysmSSZ does), and none but PrysmSSZ can express the Gloas state.</p>` : ''}${j.Error ? `<pre class="err">${esc(j.Error)}</pre>` : ''}
       <div class="toolbar">${metricTabs()}<div class="tabs" id="modeTabs"><button data-mode="rel" class="${chartMode === 'rel' ? 'active' : ''}" title="charts show head against base in percent">change in %</button><button data-mode="abs" class="${chartMode === 'abs' ? 'active' : ''}" title="charts show the measured values">measured values</button></div>${chartMode === 'abs' ? `<label class="check"><input type="checkbox" id="chartLibs" ${chartLibs ? 'checked' : ''}> with the other libraries</label>` : ''}<span class="muted">${m.label} ${m.unit}: base → head and Δ per engine and operation. Δ is the median over the passes. Green/red: a change (outside the band, most passes agree); bold: |Δ| ≥ 5%; grey: no change. Click a bar or cell for every sample.</span></div>
-      ${mxs.map((mx, i) => { const bars = chartMode === 'abs' ? absRowBars(mx, m) : [...mx.engines, ...mx.asyncEngines].length; return `<h2>${objName(mx.obj)}</h2><div class="chart" style="height:${mx.ops.length * Math.max(30, bars * 14 + 8) + 80}px"><canvas id="dc${i}"></canvas></div><p class="note">${chartMode === 'abs' ? `One bar per engine${chartLibs ? ' and reference library' : ''} per operation, in measured ${m.label.toLowerCase()}: the bar spans the values of the single runs, the white tick and the number are their mean, the grey tick on our own engines is the base's mean. The axis is logarithmic because the operations of one object span several orders of magnitude, so a bar is short when the runs agree.${chartLibs ? ' Paler bars are the other libraries, from the latest reference job.' : ''}` : `One bar per engine (colours in the legend) per operation: the bar spans the ${m.label.toLowerCase()} deltas of the single passes (each pass links head and base with another function layout and measures them minutes apart), the white tick and the number are their median. A long bar means the layouts disagreed about this pair. The grey band behind each row is what does not count as a change there: the operation's noise floor on this machine, widened where the passes scatter. A result is a change when its median lies outside the band and at least three quarters of the passes agree. Async engines appear only on HashTreeRoot.`}</p>${matrixTable(mx, m, j.ID)}`; }).join('') || '<p class="muted">no results yet</p>'}
+      ${mxs.map((mx, i) => { const bars = chartMode === 'abs' ? absRowBars(mx, m) : [...mx.engines, ...mx.asyncEngines].length; return `<h2>${objName(mx.obj)}</h2><div class="chart" style="height:${mx.ops.length * Math.max(30, bars * 14 + 8) + 80}px"><canvas id="dc${i}"></canvas></div><p class="note">${chartMode === 'abs' ? `One bar per engine${chartLibs ? ' and reference library' : ''} per operation, in measured ${m.label.toLowerCase()}: the thick body is the middle half of the single runs' values and the thin line reaches to the lowest and the highest run, the white tick and the number are their mean, the grey tick on our own engines is the base's mean. The axis is logarithmic because the operations of one object span several orders of magnitude, so a bar is short when the runs agree.${chartLibs ? ' Paler bars are the other libraries, from the latest reference job.' : ''}` : `One candle per engine (colours in the legend) per operation. The thick body is the middle half of the per-pass ${m.label.toLowerCase()} deltas (each pass links head and base with another function layout and measures them minutes apart), the thin line reaches to the lowest and the highest pass, the white tick and the number are the median. A single pass far off shows as a long thin line and leaves the body and the scale alone; an arrow head means the line continues beyond the chart. The grey band behind each row is what does not count as a change there: the operation's noise floor on this machine, widened where the passes scatter. A result is a change when its median lies outside the band and at least three quarters of the passes agree. Async engines appear only on HashTreeRoot.`}</p>${matrixTable(mx, m, j.ID)}`; }).join('') || '<p class="muted">no results yet</p>'}
       ${d.Noise && d.Noise.Jobs ? `<p class="note">Noise floor over ${d.Noise.Jobs} self-comparisons: median |Δ time| ${d.Noise.MedianAbs.toFixed(2)}%, p95 ${d.Noise.P95Abs.toFixed(2)}%.</p>` : ''}
       <details><summary>Raw files</summary><p class="mono">${(d.Files || []).map(f => `<a href="/raw/${j.ID}/${f}" target="_blank">${f}</a>`).join(' · ')}</p></details>`;
     bindMetricTabs(() => viewJob(id));

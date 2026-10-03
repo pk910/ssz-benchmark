@@ -301,6 +301,12 @@ func TestMedianOverPasses(t *testing.T) {
 	if m.changed(0.5) {
 		t.Fatalf("an outlier pass counts as a change: median %.2f band %.2f", m.PMed, m.band(0.5))
 	}
+	if b := m.band(0.5); b > 1 {
+		t.Fatalf("an outlier pass widens the band to %.2f%%", b)
+	}
+	if m.PQ1 < -0.5 || m.PQ3 > 0.5 || m.DMin > -50 {
+		t.Fatalf("the middle half [%.2f, %.2f] should leave the outlier pass (%.2f) out", m.PQ1, m.PQ3, m.DMin)
+	}
 	// A real change: every pass agrees, by more than the layouts scatter.
 	m = compareMetric([]float64{100, 103, 98, 101}, []float64{105.1, 108, 102.8, 106.2})
 	if !m.changed(0.5) || math.Abs(m.PMed-5) > 0.3 || m.PAgree != 4 {
