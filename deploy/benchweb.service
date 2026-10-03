@@ -1,0 +1,20 @@
+[Unit]
+Description=benchweb: web UI and API over the benchmark database
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/srv/benchd
+ExecStart=/srv/benchd/benchweb -web -data /srv/benchd -listen :80 -cpus 2,3,4 -gomaxprocs 1 -async-gomaxprocs 3 -seeds 101,202,303,404 -benchtime 300ms -min-iters 2 -target 15m
+Restart=always
+RestartSec=3
+EnvironmentFile=-/srv/benchd/env
+Environment=PATH=/usr/local/go/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+CPUAffinity=0 1
+Nice=10
+MemoryMax=2G
+
+[Install]
+WantedBy=multi-user.target

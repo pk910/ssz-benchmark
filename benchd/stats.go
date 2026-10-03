@@ -1,0 +1,370 @@
+package main
+
+import (
+	"math"
+	"sort"
+	"strings"
+	"time"
+)
+
+func mean(xs []float64) float64 {
+	if len(xs) == 0 {
+		return 0
+	}
+	s := 0.0
+	for _, x := range xs {
+		s += x
+	}
+	return s / float64(len(xs))
+}
+
+func variance(xs []float64, m float64) float64 {
+	if len(xs) < 2 {
+		return 0
+	}
+	s := 0.0
+	for _, x := range xs {
+		s += (x - m) * (x - m)
+	}
+	return s / float64(len(xs)-1)
+}
+
+func median(xs []float64) float64 {
+	return percentile(xs, 0.5)
+}
+
+// percentile returns the p-th percentile (0..1) of xs.
+func percentile(xs []float64, p float64) float64 {
+	if len(xs) == 0 {
+		return 0
+	}
+	s := append([]float64{}, xs...)
+	sort.Float64s(s)
+	idx := p * float64(len(s)-1)
+	lo := int(math.Floor(idx))
+	hi := int(math.Ceil(idx))
+	if lo == hi {
+		return s[lo]
+	}
+	return s[lo] + (s[hi]-s[lo])*(idx-float64(lo))
+}
+
+// welch compares two samples: the difference of means with its 95% interval
+// and the two-sided p-value of Welch's t-test.
+func welch(a, b []float64) (diff, lo, hi, p float64) {
+	ma, mb := mean(a), mean(b)
+	diff = mb - ma
+	if len(a) < 2 || len(b) < 2 {
+		return diff, diff, diff, 1
+	}
+	va, vb := variance(a, ma), variance(b, mb)
+	se2 := va/float64(len(a)) + vb/float64(len(b))
+	if se2 == 0 {
+		if diff == 0 {
+			return diff, diff, diff, 1
+		}
+		return diff, diff, diff, 0
+	}
+	se := math.Sqrt(se2)
+	na, nb := float64(len(a)), float64(len(b))
+	df := se2 * se2 / (va*va/(na*na*(na-1)) + vb*vb/(nb*nb*(nb-1)))
+	if math.IsNaN(df) || df < 1 {
+		df = 1
+	}
+	t := diff / se
+	p = 2 * (1 - tCDF(math.Abs(t), df))
+	q := tQuantile(0.975, df)
+	return diff, diff - q*se, diff + q*se, p
+}
+
+// tCDF is the cumulative distribution of Student's t with df degrees of
+// freedom, through the regularized incomplete beta function.
+func tCDF(t, df float64) float64 {
+	x := df / (df + t*t)
+	ib := incBeta(df/2, 0.5, x)
+	if t >= 0 {
+		return 1 - 0.5*ib
+	}
+	return 0.5 * ib
+}
+
+// tQuantile inverts tCDF by bisection.
+func tQuantile(pr, df float64) float64 {
+	lo, hi := 0.0, 1000.0
+	for range 200 {
+		mid := (lo + hi) / 2
+		if tCDF(mid, df) < pr {
+			lo = mid
+		} else {
+			hi = mid
+		}
+	}
+	return (lo + hi) / 2
+}
+
+// incBeta is the regularized incomplete beta function I_x(a, b) by Lentz's
+// continued fraction.
+func incBeta(a, b, x float64) float64 {
+	if x <= 0 {
+		return 0
+	}
+	if x >= 1 {
+		return 1
+	}
+	if x > (a+1)/(a+b+2) {
+		return 1 - incBeta(b, a, 1-x)
+	}
+	lbeta := lgamma(a) + lgamma(b) - lgamma(a+b)
+	front := math.Exp(math.Log(x)*a+math.Log(1-x)*b-lbeta) / a
+	const eps = 1e-14
+	f, c, d := 1.0, 1.0, 0.0
+	for i := 0; i <= 400; i++ {
+		m := float64(i / 2)
+		var num float64
+		switch {
+		case i == 0:
+			num = 1
+		case i%2 == 0:
+			num = (m * (b - m) * x) / ((a + 2*m - 1) * (a + 2*m))
+		default:
+			num = -((a + m) * (a + b + m) * x) / ((a + 2*m) * (a + 2*m + 1))
+		}
+		d = 1 + num*d
+		if math.Abs(d) < 1e-30 {
+			d = 1e-30
+		}
+		d = 1 / d
+		c = 1 + num/c
+		if math.Abs(c) < 1e-30 {
+			c = 1e-30
+		}
+		cd := c * d
+		f *= cd
+		if math.Abs(1-cd) < eps {
+			break
+		}
+	}
+	return front * (f - 1)
+}
+
+func lgamma(x float64) float64 {
+	v, _ := math.Lgamma(x)
+	return v
+}
+
+// compareMetric folds the per-side samples of one quantity into a metric.
+func compareMetric(base, head []float64) metric {
+	m := metric{Base: mean(base), Head: mean(head), MedBase: median(base), MedHead: median(head)}
+	if len(base) == 0 {
+		// Baseline leaf: head only.
+		m.CVHead = cv(head, m.Head)
+		m.P = 1
+		return m
+	}
+	diff, lo, hi, p := welch(base, head)
+	m.P = p
+	m.CVBase = cv(base, m.Base)
+	m.CVHead = cv(head, m.Head)
+	if m.Base != 0 {
+		m.Delta = diff / m.Base * 100
+		m.Lo = lo / m.Base * 100
+		m.Hi = hi / m.Base * 100
+	}
+	if m.MedBase != 0 {
+		m.MedDelta = (m.MedHead - m.MedBase) / m.MedBase * 100
+	}
+	// The samples of both sides are in pass order, so pairs are the two
+	// sides of one pass: their deltas show how far single runs diverged.
+	m.DMin, m.DMax = m.Delta, m.Delta
+	if len(base) == len(head) {
+		for i := range base {
+			if base[i] == 0 {
+				continue
+			}
+			d := (head[i] - base[i]) / base[i] * 100
+			m.DMin = math.Min(m.DMin, d)
+			m.DMax = math.Max(m.DMax, d)
+		}
+	}
+	return m
+}
+
+func cv(xs []float64, m float64) float64 {
+	if m == 0 {
+		return 0
+	}
+	return math.Sqrt(variance(xs, m)) / m * 100
+}
+
+// summarize folds the samples of a job into one result per leaf.
+func summarize(samples []sample) []result {
+	type group struct {
+		l                                        leaf
+		nsB, nsH, bB, bH, aB, aH, cB, cH, iB, iH []float64
+		iters, steal                             int
+	}
+	groups := map[string]*group{}
+	for _, sm := range samples {
+		k := sm.Engine + "/" + sm.Object + "/" + sm.Op
+		g, ok := groups[k]
+		if !ok {
+			g = &group{l: leaf{Engine: sm.Engine, Object: sm.Object, Op: sm.Op}, iters: sm.Iters}
+			groups[k] = g
+		}
+		if sm.Iters > 0 && (g.iters == 0 || sm.Iters < g.iters) {
+			g.iters = sm.Iters
+		}
+		g.steal += sm.Steal
+		if sm.Side == "head" {
+			g.nsH = append(g.nsH, sm.Ns)
+			g.bH = append(g.bH, sm.Bytes)
+			g.aH = append(g.aH, sm.Allocs)
+			g.cH = append(g.cH, sm.Cycles)
+			g.iH = append(g.iH, sm.Instrs)
+		} else {
+			g.nsB = append(g.nsB, sm.Ns)
+			g.bB = append(g.bB, sm.Bytes)
+			g.aB = append(g.aB, sm.Allocs)
+			g.cB = append(g.cB, sm.Cycles)
+			g.iB = append(g.iB, sm.Instrs)
+		}
+	}
+	var results []result
+	for _, g := range groups {
+		if len(g.nsH) == 0 {
+			continue
+		}
+		r := result{Engine: g.l.Engine, Object: g.l.Object, Op: g.l.Op, Baseline: len(g.nsB) == 0, Iters: g.iters, Steal: g.steal,
+			N: len(g.nsH), Ns: compareMetric(g.nsB, g.nsH), Bytes: compareMetric(g.bB, g.bH), Allocs: compareMetric(g.aB, g.aH),
+			Cycles: compareMetric(g.cB, g.cH), Instrs: compareMetric(g.iB, g.iH)}
+		if !r.Baseline {
+			r.N = min(len(g.nsB), len(g.nsH))
+		}
+		results = append(results, r)
+	}
+	sort.Slice(results, func(i, j int) bool {
+		return leafLess(results[i].Object, results[i].Op, results[i].Engine, results[j].Object, results[j].Op, results[j].Engine)
+	})
+	return results
+}
+
+// Fixed display order of objects, operations and engines.
+var (
+	objectOrder = []string{"FuluState", "FuluBlock", "FuluBlocks", "GloasState", "GloasBlock", "GloasBlocks", "GloasEnvelope"}
+	opOrder     = []string{"Unmarshal", "UnmarshalReader", "UnmarshalReaderUnknown", "SizeSSZ", "Marshal", "MarshalTo", "MarshalWriter", "HashTreeRoot", "GetTree"}
+	engineOrder = []string{"Codegen", "Reflection", "CodegenAsync", "ReflectionAsync", "FastSSZ", "FastSSZv1", "FastSSZv2", "PrysmSSZ", "KaralabeSSZ", "KaralabeSSZAsync"}
+)
+
+func rank(order []string, v string) int {
+	for i, o := range order {
+		if o == v {
+			return i
+		}
+	}
+	return len(order)
+}
+
+func leafLess(o1, p1, e1, o2, p2, e2 string) bool {
+	if a, b := rank(objectOrder, o1), rank(objectOrder, o2); a != b {
+		return a < b
+	}
+	if o1 != o2 {
+		return o1 < o2
+	}
+	if a, b := rank(opOrder, p1), rank(opOrder, p2); a != b {
+		return a < b
+	}
+	if p1 != p2 {
+		return p1 < p2
+	}
+	if a, b := rank(engineOrder, e1), rank(engineOrder, e2); a != b {
+		return a < b
+	}
+	return e1 < e2
+}
+
+func sortLeaves(xs [][2]string) {
+	sort.Slice(xs, func(i, j int) bool { return leafLess(xs[i][0], xs[i][1], "", xs[j][0], xs[j][1], "") })
+}
+
+// sortLeafList orders leaves engine-major so a pass walks one engine's
+// objects and operations in sequence (state loads stay grouped).
+func sortLeafList(xs []leaf) {
+	sort.Slice(xs, func(i, j int) bool {
+		if a, b := rank(engineOrder, xs[i].Engine), rank(engineOrder, xs[j].Engine); a != b {
+			return a < b
+		}
+		if xs[i].Engine != xs[j].Engine {
+			return xs[i].Engine < xs[j].Engine
+		}
+		return leafLess(xs[i].Object, xs[i].Op, "", xs[j].Object, xs[j].Op, "")
+	})
+}
+
+// geomeanDelta is the geometric mean of head/base time ratios of the
+// non-baseline results, in percent.
+func geomeanDelta(results []result) float64 {
+	return geomeanOf(results, func(r result) metric { return r.Ns })
+}
+
+// geomeanCycles is the same over cycles per op; zero when the results
+// carry no cycle counts.
+func geomeanCycles(results []result) float64 {
+	return geomeanOf(results, func(r result) metric { return r.Cycles })
+}
+
+func geomeanOf(results []result, pick func(result) metric) float64 {
+	s, n := 0.0, 0
+	for _, r := range results {
+		m := pick(r)
+		if r.Baseline || m.Base <= 0 || m.Head <= 0 {
+			continue
+		}
+		s += math.Log(m.Head / m.Base)
+		n++
+	}
+	if n == 0 {
+		return 0
+	}
+	return (math.Exp(s/float64(n)) - 1) * 100
+}
+
+// trendFit is a line through (time, value) points: the relative slope per
+// 30 days, the projected value 30 days past the last point, and R².
+type trendFit struct {
+	SlopePct30d  float64
+	Projected30d float64
+	R2           float64
+	N            int
+}
+
+func fitTrend(times []time.Time, values []float64) trendFit {
+	n := len(values)
+	if n < 3 {
+		return trendFit{N: n}
+	}
+	t0 := times[0]
+	xs := make([]float64, n)
+	for i := range times {
+		xs[i] = times[i].Sub(t0).Hours() / 24
+	}
+	mx, my := mean(xs), mean(values)
+	sxx, sxy, syy := 0.0, 0.0, 0.0
+	for i := range xs {
+		sxx += (xs[i] - mx) * (xs[i] - mx)
+		sxy += (xs[i] - mx) * (values[i] - my)
+		syy += (values[i] - my) * (values[i] - my)
+	}
+	if sxx == 0 || my == 0 {
+		return trendFit{N: n}
+	}
+	slope := sxy / sxx
+	intercept := my - slope*mx
+	r2 := 0.0
+	if syy > 0 {
+		r2 = sxy * sxy / (sxx * syy)
+	}
+	return trendFit{SlopePct30d: slope * 30 / my * 100, Projected30d: intercept + slope*(xs[n-1]+30), R2: r2, N: n}
+}
+
+func joinKey(parts ...string) string { return strings.Join(parts, "/") }

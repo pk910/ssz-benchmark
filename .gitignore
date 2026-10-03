@@ -1,0 +1,38 @@
+# secrets: the daemon's environment file, App and TLS keys, tokens
+env
+*.env
+.env*
+*.pem
+*.key
+*.p12
+*token*
+
+# data the daemon produces: database, job logs, checkouts, builds
+*.db
+*.db-wal
+*.db-shm
+/jobs/
+/wt/
+/hb/
+/work/
+repo.git/
+
+# payload files are generated (harness/cmd/payload) and live on the box
+/payload-out/
+/harness/payload
+*.ssz
+
+# generated per checkout by the daemon
+/harness/types/*/gen_ssz.go
+/harness/dynssz-gen
+
+# build and test artefacts
+*.test
+*.out
+*.prof
+/benchd/benchd
+/benchd/benchweb
+*.patch
+*.orig
+*.rej
+.DS_Store

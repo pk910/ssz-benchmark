@@ -1,0 +1,33 @@
+[Unit]
+Description=benchd benchmark daemon (jobs only; the UI is benchweb)
+After=network-online.target bench-irq-affinity.service
+Wants=network-online.target bench-irq-affinity.service
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/srv/benchd
+ExecStart=/srv/benchd/benchd -data /srv/benchd -harness /srv/benchd/harness -payload /srv/benchd/res/real -packages fulu,gloas -no-web -cpus 2,3,4 -gomaxprocs 1 -async-gomaxprocs 3 -seeds 101,202,303,404 -benchtime 300ms -min-iters 2 -outlier 4 -target 15m -memlimit 12GiB -poll 60s -noise-interval 6h -backfill 10
+Restart=always
+RestartSec=10
+EnvironmentFile=-/srv/benchd/env
+Environment=HOME=/root
+Environment=PATH=/usr/local/go/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+Environment=GOTOOLCHAIN=local
+Environment=GOMAXPROCS=2
+# Worktrees, harness builds and the Go caches live on the work disk; the
+# database, payload and job logs on the data disk.
+Environment=GOCACHE=/srv/benchd/work/gocache
+Environment=GOMODCACHE=/srv/benchd/work/go
+# The service and the Go builds stay on the housekeeping vCPUs (0-1); the
+# benchmark binaries are moved to vCPUs 2, 3 and 4 by the service itself.
+# Each of those is one physical core of the host whose sibling thread has
+# no vCPU at all. The synchronous engines use one P (cpu 2, GC serialized
+# with the measured loop), the async engines one P per core.
+CPUAffinity=0 1
+Nice=5
+LimitNOFILE=65536
+MemoryMax=15G
+
+[Install]
+WantedBy=multi-user.target

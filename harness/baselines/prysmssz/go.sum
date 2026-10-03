@@ -1,0 +1,12 @@
+github.com/OffchainLabs/go-bitfield v0.0.0-20260504143531-5cbb6d0f5f2e h1:M9Ia6En5b8/imySo4xQeeoJPG2tOOJEKk/GnfBI86Hk=
+github.com/OffchainLabs/go-bitfield v0.0.0-20260504143531-5cbb6d0f5f2e/go.mod h1:6TZI4FU6zT8x6ZfWa1J8YQ2NgW0wLV/W3fHRca8ISBo=
+github.com/OffchainLabs/methodical-ssz v0.0.0-20260703104215-9be4f5c6a334 h1:X7Rtbyy16t/ruqtADWyYg8GSfJlO9gfXyxmHpB3oYvQ=
+github.com/OffchainLabs/methodical-ssz v0.0.0-20260703104215-9be4f5c6a334/go.mod h1:V1D4kNhhNQ7jltlUDOZfSt750UypPV0wkhakdlcrEd0=
+github.com/klauspost/cpuid/v2 v2.2.9 h1:66ze0taIn2H33fBvCkXuv9BmCwDfafmiIVpKV9kKGuY=
+github.com/klauspost/cpuid/v2 v2.2.9/go.mod h1:rqkxqrZ1EhYM9G+hXH7YdowN5R5RGN6NK4QwQ3WMXF8=
+github.com/minio/sha256-simd v1.0.1 h1:6kaan5IFmwTNynnKKpDHe6FWHohJOHhCPchzK49dzMM=
+github.com/minio/sha256-simd v1.0.1/go.mod h1:Pz6AKMiUdngCLpeTL/RJY1M9rUuPMYujV5xJjtbRSN8=
+github.com/prysmaticlabs/gohashtree v0.0.5-beta h1:ct41mg7HyIZd7uoSM/ud23f+3DxQG9tlMlQG+BVX23c=
+github.com/prysmaticlabs/gohashtree v0.0.5-beta/go.mod h1:HRuvtXLZ4WkaB1MItToVH2e8ZwKwZPY5/Rcby+CvvLY=
+golang.org/x/sys v0.48.0 h1:bbX/i/6MgT9BVLM9RT1thmxL04yeTAhbEz4SyadbXoo=
+golang.org/x/sys v0.48.0/go.mod h1:hNLxWAXmnKAxqDtdwIYC4bM9oQPEecfsnNMuSxOs3og=

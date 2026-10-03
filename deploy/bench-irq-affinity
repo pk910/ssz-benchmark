@@ -1,0 +1,18 @@
+#!/bin/bash
+# Points every interrupt that allows it at cpus 0-1, so the benchmark cpus
+# (2-4) take no device interrupts. Per-cpu and managed interrupts refuse the
+# write; that is expected.
+echo 3 > /proc/irq/default_smp_affinity
+for irq in /proc/irq/[0-9]*; do
+  echo 0-1 > "$irq/smp_affinity_list" 2>/dev/null || true
+done
+# Unbound kernel work (writeback and the like) off the benchmark cpus too.
+echo 3 > /sys/devices/virtual/workqueue/cpumask 2>/dev/null || true
+echo 3 > /sys/bus/workqueue/devices/writeback/cpumask 2>/dev/null || true
+# Memory management threads (compaction, reclaim, huge page collapse) and
+# the other unbound kernel threads are free to run anywhere by default;
+# per-cpu threads refuse the move.
+for pid in $(pgrep -x "kcompactd0|kswapd0|khugepaged|ksmd|kthreadd") $(pgrep "^kworker/R-|^kworker/u"); do
+  taskset -pc 0-1 "$pid" >/dev/null 2>&1 || true
+done
+exit 0

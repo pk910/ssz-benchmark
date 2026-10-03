@@ -1,0 +1,29 @@
+[Unit]
+Description=benchd worker: benchmarks for the controller
+After=network-online.target bench-irq-affinity.service
+Wants=network-online.target bench-irq-affinity.service
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/srv/benchd
+# RUNNER_TOKEN and CONTROLLER come from /srv/benchd/env
+EnvironmentFile=/srv/benchd/env
+ExecStart=/srv/benchd/benchd -controller ${CONTROLLER} -data /srv/benchd -harness /srv/benchd/harness -payload /srv/benchd/res/real -packages fulu,gloas -cpus 2,3,4 -gomaxprocs 1 -async-gomaxprocs 3 -seeds 101,202,303,404 -benchtime 300ms -min-iters 2 -outlier 4 -target 15m -memlimit 12GiB
+Restart=always
+RestartSec=10
+Environment=HOME=/root
+Environment=PATH=/usr/local/go/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+Environment=GOTOOLCHAIN=local
+Environment=GOMAXPROCS=2
+# Worktrees, harness builds and the Go caches live on the work disk; the
+# database, payload and job logs on the data disk.
+Environment=GOCACHE=/srv/benchd/work/gocache
+Environment=GOMODCACHE=/srv/benchd/work/go
+CPUAffinity=0 1
+Nice=5
+LimitNOFILE=65536
+MemoryMax=15G
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,12 @@
+[Unit]
+Description=Keep interrupts off the benchmark cpus
+DefaultDependencies=no
+After=sysinit.target
+Before=benchd.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/bench-irq-affinity
+
+[Install]
+WantedBy=multi-user.target
