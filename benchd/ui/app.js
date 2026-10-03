@@ -172,6 +172,25 @@
     Chart.defaults.font.family = getComputedStyle(document.body).fontFamily;
     Chart.defaults.font.size = 11;
     Chart.defaults.color = getComputedStyle(document.body).getPropertyValue('--muted').trim();
+    // candle: the candle under the pointer, over its whole length (body
+    // and thin line), not only over the body.
+    Chart.Tooltip.positioners.pointer = (items, pos) => items.length ? { x: pos.x, y: items[0].element.y } : false;
+    Chart.Interaction.modes.candle = (c, e) => {
+      const x = c.scales.x;
+      let best = null;
+      c.data.datasets.forEach((ds, di) => {
+        if (!c.isDatasetVisible(di) || !ds.whisker) return;
+        c.getDatasetMeta(di).data.forEach((bar, i) => {
+          const cell = ds.meta[i];
+          if (!cell) return;
+          const ends = [...ds.whisker(cell).map(v => x.getPixelForValue(v)), bar.x, bar.base].filter(Number.isFinite);
+          const dy = Math.abs(e.y - bar.y);
+          if (dy > Math.max(6, bar.height / 2 + 1) || e.x < Math.min(...ends) - 4 || e.x > Math.max(...ends) + 4) return;
+          if (!best || dy < best.dy) best = { dy, element: bar, datasetIndex: di, index: i };
+        });
+      });
+      return best ? [{ element: best.element, datasetIndex: best.datasetIndex, index: best.index }] : [];
+    };
     const c = new Chart(el, cfg);
     charts.push(c);
     return c;
@@ -364,6 +383,28 @@
     const key = metricFor(m, engine).key, r = mx.cells[engine + '/' + row.op];
     return r && !unmeasured(r[key]) ? { r, key, engine, op: row.op } : null;
   }
+  // candleTip is the callout of a candle: the engine and row as the
+  // title in the engine's colour, then one aligned line per fact. rows
+  // returns [name, value] pairs for the hovered cell.
+  function candleTip(rows) {
+    const css = v => getComputedStyle(document.body).getPropertyValue(v).trim();
+    return {
+      position: 'pointer', backgroundColor: css('--card'), borderColor: css('--muted'), borderWidth: 1, cornerRadius: 6, padding: 10, caretSize: 6, displayColors: false,
+      titleColor: ctx => (ctx.tooltip && ctx.tooltip.dataPoints && ctx.tooltip.dataPoints[0] && ctx.tooltip.dataPoints[0].dataset.borderColor) || css('--fg'),
+      titleFont: { size: 12, weight: '600' }, titleMarginBottom: 8,
+      bodyColor: css('--fg'), bodyFont: { family: 'ui-monospace, SFMono-Regular, Menlo, Consolas, monospace', size: 11 }, bodySpacing: 4,
+      footerColor: css('--muted'), footerFont: { size: 11, weight: 'normal' }, footerMarginTop: 8,
+      callbacks: {
+        title: items => { const c = items[0].dataset.meta[items[0].dataIndex]; return `${c.engine} · ${items[0].label}`; },
+        label: ctx => {
+          const lines = rows(ctx.dataset.meta[ctx.dataIndex], ctx.dataset).filter(Boolean);
+          const w = Math.max(...lines.map(l => l[0].length));
+          return lines.map(l => l[0].padEnd(w + 2) + l[1]);
+        },
+        footer: items => items[0].dataset.own === false ? '' : 'click for the single runs',
+      },
+    };
+  }
   // barLabels draws the mean as a tick on each bar and writes it beyond
   // the bar's far end.
   const barLabels = {
@@ -435,7 +476,7 @@
       return {
         label: e, type: 'bar', backgroundColor: color + 'aa', borderColor: color, borderWidth: 1,
         data: cells.map(c => c ? body(c.r[c.key]) : null),
-        meta: cells,
+        meta: cells, whisker: c => range(c.r[c.key]),
         barPercentage: 0.8, categoryPercentage: 0.8, minBarLength: 3,
       };
     });
@@ -451,7 +492,7 @@
       data: { labels, datasets },
       plugins: [noiseBand, barLabels],
       options: {
-        indexAxis: 'y', responsive: true, maintainAspectRatio: false, animation: false,
+        indexAxis: 'y', responsive: true, maintainAspectRatio: false, animation: false, interaction: { mode: 'candle' },
         onClick: (ev, els, c) => { if (els.length && jobID) { const c = datasets[els[0].datasetIndex].meta[els[0].index]; location.hash = `#/job/${jobID}/leaf/${c.engine}/${mx.obj}/${c.op}`; } },
         onHover: (ev, els) => { ev.native.target.style.cursor = els.length ? 'pointer' : 'default'; },
         scales: {
@@ -466,10 +507,18 @@
           } }, onClick: (e, item, legend) => { if (item.datasetIndex >= 0) Chart.defaults.plugins.legend.onClick.call(legend, e, item, legend); } },
           noiseBand: { floors },
           barLabels: { key: m.key },
-          tooltip: { callbacks: { label: ctx => {
-            const c = ctx.dataset.meta[ctx.dataIndex], M = c.r[c.key], [lo, hi] = range(M), cm = Object.values(METRICS).find(x => x.key === c.key) || m;
-            return `${c.engine}: median ${pct(delta(M))} · single passes ${pct(lo, 2)} to ${pct(hi, 2)}${M.PN > 0 ? ` · ${M.PAgree} of ${M.PN} agree` : ''} · ${cm.fmt(M.Base)} → ${cm.fmt(M.Head)}`;
-          } } },
+          tooltip: candleTip(c => {
+            const M = c.r[c.key], [lo, hi] = range(M), [b0, b1] = body(M), cm = Object.values(METRICS).find(x => x.key === c.key) || m;
+            const band = bandOf(M, c.engine + '/' + mx.obj + '/' + c.op), ch = Math.abs(delta(M)) > band && (!(M.PN > 0) || M.PAgree >= 0.75 * M.PN);
+            return [
+              ['median', pct(delta(M))],
+              M.PN > 1 && ['middle half', `${pct(b0)} … ${pct(b1)}`],
+              M.PN > 1 && ['all passes', `${pct(lo)} … ${pct(hi)}`],
+              M.PN > 0 && ['passes', `${M.PN}, ${M.PAgree} in the same direction`],
+              ['band', `±${band.toFixed(2)}%  →  ${ch ? (delta(M) < 0 ? 'faster' : 'slower') : 'no change'}`],
+              ['base → head', `${cm.fmt(M.Base)} → ${cm.fmt(M.Head)} ${cm.unit || ''}`],
+            ];
+          }),
         },
       },
     };
@@ -554,7 +603,7 @@
       return {
         label: e + (ref ? ' (library)' : ''), type: 'bar', backgroundColor: color + (ref ? '55' : 'aa'), borderColor: color, borderWidth: 1,
         data: cells.map(c => c ? headBody(c.r[m.key]) : null),
-        meta: cells, own: !ref, skipNull: true,
+        meta: cells, own: !ref, skipNull: true, whisker: c => [...headRange(c.r[m.key]), ...(!ref && c.r[m.key].Base > 0 ? [c.r[m.key].Base] : [])],
         barThickness: 9, minBarLength: 3,
       };
     });
@@ -563,7 +612,7 @@
       data: { labels, datasets },
       plugins: [absLabels],
       options: {
-        indexAxis: 'y', responsive: true, maintainAspectRatio: false, animation: false,
+        indexAxis: 'y', responsive: true, maintainAspectRatio: false, animation: false, interaction: { mode: 'candle' },
         onClick: (ev, els) => { if (els.length && jobID && datasets[els[0].datasetIndex].own) { const c = datasets[els[0].datasetIndex].meta[els[0].index]; location.hash = `#/job/${jobID}/leaf/${c.engine}/${mx.obj}/${c.op}`; } },
         scales: {
           x: { type: 'logarithmic', min: vals.length ? Math.min(...vals) / 1.6 : undefined, max: vals.length ? Math.max(...vals) * 2.5 : undefined, ticks: { callback: v => m.fmt(v), maxTicksLimit: 10 }, title: { display: true, text: `${m.label} ${m.unit}, logarithmic` } },
@@ -572,10 +621,16 @@
         plugins: {
           legend: { labels: { boxWidth: 12 } },
           absLabels: { fmt: m.fmt, key: m.key },
-          tooltip: { callbacks: { label: ctx => {
-            const cell = ctx.dataset.meta[ctx.dataIndex], c = cell.r, M = c[m.key], [lo, hi] = headRange(M);
-            return `${cell.engine}: mean ${m.fmt(M.Head)} · single runs ${m.fmt(lo)} to ${m.fmt(hi)}${ctx.dataset.own ? ` · base ${m.fmt(M.Base)} (${pct(M.Delta)})` : ''} · ${c.N} runs`;
-          } } },
+          tooltip: candleTip((c, ds) => {
+            const M = c.r[m.key], [lo, hi] = headRange(M), [b0, b1] = headBody(M), u = ' ' + (m.unit || '');
+            return [
+              ['mean', m.fmt(M.Head) + u],
+              c.r.N > 1 && ['middle half', `${m.fmt(b0)} … ${m.fmt(b1)}`],
+              c.r.N > 1 && ['single runs', `${m.fmt(lo)} … ${m.fmt(hi)}`],
+              ['runs', String(c.r.N)],
+              ds.own && M.Base > 0 && ['base', `${m.fmt(M.Base)}${u}  (head ${pct(M.Delta)})`],
+            ];
+          }),
         },
       },
     };
