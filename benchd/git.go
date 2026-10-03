@@ -546,7 +546,7 @@ func (s *scheduler) enqueueForkPRs(ctx context.Context) {
 				continue
 			}
 			j := &job{Kind: kindCommit, Branch: branch, HeadSHA: sha, HeadDesc: s.git.describe(sha), BaseSHA: baseSHA, BaseRef: pr.BaseRef,
-				BaseDesc: s.git.describe(baseSHA), PR: pr.Number, Note: fmt.Sprintf("fork %s, measuring approved by %s", pr.Label, by)}
+				BaseDesc: s.git.describe(baseSHA), PR: pr.Number, Priority: 1, Note: fmt.Sprintf("fork %s, measuring approved by %s", pr.Label, by)}
 			log.Printf("queue fork #%d %s (%s) against %s, approved by %s", pr.Number, sha[:12], pr.Label, baseSHA[:12], by)
 			if err := s.db.insertJob(j); err != nil {
 				log.Printf("fork #%d: %v", pr.Number, err)
@@ -641,6 +641,8 @@ func (s *scheduler) enqueueBranchTip(ref, sha string) error {
 	if pr, ok := s.prs.forBranch(ref); ok {
 		baseRef = pr.BaseRef
 		j.PR = pr.Number
+		// An open pull request is waited on: it runs before the backfill.
+		j.Priority = 1
 	}
 	var baseSHA string
 	if baseTip, ok := s.git.branches2(baseRef); ok {
