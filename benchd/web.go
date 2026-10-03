@@ -16,6 +16,7 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"runtime"
 	"sort"
@@ -519,8 +520,10 @@ func (w *webServer) webhook(rw http.ResponseWriter, req *http.Request) {
 	_, _ = io.WriteString(rw, "approved\n")
 }
 
-// apiPR is the history of a pull request: every measured head against the
-// base, and what each head changed against the head measured before it.
+// apiPR is a pull request as the benchmarks see it: every commit of its
+// branch, oldest first, with the results of the commits that were measured
+// (against the base, and against the measured commit before), and the
+// heads measured earlier that a force push took out of the branch.
 func (w *webServer) apiPR(rw http.ResponseWriter, req *http.Request) {
 	n, err := strconv.Atoi(strings.TrimPrefix(req.URL.Path, "/api/pr/"))
 	if err != nil {
@@ -533,37 +536,102 @@ func (w *webServer) apiPR(rw http.ResponseWriter, req *http.Request) {
 		return
 	}
 	type row struct {
-		Job       *job
+		SHA       string
+		Subject   string
+		Time      *time.Time
+		Job       *job            // newest job with this commit as head, if any
 		Summaries []engineSummary // head against the base
-		Step      []engineSummary // head against the previous measured head
-		Previous  int64           // job of that previous head
+		Step      []engineSummary // head against the previous measured commit
+		Previous  int64           // job of that previous commit
+		Results   []result        // the measured values, for the charts
+		Detached  bool            // measured, but no longer part of the branch
+	}
+	// The newest job of every head.
+	byHead := map[string]*job{}
+	var headOrder []string
+	for _, j := range jobs {
+		if _, ok := byHead[j.HeadSHA]; !ok {
+			headOrder = append(headOrder, j.HeadSHA)
+		}
+		byHead[j.HeadSHA] = j
 	}
 	rows := []row{}
+	branch, title := "", ""
+	if len(jobs) > 0 {
+		last := jobs[len(jobs)-1]
+		branch = last.Branch
+		inBranch := map[string]bool{}
+		for _, c := range prCommits(w.cfg.dataDir, last.BaseSHA, last.HeadSHA) {
+			c := c
+			inBranch[c.sha] = true
+			rows = append(rows, row{SHA: c.sha, Subject: c.subject, Time: &c.when, Job: byHead[c.sha]})
+		}
+		// Heads a force push removed come first: they were measured earlier.
+		var detached []row
+		for _, sha := range headOrder {
+			if !inBranch[sha] {
+				j := byHead[sha]
+				detached = append(detached, row{SHA: sha, Subject: strings.TrimPrefix(j.HeadDesc, shortSHA(sha)[:min(7, len(sha))]+" "), Job: j, Detached: len(inBranch) > 0})
+			}
+		}
+		rows = append(detached, rows...)
+	}
 	var prev []result
 	var prevJob int64
-	for _, j := range jobs {
-		r := row{Job: j, Summaries: []engineSummary{}, Step: []engineSummary{}}
-		if j.State == stateDone {
-			results, _ := w.db.resultsFor(j.ID)
-			var own []result
-			for _, res := range results {
-				if !res.Baseline {
-					own = append(own, res)
-				}
-			}
-			r.Summaries = summaries(own)
-			if prev != nil {
-				r.Step, r.Previous = summaries(stepResults(prev, own)), prevJob
-			}
-			prev, prevJob = own, j.ID
+	for i := range rows {
+		r := &rows[i]
+		r.Summaries, r.Step, r.Results = []engineSummary{}, []engineSummary{}, []result{}
+		if r.Job == nil || r.Job.State != stateDone {
+			continue
 		}
-		rows = append(rows, r)
+		results, _ := w.db.resultsFor(r.Job.ID)
+		for _, res := range results {
+			if !res.Baseline {
+				r.Results = append(r.Results, res)
+			}
+		}
+		r.Summaries = summaries(r.Results)
+		if prev != nil {
+			r.Step, r.Previous = summaries(stepResults(prev, r.Results)), prevJob
+		}
+		prev, prevJob = r.Results, r.Job.ID
 	}
 	w.writeJSON(rw, struct {
-		PR   int
-		Rows []row
-		Repo string
-	}{n, rows, "https://github.com/" + w.cfg.github})
+		PR     int
+		Branch string
+		Title  string
+		Rows   []row
+		Repo   string
+	}{n, branch, title, rows, "https://github.com/" + w.cfg.github})
+}
+
+type prCommit struct {
+	sha, subject string
+	when         time.Time
+}
+
+// prCommits lists the commits between base and head from the mirror,
+// oldest first; nothing when the mirror no longer has them.
+func prCommits(dataDir, base, head string) []prCommit {
+	if len(base) != 40 || len(head) != 40 {
+		return nil
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
+	out, err := exec.CommandContext(ctx, "git", "-C", filepath.Join(dataDir, "repo.git"), "log", "--reverse", "--first-parent", "--format=%H%x09%ct%x09%s", "-n", "500", base+".."+head).Output()
+	if err != nil {
+		return nil
+	}
+	var commits []prCommit
+	for _, line := range strings.Split(strings.TrimSpace(string(out)), "\n") {
+		f := strings.SplitN(line, "\t", 3)
+		if len(f) != 3 || len(f[0]) != 40 {
+			continue
+		}
+		ts, _ := strconv.ParseInt(f[1], 10, 64)
+		commits = append(commits, prCommit{sha: f[0], subject: f[2], when: time.Unix(ts, 0)})
+	}
+	return commits
 }
 
 // stepResults pairs the head values of two jobs of the same branch: the

@@ -611,35 +611,67 @@
     }));
   }
 
-  /* ---------- pull request history ---------- */
+  /* ---------- pull request ---------- */
+  // What the pull request chart shows: the change against the base in
+  // percent, or measured values; for all operations (geomean, percent
+  // only) or one operation.
+  let prMode = localStorage.getItem('prMode') === 'abs' ? 'abs' : 'rel';
+  let prLeaf = localStorage.getItem('prLeaf') || '';
   async function viewPR(n) {
     const d = await get('/api/pr/' + n);
     repo = d.Repo;
+    const m = METRICS[metric];
     const chips = sums => engineTotals(sums).map(x => `<span class="chip" title="geomean over ${x.N} operations (${x.Cycles && !x.Engine.endsWith('Async') ? 'cycles' : 'time'})">${x.Engine} <b>${pct(x.Geomean, 1)}</b></span>`).join('') || '<span class="muted">-</span>';
-    const done = d.Rows.filter(r => r.Job.State === 'done');
-    app.innerHTML = `<h1>Pull request <a href="${repo}/pull/${d.PR}" target="_blank" rel="noopener">#${d.PR}</a></h1>
-      <p class="note">Every head of the pull request that was measured, oldest first. "Against the base" is the full effect of the pull request at that head. "Against the previous head" is what that push changed; it compares two separate jobs, so it is less exact than a job's own comparison (open "compare" for the per-operation view).</p>
-      ${done.length > 1 ? '<div class="chart h300"><canvas id="prc"></canvas></div>' : ''}
-      <table><thead><tr><th>Job</th><th>State</th><th>Head</th><th>Base</th><th>Against the base</th><th>Against the previous head</th><th class="num">Passes</th><th>Finished</th></tr></thead><tbody>
-      ${d.Rows.map(r => { const j = r.Job; return `<tr><td><a href="#/job/${j.ID}">#${j.ID}</a></td><td>${chip(j)}</td>
-        <td>${commitLink(j.HeadSHA)} <span class="muted desc" style="display:inline-block;vertical-align:bottom">${esc(j.HeadDesc).replace(/^[0-9a-f]{7} /, '')}</span></td>
-        <td>${commitLink(j.BaseSHA)} <span class="muted">${esc(j.BaseRef)}</span></td>
-        <td><div class="chips">${j.State === 'done' ? chips(r.Summaries) : `<span class="muted">${esc(j.Note || j.State)}</span>`}</div></td>
-        <td><div class="chips">${r.Previous ? chips(r.Step) + ` <a href="#/compare?a=${d.Rows.find(x => x.Job.ID === r.Previous).Job.HeadSHA}&b=${j.HeadSHA}">compare</a>` : '<span class="muted">-</span>'}</div></td>
-        <td class="num">${j.Passes || ''}</td><td class="muted">${when(j.Finished)}</td></tr>`; }).join('')}
+    const measured = d.Rows.filter(r => r.Job && r.Job.State === 'done');
+    const leaves = [...new Set(measured.flatMap(r => r.Results.map(x => x.Object + '/' + x.Op)))].sort((a, b) => { const [ao, ap] = a.split('/'), [bo, bp] = b.split('/'); return rank(OBJECTS, ao) - rank(OBJECTS, bo) || rank(OPS, ap) - rank(OPS, bp); });
+    let leaf = leaves.includes(prLeaf) ? prLeaf : '';
+    if (prMode === 'abs' && !leaf) leaf = leaves.includes('FuluState/HashTreeRoot') ? 'FuluState/HashTreeRoot' : (leaves[0] || '');
+    const count = d.Rows.filter(r => !r.Detached).length;
+    app.innerHTML = `<h1>Pull request <a href="${repo}/pull/${d.PR}" target="_blank" rel="noopener">#${d.PR}</a> <span class="mono muted" style="font-size:13px;font-weight:400">${esc(d.Branch || '')}</span></h1>
+      <div class="toolbar">${metricTabs()}<div class="tabs" id="prMode"><button data-mode="rel" class="${prMode === 'rel' ? 'active' : ''}">change against the base</button><button data-mode="abs" class="${prMode === 'abs' ? 'active' : ''}">measured values</button></div>
+        <select id="prLeaf">${prMode === 'rel' ? `<option value="">all operations (geomean)</option>` : ''}${leaves.map(l => `<option value="${l}" ${l === leaf ? 'selected' : ''}>${l.replace('/', ' / ')}</option>`).join('')}</select>
+        <span class="muted">${measured.length} of ${count} commits measured</span></div>
+      ${measured.length ? '<div class="chart h300"><canvas id="prc"></canvas></div>' : '<p class="muted">no commit of this pull request has been measured yet</p>'}
+      <p class="note">The commits of the pull request, oldest first. A push is measured at its head, so commits pushed together share one measurement at the last of them. "Against the base" is the full effect of the pull request at that commit. "Against the previous measured commit" is what came in since; it compares two separate jobs and is less exact than a job's own comparison.</p>
+      <table><thead><tr><th>Commit</th><th>Subject</th><th>Committed</th><th>Job</th><th>Against the base</th><th>Against the previous measured commit</th></tr></thead><tbody>
+      ${d.Rows.map(r => { const j = r.Job; const prev = r.Previous ? d.Rows.find(x => x.Job && x.Job.ID === r.Previous) : null; return `<tr class="${j ? '' : 'unmeasured'}"><td>${commitLink(r.SHA)}${r.Detached ? ' <span class="chip" title="measured earlier; a force push took this commit out of the branch">earlier head</span>' : ''}</td>
+        <td class="desc">${esc(r.Subject)}</td><td class="muted">${when(r.Time)}</td>
+        <td>${j ? `<a href="#/job/${j.ID}">#${j.ID}</a> ${chip(j)}` : '<span class="muted">not measured</span>'}</td>
+        <td><div class="chips">${j && j.State === 'done' ? chips(r.Summaries) : j ? `<span class="muted">${esc(j.Note || j.State)}</span>` : ''}</div></td>
+        <td><div class="chips">${prev ? chips(r.Step) + ` <a href="#/compare?a=${prev.SHA}&b=${r.SHA}">compare</a>` : ''}</div></td></tr>`; }).join('')}
       </tbody></table>`;
+    bindMetricTabs(() => viewPR(n));
+    document.querySelectorAll('#prMode button').forEach(b => b.onclick = () => { prMode = b.dataset.mode; localStorage.setItem('prMode', prMode); viewPR(n); });
+    const sel = document.getElementById('prLeaf');
+    if (sel) sel.onchange = () => { prLeaf = sel.value; localStorage.setItem('prLeaf', prLeaf); viewPR(n); };
     destroyCharts();
-    if (done.length > 1) {
-      const engines = sortEngines([...new Set(done.flatMap(r => engineTotals(r.Summaries).map(x => x.Engine)))]);
-      chart('prc', {
-        type: 'line',
-        data: { labels: done.map(r => short(r.Job.HeadSHA)), datasets: engines.map((e, i) => ({ label: e, borderColor: COLORS[i % COLORS.length], backgroundColor: COLORS[i % COLORS.length], tension: 0, pointRadius: 4,
-          data: done.map(r => { const x = engineTotals(r.Summaries).find(t => t.Engine === e); return x ? x.Geomean : null; }) })) },
-        options: { responsive: true, maintainAspectRatio: false, animation: false,
-          scales: { y: { title: { display: true, text: 'geomean Δ against the base' }, ticks: { callback: v => pct(v, 1) } }, x: { title: { display: true, text: 'head' } } },
-          plugins: { legend: { labels: { boxWidth: 12 } } } },
-      });
-    }
+    if (!measured.length) return;
+    // One point per commit of the branch; a commit without a measurement
+    // leaves a gap the line bridges.
+    const xs = d.Rows;
+    const engines = sortEngines([...new Set(measured.flatMap(r => leaf ? r.Results.filter(x => x.Object + '/' + x.Op === leaf).map(x => x.Engine) : engineTotals(r.Summaries).map(x => x.Engine)))]);
+    const value = (r, e) => {
+      if (!r.Job || r.Job.State !== 'done') return null;
+      if (!leaf) { const t = engineTotals(r.Summaries).find(x => x.Engine === e); return t ? t.Geomean : null; }
+      const [o, op] = leaf.split('/'), res = r.Results.find(x => x.Engine === e && x.Object === o && x.Op === op);
+      if (!res) return null;
+      const M = res[metricFor(m, e).key];
+      if (unmeasured(M)) return null;
+      return prMode === 'abs' ? M.Head : M.Delta;
+    };
+    const fmtY = v => prMode === 'abs' ? m.fmt(v) : pct(v, 2);
+    chart('prc', {
+      type: 'line',
+      data: { labels: xs.map(r => short(r.SHA).slice(0, 7)), datasets: engines.filter(e => prMode === 'rel' || metricFor(m, e) === m).map((e, i) => ({
+        label: e + (metricFor(m, e) !== m && leaf ? ' (time)' : ''), borderColor: COLORS[rank(ENGINES, e) % COLORS.length], backgroundColor: COLORS[rank(ENGINES, e) % COLORS.length], tension: 0, pointRadius: 4, spanGaps: true,
+        data: xs.map(r => value(r, e)) })) },
+      options: { responsive: true, maintainAspectRatio: false, animation: false,
+        onClick: (ev, els) => { if (els.length) { const r = xs[els[0].index]; if (r.Job) location.hash = `#/job/${r.Job.ID}`; } },
+        scales: {
+          y: { title: { display: true, text: prMode === 'abs' ? `${leaf.replace('/', ' / ')}: ${m.label.toLowerCase()} ${m.unit}` : `${leaf ? leaf.replace('/', ' / ') : 'geomean over all operations'}: Δ against the base` }, ticks: { callback: fmtY } },
+          x: { title: { display: true, text: 'commits of the pull request, oldest first' }, ticks: { maxRotation: 0, autoSkip: true } } },
+        plugins: { legend: { labels: { boxWidth: 12 } }, tooltip: { callbacks: { title: items => { const r = xs[items[0].dataIndex]; return short(r.SHA) + ' ' + r.Subject.slice(0, 70); }, label: ctx => `${ctx.dataset.label}: ${fmtY(ctx.parsed.y)}` } } } },
+    });
   }
 
   async function viewOp(object, op) {
