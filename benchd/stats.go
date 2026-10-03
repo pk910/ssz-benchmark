@@ -183,8 +183,9 @@ func compareMetric(base, head []float64) metric {
 	}
 	// The samples of both sides are in pass order, so pairs are the two
 	// sides of one pass: their deltas show how far single runs diverged.
+	m.HQ1, m.HQ3 = percentile(head, 0.25), percentile(head, 0.75)
 	m.DMin, m.DMax = m.Delta, m.Delta
-	m.PMed = m.Delta
+	m.PMed, m.PQ1, m.PQ3 = m.Delta, m.Delta, m.Delta
 	if len(base) == len(head) {
 		var ds []float64
 		for i := range base {
@@ -200,6 +201,7 @@ func compareMetric(base, head []float64) metric {
 			// The median over the passes: one layout under which one side
 			// runs far off its usual cost does not move it.
 			m.PMed = median(ds)
+			m.PQ1, m.PQ3 = percentile(ds, 0.25), percentile(ds, 0.75)
 			m.PSpread = math.Sqrt(variance(ds, mean(ds)))
 			m.PN = float64(len(ds))
 			for _, d := range ds {

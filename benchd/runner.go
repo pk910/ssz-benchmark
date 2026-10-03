@@ -437,6 +437,11 @@ func (r *runner) buildHarness(ctx context.Context, s *side, logw func(string, ..
 		}
 		built = append(built, pkg)
 	}
+	if err := ctx.Err(); err != nil {
+		// Interrupted: a package may be missing only because its build was
+		// cut off, so nothing is recorded as the result of this build.
+		return err
+	}
 	if len(built) == 0 {
 		return fmt.Errorf("no harness package builds against %s", s.sha[:12])
 	}
@@ -514,6 +519,9 @@ func (r *runner) buildBaselines(ctx context.Context, s *side, logw func(string, 
 			s.bins[pkg] = bins
 			built = append(built, pkg)
 		}
+	}
+	if err := ctx.Err(); err != nil {
+		return err
 	}
 	if len(built) == 0 {
 		return fmt.Errorf("no baseline library builds")
