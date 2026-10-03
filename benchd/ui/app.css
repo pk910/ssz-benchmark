@@ -136,3 +136,4 @@ td.cell .d > .muted.small { min-width: 78px; }
 .info:hover, .info:focus { color: var(--acc); border-color: var(--acc); outline: none; }
 .info:hover::after, .info:focus::after { content: attr(data-tip); position: absolute; left: 20px; top: -6px; z-index: 30; width: min(460px, 60vw); padding: 9px 11px; border-radius: 8px; background: var(--card); color: var(--fg); border: 1px solid var(--line); box-shadow: 0 6px 24px rgba(0,0,0,.35); font: 400 12px/1.45 -apple-system, "Segoe UI", Inter, Roboto, system-ui, sans-serif; white-space: normal; text-align: left; }
 .tw:has(.info:hover), .tw:has(.info:focus) { overflow: visible; }
+label.check { display: inline-flex; align-items: center; gap: 5px; font-size: 12px; color: var(--muted); cursor: pointer; }
