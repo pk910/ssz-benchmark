@@ -329,12 +329,17 @@ func (c *prCache) approvedBy(ctx context.Context, number int, headSHA string) st
 }
 
 // refresh reloads the open pull requests at most every five minutes.
-func (c *prCache) refresh(ctx context.Context) {
+func (c *prCache) refresh(ctx context.Context) { c.refreshOlder(ctx, 5*time.Minute) }
+
+// refreshOlder reloads the open pull requests when the last load is older
+// than maxAge.
+func (c *prCache) refreshOlder(ctx context.Context, maxAge time.Duration) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	if time.Since(c.fetched) < 5*time.Minute {
+	if time.Since(c.fetched) < maxAge {
 		return
 	}
+	c.etag = ""
 	req, err := http.NewRequestWithContext(ctx, "GET", c.api+"/repos/"+c.repo+"/pulls?state=open&per_page=100", nil)
 	if err != nil {
 		return
@@ -480,6 +485,14 @@ func (s *scheduler) tick(ctx context.Context) {
 		tips = append(tips, tip{ref, sha, when})
 	}
 	sort.Slice(tips, func(i, j int) bool { return tips[i].when.Before(tips[j].when) })
+	// A branch that just appeared may belong to a pull request opened after
+	// the last listing.
+	for _, t := range tips {
+		if _, ok := s.prs.forBranch(t.ref); !ok && t.ref != s.cfg.mainBranch {
+			s.prs.refreshOlder(ctx, 20*time.Second)
+			break
+		}
+	}
 	for _, t := range tips {
 		seen, _ := s.db.seenRef(t.ref)
 		var err error
