@@ -395,7 +395,7 @@ func renderCheck(j *job, results []result, nf noiseFloor, link, state string) (s
 	floor := func(r result) float64 { return max(0.5, nf.PerLeaf[joinKey(r.Engine, r.Object, r.Op)]) }
 	beyond := func(r result) bool {
 		m, _, _ := checkMetric(r)
-		return m.Delta > floor(r) || m.Delta < -floor(r)
+		return m.changed(floor(r))
 	}
 	pct := func(v float64) string { return fmt.Sprintf("%+.2f%%", v) }
 
@@ -415,9 +415,13 @@ func renderCheck(j *job, results []result, nf noiseFloor, link, state string) (s
 			e = &engineSum{}
 			engines[r.Engine] = e
 		}
-		e.logs = append(e.logs, math.Log(m.Head/m.Base))
+		ratio := 1 + m.PMed/100
+		if m.PN == 0 || ratio <= 0 {
+			ratio = m.Head / m.Base
+		}
+		e.logs = append(e.logs, math.Log(ratio))
 		if beyond(r) {
-			if m.Delta > 0 {
+			if m.PMed > 0 {
 				e.slower++
 			} else {
 				e.faster++
@@ -441,8 +445,8 @@ func renderCheck(j *job, results []result, nf noiseFloor, link, state string) (s
 			titleParts = append(titleParts, name+" "+pct(gm))
 		}
 	}
-	sb.WriteString("\nΔ is head against base in cycles of the measured thread (wall time for the async engines). ")
-	sb.WriteString("**Bold** marks a delta beyond the operation's noise floor on this machine; \"slower\" and \"faster\" count those.\n")
+	sb.WriteString("\nΔ is head against base in cycles of the measured thread (wall time for the async engines): the median over the passes, each of which links both sides with another function layout. ")
+	sb.WriteString("**Bold** marks a change: the median lies beyond the operation's noise floor and beyond what the layouts alone did to this pair, and at least three quarters of the passes agree. \"slower\" and \"faster\" count those.\n")
 
 	// Per object: one row per operation, one column pair per engine.
 	byObject := map[string][]result{}
@@ -488,7 +492,7 @@ func renderCheck(j *job, results []result, nf noiseFloor, link, state string) (s
 					continue
 				}
 				m, _, f := checkMetric(r)
-				delta := pct(m.Delta)
+				delta := pct(m.PMed)
 				if beyond(r) {
 					delta = "**" + delta + "**"
 				}

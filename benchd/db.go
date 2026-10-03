@@ -55,6 +55,9 @@ type job struct {
 	Priority  int
 	Harness   string // hash of the harness source the job ran
 	Runner    string // machine that ran (or is to run) the job
+	// Seeds are the layout seeds this run measures under, set when the job
+	// is handed out; empty means the runner's configured seeds.
+	Seeds []string
 }
 
 // leaf identifies one benchmark: BenchmarkReal/<Engine>/<Object>/<Op> of
@@ -98,6 +101,12 @@ type metric struct {
 	P                float64 // Welch p-value
 	DMin, DMax       float64 // smallest and largest delta of a single run (base and head of the same pass), percent
 	HMin, HMax       float64 // smallest and largest head value of a single run
+	// The comparison by pass: base and head of one pass are linked with the
+	// same seed and measured minutes apart. PMed is the median of the
+	// per-pass deltas (percent), PSpread their standard deviation, PAgree
+	// how many of the PN passes point the way of the median.
+	PMed, PSpread float64
+	PAgree, PN    float64
 }
 
 type result struct {
@@ -196,11 +205,11 @@ func openDB(path string) (*store, error) {
 			n INTEGER NOT NULL,
 			iters INTEGER NOT NULL,
 			steal INTEGER NOT NULL,
-			ns_base REAL, ns_head REAL, ns_med_base REAL, ns_med_head REAL, ns_cv_base REAL, ns_cv_head REAL, ns_delta REAL, ns_med_delta REAL, ns_lo REAL, ns_hi REAL, ns_p REAL, ns_dmin REAL, ns_dmax REAL, ns_hmin REAL, ns_hmax REAL,
-			b_base REAL, b_head REAL, b_med_base REAL, b_med_head REAL, b_cv_base REAL, b_cv_head REAL, b_delta REAL, b_med_delta REAL, b_lo REAL, b_hi REAL, b_p REAL, b_dmin REAL, b_dmax REAL, b_hmin REAL, b_hmax REAL,
-			a_base REAL, a_head REAL, a_med_base REAL, a_med_head REAL, a_cv_base REAL, a_cv_head REAL, a_delta REAL, a_med_delta REAL, a_lo REAL, a_hi REAL, a_p REAL, a_dmin REAL, a_dmax REAL, a_hmin REAL, a_hmax REAL,
-			c_base REAL, c_head REAL, c_med_base REAL, c_med_head REAL, c_cv_base REAL, c_cv_head REAL, c_delta REAL, c_med_delta REAL, c_lo REAL, c_hi REAL, c_p REAL, c_dmin REAL, c_dmax REAL, c_hmin REAL, c_hmax REAL,
-			i_base REAL, i_head REAL, i_med_base REAL, i_med_head REAL, i_cv_base REAL, i_cv_head REAL, i_delta REAL, i_med_delta REAL, i_lo REAL, i_hi REAL, i_p REAL, i_dmin REAL, i_dmax REAL, i_hmin REAL, i_hmax REAL,
+			ns_base REAL, ns_head REAL, ns_med_base REAL, ns_med_head REAL, ns_cv_base REAL, ns_cv_head REAL, ns_delta REAL, ns_med_delta REAL, ns_lo REAL, ns_hi REAL, ns_p REAL, ns_dmin REAL, ns_dmax REAL, ns_hmin REAL, ns_hmax REAL, ns_pmed REAL, ns_pspread REAL, ns_pagree REAL, ns_pn REAL,
+			b_base REAL, b_head REAL, b_med_base REAL, b_med_head REAL, b_cv_base REAL, b_cv_head REAL, b_delta REAL, b_med_delta REAL, b_lo REAL, b_hi REAL, b_p REAL, b_dmin REAL, b_dmax REAL, b_hmin REAL, b_hmax REAL, b_pmed REAL, b_pspread REAL, b_pagree REAL, b_pn REAL,
+			a_base REAL, a_head REAL, a_med_base REAL, a_med_head REAL, a_cv_base REAL, a_cv_head REAL, a_delta REAL, a_med_delta REAL, a_lo REAL, a_hi REAL, a_p REAL, a_dmin REAL, a_dmax REAL, a_hmin REAL, a_hmax REAL, a_pmed REAL, a_pspread REAL, a_pagree REAL, a_pn REAL,
+			c_base REAL, c_head REAL, c_med_base REAL, c_med_head REAL, c_cv_base REAL, c_cv_head REAL, c_delta REAL, c_med_delta REAL, c_lo REAL, c_hi REAL, c_p REAL, c_dmin REAL, c_dmax REAL, c_hmin REAL, c_hmax REAL, c_pmed REAL, c_pspread REAL, c_pagree REAL, c_pn REAL,
+			i_base REAL, i_head REAL, i_med_base REAL, i_med_head REAL, i_cv_base REAL, i_cv_head REAL, i_delta REAL, i_med_delta REAL, i_lo REAL, i_hi REAL, i_p REAL, i_dmin REAL, i_dmax REAL, i_hmin REAL, i_hmax REAL, i_pmed REAL, i_pspread REAL, i_pagree REAL, i_pn REAL,
 			PRIMARY KEY (job_id, engine, object, op)
 		)`,
 		`CREATE INDEX IF NOT EXISTS results_leaf ON results(object, op, engine, job_id)`,
@@ -271,7 +280,7 @@ func openDB(path string) (*store, error) {
 		}
 	}
 	for _, prefix := range []string{"ns_", "b_", "a_", "c_", "i_"} {
-		for _, col := range []string{"dmin", "dmax", "hmin", "hmax"} {
+		for _, col := range []string{"dmin", "dmax", "hmin", "hmax", "pmed", "pspread", "pagree", "pn"} {
 			migrations = append(migrations, `ALTER TABLE results ADD COLUMN `+prefix+col+` REAL NOT NULL DEFAULT 0`)
 		}
 	}
@@ -279,7 +288,7 @@ func openDB(path string) (*store, error) {
 		_, _ = db.Exec(stmt) // fails when the column exists
 	}
 	s := &store{db: db, dataDir: filepath.Dir(path)}
-	if err := s.refreshResults("results:head-range"); err != nil {
+	if err := s.refreshResults("results:by-pass"); err != nil {
 		return nil, err
 	}
 	return s, nil
@@ -659,6 +668,13 @@ func (s *store) maxJobID() (int64, error) {
 	return id.Int64, err
 }
 
+// pairRuns counts the finished runs of a pair on a machine.
+func (s *store) pairRuns(headSHA, baseSHA, runner string) (int, error) {
+	var n int
+	err := s.db.QueryRow(`SELECT COUNT(*) FROM jobs WHERE state = ? AND head_sha = ? AND base_sha = ? AND runner = ?`, stateDone, headSHA, baseSHA, runner).Scan(&n)
+	return n, err
+}
+
 // queuedAhead counts the queued jobs that run before j.
 func (s *store) queuedAhead(j *job) (int, error) {
 	var n int
@@ -778,18 +794,18 @@ func (s *store) samplesFor(jobID int64) ([]sample, error) {
 }
 
 const resultColumns = `job_id, engine, object, op, baseline, n, iters, steal,
-	ns_base, ns_head, ns_med_base, ns_med_head, ns_cv_base, ns_cv_head, ns_delta, ns_med_delta, ns_lo, ns_hi, ns_p, ns_dmin, ns_dmax, ns_hmin, ns_hmax,
-	b_base, b_head, b_med_base, b_med_head, b_cv_base, b_cv_head, b_delta, b_med_delta, b_lo, b_hi, b_p, b_dmin, b_dmax, b_hmin, b_hmax,
-	a_base, a_head, a_med_base, a_med_head, a_cv_base, a_cv_head, a_delta, a_med_delta, a_lo, a_hi, a_p, a_dmin, a_dmax, a_hmin, a_hmax,
-	c_base, c_head, c_med_base, c_med_head, c_cv_base, c_cv_head, c_delta, c_med_delta, c_lo, c_hi, c_p, c_dmin, c_dmax, c_hmin, c_hmax,
-	i_base, i_head, i_med_base, i_med_head, i_cv_base, i_cv_head, i_delta, i_med_delta, i_lo, i_hi, i_p, i_dmin, i_dmax, i_hmin, i_hmax`
+	ns_base, ns_head, ns_med_base, ns_med_head, ns_cv_base, ns_cv_head, ns_delta, ns_med_delta, ns_lo, ns_hi, ns_p, ns_dmin, ns_dmax, ns_hmin, ns_hmax, ns_pmed, ns_pspread, ns_pagree, ns_pn,
+	b_base, b_head, b_med_base, b_med_head, b_cv_base, b_cv_head, b_delta, b_med_delta, b_lo, b_hi, b_p, b_dmin, b_dmax, b_hmin, b_hmax, b_pmed, b_pspread, b_pagree, b_pn,
+	a_base, a_head, a_med_base, a_med_head, a_cv_base, a_cv_head, a_delta, a_med_delta, a_lo, a_hi, a_p, a_dmin, a_dmax, a_hmin, a_hmax, a_pmed, a_pspread, a_pagree, a_pn,
+	c_base, c_head, c_med_base, c_med_head, c_cv_base, c_cv_head, c_delta, c_med_delta, c_lo, c_hi, c_p, c_dmin, c_dmax, c_hmin, c_hmax, c_pmed, c_pspread, c_pagree, c_pn,
+	i_base, i_head, i_med_base, i_med_head, i_cv_base, i_cv_head, i_delta, i_med_delta, i_lo, i_hi, i_p, i_dmin, i_dmax, i_hmin, i_hmax, i_pmed, i_pspread, i_pagree, i_pn`
 
 func metricArgs(m *metric) []any {
-	return []any{&m.Base, &m.Head, &m.MedBase, &m.MedHead, &m.CVBase, &m.CVHead, &m.Delta, &m.MedDelta, &m.Lo, &m.Hi, &m.P, &m.DMin, &m.DMax, &m.HMin, &m.HMax}
+	return []any{&m.Base, &m.Head, &m.MedBase, &m.MedHead, &m.CVBase, &m.CVHead, &m.Delta, &m.MedDelta, &m.Lo, &m.Hi, &m.P, &m.DMin, &m.DMax, &m.HMin, &m.HMax, &m.PMed, &m.PSpread, &m.PAgree, &m.PN}
 }
 
 func metricValues(m metric) []any {
-	return []any{m.Base, m.Head, m.MedBase, m.MedHead, m.CVBase, m.CVHead, m.Delta, m.MedDelta, m.Lo, m.Hi, m.P, m.DMin, m.DMax, m.HMin, m.HMax}
+	return []any{m.Base, m.Head, m.MedBase, m.MedHead, m.CVBase, m.CVHead, m.Delta, m.MedDelta, m.Lo, m.Hi, m.P, m.DMin, m.DMax, m.HMin, m.HMax, m.PMed, m.PSpread, m.PAgree, m.PN}
 }
 
 func (s *store) replaceResults(jobID int64, results []result) error {
@@ -801,7 +817,7 @@ func (s *store) replaceResults(jobID int64, results []result) error {
 		tx.Rollback()
 		return err
 	}
-	stmt, err := tx.Prepare(`INSERT INTO results(` + resultColumns + `) VALUES(` + strings.TrimSuffix(strings.Repeat("?,", 83), ",") + `)`)
+	stmt, err := tx.Prepare(`INSERT INTO results(` + resultColumns + `) VALUES(` + strings.TrimSuffix(strings.Repeat("?,", 103), ",") + `)`)
 	if err != nil {
 		tx.Rollback()
 		return err

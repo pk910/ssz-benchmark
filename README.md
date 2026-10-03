@@ -150,12 +150,25 @@ Gloas type features) is measured on the packages it builds.
 - Passes over the seeds, then further rounds, continue while the 15 minute
   measurement budget (+25%) allows; at least one pass per layout seed
   (`-min-passes`, default the number of seeds). Layout effects are real
-  and large: one build of the library ran MarshalWriter of the state 46%
-  slower under one of the four seeds, reproducibly, and the same binary
-  under another seed at the common speed. Only the spread over all seeds
-  tells a code change from a layout accident, so a job never stops before
-  every seed ran, and the delta chart shows the range of the single runs
-  next to the mean.
+  and large: the same binary differs by 2-8% between seeds for a typical
+  operation, and single layouts double the cost of one. In a comparison
+  the two sides are different binaries and each gets its own luck per
+  seed, so the per-pass deltas of a pair scatter by several percent while
+  two runs of one binary under one seed agree within 0.2%.
+- A result is therefore judged by pass: base and head of one pass are
+  linked with the same seed and measured minutes apart. The headline delta
+  is the median of the per-pass deltas, so one layout under which a side
+  runs far off does not move it. A result is a change when that median
+  lies outside its band and at least three quarters of the passes point
+  the same way; the band is the larger of the operation's noise floor and
+  twice the standard error of the per-pass deltas. Engine geomeans are
+  built from the medians. The mean, the 95% interval and the range of the
+  passes stay available per result.
+- A rerun of a pair (idle refinement, the periodic noise and reference
+  jobs) measures under the next of four sets of seeds (each seed moved on
+  by a thousand) and pools with the earlier runs, so the result of a pair
+  covers more layouts with every run. A cached build links the new seeds
+  on demand.
 - Per leaf and metric (ns/op, cycles/op, instructions/op, B/op,
   allocs/op): mean, median and CV per side, delta of means with 95% Welch
   interval and p-value, delta of medians. Cycles and instructions come from

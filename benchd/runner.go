@@ -26,6 +26,7 @@ import (
 // to the controller through a jobStore: the controller's own database when
 // it runs there, HTTP when it runs on a worker machine.
 type runner struct {
+	seeds []string // layout seeds of the job being run
 	cfg   *config
 	store jobStore
 	git   *gitRepo
@@ -216,6 +217,12 @@ func (r *runner) runJob(ctx context.Context, j *job) bool {
 	r.started = time.Time{}
 	r.mu.Unlock()
 	r.setPhase(j, "preparing")
+	// A rerun of a pair measures under other layouts than the runs before
+	// it; the controller hands the seeds out with the job.
+	r.seeds = r.cfg.seeds
+	if len(j.Seeds) > 0 {
+		r.seeds = j.Seeds
+	}
 	hashOf := harnessHash
 	if j.Kind == kindBaseline {
 		hashOf = baselineHash
@@ -367,8 +374,15 @@ func (r *runner) buildHarness(ctx context.Context, s *side, logw func(string, ..
 	if data, err := os.ReadFile(filepath.Join(s.hdir, "ok")); err == nil {
 		for _, pkg := range strings.Fields(string(data)) {
 			s.bins[pkg] = map[string]string{}
-			for _, seed := range r.cfg.seeds {
-				s.bins[pkg][seed] = filepath.Join(s.hdir, "seed-"+seed+"-"+pkg+".test")
+			for _, seed := range r.seeds {
+				out := filepath.Join(s.hdir, "seed-"+seed+"-"+pkg+".test")
+				if _, err := os.Stat(out); err != nil {
+					// A layout this cached build has not been linked with yet.
+					if err := r.compile(ctx, s, pkg, seed, out); err != nil {
+						return fmt.Errorf("%s seed %s: %w", pkg, seed, err)
+					}
+				}
+				s.bins[pkg][seed] = out
 			}
 		}
 		if len(s.bins) > 0 {
@@ -436,8 +450,15 @@ func (r *runner) buildBaselines(ctx context.Context, s *side, logw func(string, 
 	if data, err := os.ReadFile(filepath.Join(s.hdir, "ok")); err == nil {
 		for _, pkg := range strings.Fields(string(data)) {
 			s.bins[pkg] = map[string]string{}
-			for _, seed := range r.cfg.seeds {
-				s.bins[pkg][seed] = filepath.Join(s.hdir, "seed-"+seed+"-"+pkg+".test")
+			for _, seed := range r.seeds {
+				out := filepath.Join(s.hdir, "seed-"+seed+"-"+pkg+".test")
+				if _, err := os.Stat(out); err != nil {
+					// A layout this cached build has not been linked with yet.
+					if err := r.compile(ctx, s, pkg, seed, out); err != nil {
+						return fmt.Errorf("%s seed %s: %w", pkg, seed, err)
+					}
+				}
+				s.bins[pkg][seed] = out
 			}
 		}
 		if len(s.bins) > 0 {
@@ -473,7 +494,7 @@ func (r *runner) buildBaselines(ctx context.Context, s *side, logw func(string, 
 			}
 			pkg := lib.Name() + "-" + fork.Name()
 			bins := map[string]string{}
-			for _, seed := range r.cfg.seeds {
+			for _, seed := range r.seeds {
 				out := filepath.Join(s.hdir, "seed-"+seed+"-"+pkg+".test")
 				if err = runLogged(r.goCmd(ctx, libDir, "test", "-c", "-o", out, "-ldflags", "-funcalign=64 -randlayout="+seed, "./"+fork.Name())); err != nil {
 					break
@@ -498,6 +519,18 @@ func (r *runner) buildBaselines(ctx context.Context, s *side, logw func(string, 
 	return nil
 }
 
+// compile links the test binary of a package under one layout seed. A
+// baseline package is named <lib>-<fork> and lives in its library's module.
+func (r *runner) compile(ctx context.Context, s *side, pkg, seed, out string) error {
+	dir, target := s.hdir, "./"+pkg
+	if lib, fork, ok := strings.Cut(pkg, "-"); ok {
+		if _, err := os.Stat(filepath.Join(s.hdir, "baselines", lib, "go.mod")); err == nil {
+			dir, target = filepath.Join(s.hdir, "baselines", lib), "./"+fork
+		}
+	}
+	return runLogged(r.goCmd(ctx, dir, "test", "-c", "-o", out, "-ldflags", "-funcalign=64 -randlayout="+seed, target))
+}
+
 // buildPackage generates types/<pkg> and compiles <pkg> for every seed.
 func (r *runner) buildPackage(ctx context.Context, s *side, pkg, gen string) error {
 	typesDir := filepath.Join("types", pkg)
@@ -518,7 +551,7 @@ func (r *runner) buildPackage(ctx context.Context, s *side, pkg, gen string) err
 		return fmt.Errorf("generate: no output")
 	}
 	bins := map[string]string{}
-	for _, seed := range r.cfg.seeds {
+	for _, seed := range r.seeds {
 		out := filepath.Join(s.hdir, "seed-"+seed+"-"+pkg+".test")
 		if err := runLogged(r.goCmd(ctx, s.hdir, "test", "-c", "-o", out, "-ldflags", "-funcalign=64 -randlayout="+seed, "./"+pkg)); err != nil {
 			return fmt.Errorf("seed %s: %w", seed, err)
@@ -632,7 +665,7 @@ func (r *runner) calibrate(ctx context.Context, l leaf, s *side, seed, jobDir st
 // only. Passes over the seeds, then further rounds of them, continue until
 // the measurement budget is spent; at least two passes are made.
 func (r *runner) measure(ctx context.Context, j *job, head, base *side, jobDir string, logw func(string, ...any)) (int, error) {
-	seed0 := r.cfg.seeds[0]
+	seed0 := r.seeds[0]
 	leaves, err := r.store.harnessLeaves(j.Harness)
 	if err != nil {
 		return 0, err
@@ -722,7 +755,7 @@ func (r *runner) measure(ctx context.Context, j *job, head, base *side, jobDir s
 	budget := r.cfg.target + r.cfg.target/4
 	minPasses := r.cfg.minPasses
 	if minPasses <= 0 {
-		minPasses = len(r.cfg.seeds)
+		minPasses = len(r.seeds)
 	}
 	planned := func() int {
 		if lastPass == 0 {
@@ -732,7 +765,7 @@ func (r *runner) measure(ctx context.Context, j *job, head, base *side, jobDir s
 	}
 	seen := map[string][]float64{} // leaf+side+seed -> cycles (or ns) of the kept measurements
 	for round := 0; ; round++ {
-		for i, seed := range r.cfg.seeds {
+		for i, seed := range r.seeds {
 			if passes >= minPasses && measured+lastPass > budget {
 				return passes, nil
 			}
@@ -775,7 +808,7 @@ func (r *runner) measure(ctx context.Context, j *job, head, base *side, jobDir s
 			passes++
 			lastPass = time.Since(passStart)
 			measured += lastPass
-			logw("pass %d (round %d, seed %s, %d/%d) measured in %s", passes, round+1, seed, i+1, len(r.cfg.seeds), lastPass.Round(time.Second))
+			logw("pass %d (round %d, seed %s, %d/%d) measured in %s", passes, round+1, seed, i+1, len(r.seeds), lastPass.Round(time.Second))
 		}
 	}
 }

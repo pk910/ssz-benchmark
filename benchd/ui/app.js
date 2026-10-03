@@ -110,13 +110,21 @@
   // delta agrees in sign with the mean.
   let leafNoise = {};
   const floorOf = key => Math.max(0.5, (key && leafNoise[key]) || 0);
-  const sig = (m, key) => Math.abs(m.Delta) > floorOf(key) && Math.sign(m.MedDelta) === Math.sign(m.Delta);
+  // delta is the result's headline: the median of the per-pass deltas
+  // (each pass links both sides with another function layout), so one
+  // layout under which a side runs far off does not move it.
+  const delta = m => m.PN > 0 ? m.PMed : m.Delta;
+  // bandOf is how far that median may lie from zero without being a
+  // change: the operation's noise floor, or twice the standard error of
+  // the per-pass deltas when the layouts scattered this pair more.
+  const bandOf = (m, key) => Math.max(floorOf(key), m.PN > 1 ? 2 * m.PSpread / Math.sqrt(m.PN) : 0);
+  const sig = (m, key) => Math.abs(delta(m)) > bandOf(m, key) && (!(m.PN > 0) || m.PAgree >= Math.ceil(0.75 * m.PN));
   function cls(m, key) {
     if (!sig(m, key)) return 'same';
-    const strong = Math.abs(m.Delta) >= 5 ? ' strong' : '';
-    return (m.Delta < 0 ? 'better' : 'worse') + strong;
+    const strong = Math.abs(delta(m)) >= 5 ? ' strong' : '';
+    return (delta(m) < 0 ? 'better' : 'worse') + strong;
   }
-  const badge = (m, key) => `<span class="badge ${cls(m, key)}" title="noise floor of this operation ${floorOf(key).toFixed(2)}% · median Δ ${pct(m.MedDelta)} · 95% interval [${pct(m.Lo, 2)}, ${pct(m.Hi, 2)}], p ${m.P.toFixed(3)}">${pct(m.Delta)}</span>`;
+  const badge = (m, key) => `<span class="badge ${cls(m, key)}" title="median of the per-pass deltas${m.PN > 0 ? ` (${m.PAgree} of ${m.PN} passes agree, single passes ${pct(m.DMin, 2)} to ${pct(m.DMax, 2)})` : ''} · band ±${bandOf(m, key).toFixed(2)}% (noise floor ${floorOf(key).toFixed(2)}%) · mean Δ ${pct(m.Delta)}">${pct(delta(m))}</span>`;
   const ciText = m => `<span class="ci">[${pct(m.Lo, 1)}, ${pct(m.Hi, 1)}]</span>`;
   const chip = j => `<span class="chip ${j.State}">${j.State}</span> <span class="chip ${j.Kind}">${j.Kind}</span>`;
   const commitLink = sha => sha === 'baselines' ? '<span class="muted">reference libraries</span>' : `<a class="mono" href="${repo}/commit/${sha}" target="_blank" rel="noopener">${short(sha)}</a>`;
@@ -323,7 +331,7 @@
   // one run, spans its mean only.
   function range(M) {
     if (M.DMin === M.DMax && M.DMin === 0 && M.Delta !== 0) return [M.Delta, M.Delta];
-    return [Math.min(M.DMin, M.Delta), Math.max(M.DMax, M.Delta)];
+    return [Math.min(M.DMin, delta(M)), Math.max(M.DMax, delta(M))];
   }
   // barLabels draws the mean as a tick on each bar and writes it beyond
   // the bar's far end.
@@ -342,13 +350,13 @@
           if (!r) return;
           const M = r[ds.mkey || key], [lo, hi] = range(M);
           const h = Math.max(4, bar.height);
-          const xm = x.getPixelForValue(M.Delta);
+          const xm = x.getPixelForValue(delta(M));
           ctx.fillStyle = getComputedStyle(document.body).getPropertyValue('--fg').trim() || '#fff';
           ctx.fillRect(xm - 1, bar.y - h / 2, 2, h);
-          const right = M.Delta >= 0;
+          const right = delta(M) >= 0;
           ctx.textAlign = right ? 'left' : 'right';
           ctx.fillStyle = ds.borderColor;
-          ctx.fillText((M.Delta > 0 ? '+' : '') + M.Delta.toFixed(2) + '%', x.getPixelForValue(right ? Math.max(hi, 0) : Math.min(lo, 0)) + (right ? 5 : -5), bar.y);
+          ctx.fillText((delta(M) > 0 ? '+' : '') + delta(M).toFixed(2) + '%', x.getPixelForValue(right ? Math.max(hi, 0) : Math.min(lo, 0)) + (right ? 5 : -5), bar.y);
         });
       });
       ctx.restore();
@@ -388,7 +396,7 @@
         barPercentage: 0.8, categoryPercentage: 0.8, minBarLength: 3,
       });
     });
-    const floors = labels.map(op => Math.max(...all.map(e => mx.cells[e + '/' + op] ? floorOf(e + '/' + mx.obj + '/' + op) : 0)));
+    const floors = labels.map(op => Math.max(...all.map(e => { const r = mx.cells[e + '/' + op]; const M = r && r[metricFor(m, e).key]; return M && !unmeasured(M) ? bandOf(M, e + '/' + mx.obj + '/' + op) : 0; })));
     const raw = Math.min(100, Math.max(0.5, ...datasets.flatMap(d => d.data.filter(v => v !== null).flat().map(Math.abs))) * 1.4);
     const lim = raw < 2 ? Math.ceil(raw * 4) / 4 : raw < 10 ? Math.ceil(raw) : Math.ceil(raw / 5) * 5;
     return {
@@ -405,14 +413,14 @@
         plugins: {
           legend: { labels: { boxWidth: 12, generateLabels: c => {
             const items = Chart.defaults.plugins.legend.labels.generateLabels(c);
-            items.push({ text: 'grey band: noise floor of the operation (±p95 of master-vs-master runs)', fillStyle: getComputedStyle(document.body).getPropertyValue('--line2').trim(), strokeStyle: getComputedStyle(document.body).getPropertyValue('--muted').trim(), lineWidth: 1, hidden: false, datasetIndex: -1 });
+            items.push({ text: 'grey band: what is not a change here (noise floor of the operation, widened where the layouts scatter this pair)', fillStyle: getComputedStyle(document.body).getPropertyValue('--line2').trim(), strokeStyle: getComputedStyle(document.body).getPropertyValue('--muted').trim(), lineWidth: 1, hidden: false, datasetIndex: -1 });
             return items;
           } }, onClick: (e, item, legend) => { if (item.datasetIndex >= 0) Chart.defaults.plugins.legend.onClick.call(legend, e, item, legend); } },
           noiseBand: { floors },
           barLabels: { key: m.key },
           tooltip: { callbacks: { label: ctx => {
             const c = ctx.dataset.meta[ctx.dataIndex], M = c[ctx.dataset.mkey || m.key], [lo, hi] = range(M);
-            return `${ctx.dataset.label}: mean ${pct(M.Delta)} · single runs ${pct(lo, 2)} to ${pct(hi, 2)} · ${m.fmt(M.Base)} → ${m.fmt(M.Head)} · ${c.N} runs per side`;
+            return `${ctx.dataset.label}: median ${pct(delta(M))} · single passes ${pct(lo, 2)} to ${pct(hi, 2)}${M.PN > 0 ? ` · ${M.PAgree} of ${M.PN} agree` : ''} · ${m.fmt(M.Base)} → ${m.fmt(M.Head)}`;
           } } },
         },
       },
@@ -521,8 +529,8 @@
         <div class="card"><h3>Ratio per engine <span class="muted" style="text-transform:none">(cycles when counted, else time)</span></h3><div class="chips">${engineTotals(d.Summaries || []).map(x => `<span class="chip" title="geomean of head/base ${x.Cycles ? 'cycles' : 'time'} over ${x.N} operations of every object">${x.Engine} <b>${pct(x.Geomean, 1)}</b></span>`).join('') || '<span class="muted">-</span>'}</div><details class="small" style="margin-top:6px"><summary>per object</summary><div class="chips" style="margin-top:4px">${(d.Summaries || []).map(x => `<span class="chip">${x.Engine}·${x.Object} <b>${pct(x.Geomean, 1)}</b></span>`).join('')}</div></details></div>
       </div>
       ${j.Note ? `<p class="note">${esc(j.Note)}</p>` : ''}${d.BaselineJob ? `<p class="note">Other libraries: values from the reference job <a href="#/job/${d.BaselineJob}">#${d.BaselineJob}</a> on the same machine and payload. They cannot hash Gloas objects unless they implement progressive merkleization (PrysmSSZ does), and none but PrysmSSZ can express the Gloas state.</p>` : ''}${j.Error ? `<pre class="err">${esc(j.Error)}</pre>` : ''}
-      <div class="toolbar">${metricTabs()}<div class="tabs" id="modeTabs"><button data-mode="rel" class="${chartMode === 'rel' ? 'active' : ''}" title="charts show head against base in percent">change in %</button><button data-mode="abs" class="${chartMode === 'abs' ? 'active' : ''}" title="charts show the measured values">measured values</button></div>${chartMode === 'abs' ? `<label class="check"><input type="checkbox" id="chartLibs" ${chartLibs ? 'checked' : ''}> with the other libraries</label>` : ''}<span class="muted">${m.label} ${m.unit}: base → head and Δ per engine and operation. Green/red: |Δ| exceeds this operation's noise floor (p95 of the self-comparisons, at least 0.5%); bold: |Δ| ≥ 5%; grey: within noise. Click a bar or cell for every sample.</span></div>
-      ${mxs.map((mx, i) => { const bars = chartMode === 'abs' ? absRowBars(mx, m) : [...mx.engines, ...mx.asyncEngines].length; return `<h2>${objName(mx.obj)}</h2><div class="chart" style="height:${mx.ops.length * Math.max(30, bars * 14 + 8) + 80}px"><canvas id="dc${i}"></canvas></div><p class="note">${chartMode === 'abs' ? `One bar per engine${chartLibs ? ' and reference library' : ''} per operation, in measured ${m.label.toLowerCase()}: the bar spans the values of the single runs, the white tick and the number are their mean, the grey tick on our own engines is the base's mean. The axis is logarithmic because the operations of one object span several orders of magnitude, so a bar is short when the runs agree.${chartLibs ? ' Paler bars are the other libraries, from the latest reference job.' : ''}` : `One bar per engine (colours in the legend) per operation: the bar spans the ${m.label.toLowerCase()} deltas of the single runs (each run compares head and base measured minutes apart), the white tick and the number are the mean over the runs. A long bar means the runs disagreed. The grey band behind each row is that operation's noise floor on this machine: how far two measurements of the same code differ (p95 over the master-vs-master noise jobs, at least 0.5%). A result inside the band is not a change. Async engines appear only on HashTreeRoot.`}</p>${matrixTable(mx, m, j.ID)}`; }).join('') || '<p class="muted">no results yet</p>'}
+      <div class="toolbar">${metricTabs()}<div class="tabs" id="modeTabs"><button data-mode="rel" class="${chartMode === 'rel' ? 'active' : ''}" title="charts show head against base in percent">change in %</button><button data-mode="abs" class="${chartMode === 'abs' ? 'active' : ''}" title="charts show the measured values">measured values</button></div>${chartMode === 'abs' ? `<label class="check"><input type="checkbox" id="chartLibs" ${chartLibs ? 'checked' : ''}> with the other libraries</label>` : ''}<span class="muted">${m.label} ${m.unit}: base → head and Δ per engine and operation. Δ is the median over the passes. Green/red: a change (outside the band, most passes agree); bold: |Δ| ≥ 5%; grey: no change. Click a bar or cell for every sample.</span></div>
+      ${mxs.map((mx, i) => { const bars = chartMode === 'abs' ? absRowBars(mx, m) : [...mx.engines, ...mx.asyncEngines].length; return `<h2>${objName(mx.obj)}</h2><div class="chart" style="height:${mx.ops.length * Math.max(30, bars * 14 + 8) + 80}px"><canvas id="dc${i}"></canvas></div><p class="note">${chartMode === 'abs' ? `One bar per engine${chartLibs ? ' and reference library' : ''} per operation, in measured ${m.label.toLowerCase()}: the bar spans the values of the single runs, the white tick and the number are their mean, the grey tick on our own engines is the base's mean. The axis is logarithmic because the operations of one object span several orders of magnitude, so a bar is short when the runs agree.${chartLibs ? ' Paler bars are the other libraries, from the latest reference job.' : ''}` : `One bar per engine (colours in the legend) per operation: the bar spans the ${m.label.toLowerCase()} deltas of the single passes (each pass links head and base with another function layout and measures them minutes apart), the white tick and the number are their median. A long bar means the layouts disagreed about this pair. The grey band behind each row is what does not count as a change there: the operation's noise floor on this machine, widened where the passes scatter. A result is a change when its median lies outside the band and at least three quarters of the passes agree. Async engines appear only on HashTreeRoot.`}</p>${matrixTable(mx, m, j.ID)}`; }).join('') || '<p class="muted">no results yet</p>'}
       ${d.Noise && d.Noise.Jobs ? `<p class="note">Noise floor over ${d.Noise.Jobs} self-comparisons: median |Δ time| ${d.Noise.MedianAbs.toFixed(2)}%, p95 ${d.Noise.P95Abs.toFixed(2)}%.</p>` : ''}
       <details><summary>Raw files</summary><p class="mono">${(d.Files || []).map(f => `<a href="/raw/${j.ID}/${f}" target="_blank">${f}</a>`).join(' · ')}</p></details>`;
     bindMetricTabs(() => viewJob(id));
@@ -657,7 +665,7 @@
       if (!res) return null;
       const M = res[metricFor(m, e).key];
       if (unmeasured(M)) return null;
-      return prMode === 'abs' ? M.Head : M.Delta;
+      return prMode === 'abs' ? M.Head : delta(M);
     };
     const fmtY = v => prMode === 'abs' ? m.fmt(v) : pct(v, 2);
     chart('prc', {

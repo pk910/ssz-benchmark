@@ -184,7 +184,9 @@ func compareMetric(base, head []float64) metric {
 	// The samples of both sides are in pass order, so pairs are the two
 	// sides of one pass: their deltas show how far single runs diverged.
 	m.DMin, m.DMax = m.Delta, m.Delta
+	m.PMed = m.Delta
 	if len(base) == len(head) {
+		var ds []float64
 		for i := range base {
 			if base[i] == 0 {
 				continue
@@ -192,9 +194,42 @@ func compareMetric(base, head []float64) metric {
 			d := (head[i] - base[i]) / base[i] * 100
 			m.DMin = math.Min(m.DMin, d)
 			m.DMax = math.Max(m.DMax, d)
+			ds = append(ds, d)
+		}
+		if len(ds) > 0 {
+			// The median over the passes: one layout under which one side
+			// runs far off its usual cost does not move it.
+			m.PMed = median(ds)
+			m.PSpread = math.Sqrt(variance(ds, mean(ds)))
+			m.PN = float64(len(ds))
+			for _, d := range ds {
+				if (d > 0) == (m.PMed > 0) && d != 0 {
+					m.PAgree++
+				}
+			}
 		}
 	}
 	return m
+}
+
+// band is how far a result's median may lie from zero without being a
+// change: the larger of the given floor and twice the standard error of
+// the per-pass deltas, which carries what the layouts did to this pair.
+func (m metric) band(floor float64) float64 {
+	b := floor
+	if m.PN > 1 {
+		b = math.Max(b, 2*m.PSpread/math.Sqrt(m.PN))
+	}
+	return b
+}
+
+// changed reports whether the result is a change: the median beyond the
+// band, and at least three quarters of the passes pointing its way.
+func (m metric) changed(floor float64) bool {
+	if math.Abs(m.PMed) <= m.band(floor) {
+		return false
+	}
+	return m.PN == 0 || m.PAgree >= math.Ceil(0.75*m.PN)
 }
 
 func cv(xs []float64, m float64) float64 {
@@ -328,7 +363,12 @@ func geomeanOf(results []result, pick func(result) metric) float64 {
 		if r.Baseline || m.Base <= 0 || m.Head <= 0 {
 			continue
 		}
-		s += math.Log(m.Head / m.Base)
+		// The ratio of a leaf is its median over the passes.
+		ratio := 1 + m.PMed/100
+		if m.PN == 0 || ratio <= 0 {
+			ratio = m.Head / m.Base
+		}
+		s += math.Log(ratio)
 		n++
 	}
 	if n == 0 {

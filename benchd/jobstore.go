@@ -5,6 +5,7 @@ import (
 	"log"
 	"math"
 	"sort"
+	"strconv"
 	"sync"
 	"time"
 )
@@ -122,6 +123,7 @@ func (s *localStore) claim(runner string) (*job, error) {
 			return nil, err
 		}
 		if claimed != nil {
+			claimed.Seeds = s.seedsFor(claimed)
 			return claimed, nil
 		}
 	}
@@ -165,6 +167,30 @@ func (s *localStore) interrupted(id int64) error {
 	err := s.db.requeueJob(id)
 	s.checks.syncJob(id)
 	return err
+}
+
+// seedSets is how many sets of layout seeds reruns of a pair rotate
+// through before they repeat.
+const seedSets = 4
+
+// seedsFor picks the layout seeds of a run: the configured ones for the
+// first run of a pair, and for every rerun the next set (each seed moved
+// on by a thousand), so the pooled result of a pair covers more layouts
+// with every run instead of measuring the same four again.
+func (s *localStore) seedsFor(j *job) []string {
+	runs, err := s.db.pairRuns(j.HeadSHA, j.BaseSHA, j.Runner)
+	if err != nil || runs%seedSets == 0 {
+		return nil
+	}
+	seeds := make([]string, 0, len(s.sched.cfg.seeds))
+	for _, seed := range s.sched.cfg.seeds {
+		n, err := strconv.Atoi(seed)
+		if err != nil {
+			return nil
+		}
+		seeds = append(seeds, strconv.Itoa(n+1000*(runs%seedSets)))
+	}
+	return seeds
 }
 
 // finish stores the outcome. A finished job's results are computed from

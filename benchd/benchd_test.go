@@ -284,3 +284,63 @@ func TestWriteDemoDB(t *testing.T) {
 		_ = db.insertJob(&job{Kind: kindCommit, Branch: "feature/x", HeadSHA: fmt.Sprintf("%040x", rng.Uint64()), HeadDesc: "queued change", BaseSHA: strings.Repeat("d", 40), BaseDesc: "ddddddd base", BaseRef: "master"})
 	}
 }
+
+// One pass under a layout that makes the base run at twice its cost must
+// not turn into a change: the median over the passes ignores it, and the
+// band carries the disagreement.
+func TestMedianOverPasses(t *testing.T) {
+	base := []float64{100, 220, 100, 100}
+	head := []float64{100.2, 100.1, 99.9, 100.3}
+	m := compareMetric(base, head)
+	if m.Delta > -20 {
+		t.Fatalf("the mean should be pulled far down by the outlier, got %.2f", m.Delta)
+	}
+	if math.Abs(m.PMed) > 0.3 || m.PN != 4 {
+		t.Fatalf("median over the passes %.3f over %v passes", m.PMed, m.PN)
+	}
+	if m.changed(0.5) {
+		t.Fatalf("an outlier pass counts as a change: median %.2f band %.2f", m.PMed, m.band(0.5))
+	}
+	// A real change: every pass agrees, by more than the layouts scatter.
+	m = compareMetric([]float64{100, 103, 98, 101}, []float64{105.1, 108, 102.8, 106.2})
+	if !m.changed(0.5) || math.Abs(m.PMed-5) > 0.3 || m.PAgree != 4 {
+		t.Fatalf("a consistent +5%%: median %.2f agree %v band %.2f", m.PMed, m.PAgree, m.band(0.5))
+	}
+	// Passes that disagree in direction are no change, however large.
+	m = compareMetric([]float64{100, 100, 100, 100}, []float64{108, 93, 107, 94})
+	if m.changed(0.5) {
+		t.Fatalf("passes pointing both ways count as a change: median %.2f agree %v", m.PMed, m.PAgree)
+	}
+	// The geomean of an engine uses the medians.
+	rs := []result{{Engine: "Codegen", Ns: compareMetric(base, head)}}
+	if gm := geomeanDelta(rs); math.Abs(gm) > 0.3 {
+		t.Fatalf("geomean follows the outlier: %.2f", gm)
+	}
+}
+
+// Reruns of a pair rotate through sets of layout seeds.
+func TestSeedRotation(t *testing.T) {
+	db, err := openDB(filepath.Join(t.TempDir(), "t.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg := &config{seeds: []string{"101", "202", "303", "404"}, name: "ctl"}
+	st := &localStore{db: db, sched: &scheduler{cfg: cfg}, local: "ctl"}
+	j := &job{Kind: kindCommit, Branch: "b", HeadSHA: strings.Repeat("a", 40), BaseSHA: strings.Repeat("b", 40), Runner: "ctl"}
+	want := [][]string{nil, {"1101", "1202", "1303", "1404"}, {"2101", "2202", "2303", "2404"}, {"3101", "3202", "3303", "3404"}, nil}
+	for run, w := range want {
+		if got := st.seedsFor(j); strings.Join(got, ",") != strings.Join(w, ",") {
+			t.Fatalf("run %d: seeds %v, want %v", run, got, w)
+		}
+		done := &job{Kind: kindCommit, Branch: "b", HeadSHA: j.HeadSHA, BaseSHA: j.BaseSHA}
+		if err := db.insertJob(done); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := db.claimJob(done, "ctl"); err != nil {
+			t.Fatal(err)
+		}
+		if err := db.finishJob(done.ID, stateDone, 4, "", 1); err != nil {
+			t.Fatal(err)
+		}
+	}
+}
