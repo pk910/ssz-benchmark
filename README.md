@@ -12,7 +12,7 @@ API.
 | `benchd/` | the service (Go, modernc sqlite, no other dependencies) |
 | `harness/` | the benchmark module: `kit/` (module `benchkit`: operations, counters, pinning; shared with the baselines), `baselines/` (one module per reference library), `fulu/` and `gloas/` benchmark packages, `types/fulu`, `types/gloas`, `cmd/payload` (payload generator) |
 | `deploy/` | systemd units, IRQ affinity script, `deploy.sh` |
-| `PLAN.md` | the design |
+| `ai_plans/PLAN.md` (local, not in the repository) | the design |
 
 ## Machine
 

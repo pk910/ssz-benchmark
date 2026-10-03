@@ -36,3 +36,6 @@ repo.git/
 *.orig
 *.rej
 .DS_Store
+
+# planning notes stay local
+/ai_plans/
