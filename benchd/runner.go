@@ -308,7 +308,9 @@ func (r *runner) runJob(ctx context.Context, j *job) bool {
 func (r *runner) goCmd(ctx context.Context, dir string, args ...string) *exec.Cmd {
 	cmd := r.sandboxed(ctx, true, r.cfg.goBin, args...)
 	cmd.Dir = dir
-	cmd.Env = append(cmd.Env, "GOFLAGS=-mod=mod", "GOTOOLCHAIN=local")
+	// No version-control stamping: the checkout belongs to the daemon's git,
+	// which the sandbox user may not query, and the stamp is of no use here.
+	cmd.Env = append(cmd.Env, "GOFLAGS=-mod=mod -buildvcs=false", "GOTOOLCHAIN=local")
 	return cmd
 }
 
