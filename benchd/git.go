@@ -512,7 +512,13 @@ func (s *scheduler) enqueueForkPRs(ctx context.Context) {
 		if s.cfg.sandboxUser == "" {
 			continue
 		}
-		by := s.prs.approvedBy(ctx, pr.Number, pr.HeadSHA)
+		// Approved by the label (recorded by the webhook with the head it was
+		// applied to) or by a maintainer's review of this head.
+		by, _ := s.db.prApproval(pr.Number, pr.HeadSHA)
+		byLabel := by != ""
+		if by == "" {
+			by = s.prs.approvedBy(ctx, pr.Number, pr.HeadSHA)
+		}
 		if by == "" {
 			continue
 		}
@@ -545,6 +551,10 @@ func (s *scheduler) enqueueForkPRs(ctx context.Context) {
 			if err := s.db.insertJob(j); err != nil {
 				log.Printf("fork #%d: %v", pr.Number, err)
 				continue
+			}
+			if byLabel {
+				// The label is spent: the next head needs it applied again.
+				s.checks.removeLabel(ctx, pr.Number, s.cfg.approveLabel)
 			}
 		}
 		_ = s.db.markRef(branch, sha)

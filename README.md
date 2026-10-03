@@ -282,6 +282,33 @@ Every job records its runner, results pool only with reruns on the same
 machine, and the noise page shows the floor per machine. The dashboard
 lists every runner with its state.
 
+## GitHub integration
+
+- A GitHub App reports every commit job as a check run named `benchmark`
+  on its head commit: queued, in progress with the provisional tables
+  after every pass, completed with conclusion `neutral` (the check
+  informs, it never fails a commit). A job superseded by a newer push
+  closes as `skipped`. Settings come from the daemon's environment file:
+  `PUBLIC_URL`, `GH_APP_ID`, `GH_INSTALLATION_ID`, `GH_APP_KEY` (path of
+  the private key). Without them no check is written.
+- A new head of a branch marks that branch's queued jobs as skipped; the
+  running one finishes. `#/pr/<n>` lists every measured head of a pull
+  request against the base and against the head before it.
+- Pull requests from forks are measured only after a maintainer approves
+  a specific head, and only inside the sandbox (`SANDBOX_USER`,
+  `deploy/setup-sandbox.sh`): builds run as an unprivileged user without
+  access to private address ranges, benchmark processes without any
+  network. Two ways to approve:
+  - apply the label `benchmark` (`-approve-label`). The App's webhook
+    (`/webhook`, signed with `GH_APP_WEBHOOK_SECRET`, event "Pull
+    request") delivers the head the label was applied to; the daemon
+    removes the label once the job is queued, so a new push needs it
+    again;
+  - submit a review whose text contains `/benchmark`; GitHub binds the
+    review to the commit it was written on.
+- The web service behind a reverse proxy must not forward `/runner` and
+  `/admin`.
+
 ## Operate
 
 ```

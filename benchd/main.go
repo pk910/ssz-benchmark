@@ -36,6 +36,8 @@ type config struct {
 	minIters         int
 	minPasses        int
 	publicURL        string
+	approveLabel     string
+	webhookSecret    string // GH_APP_WEBHOOK_SECRET; verifies webhook deliveries
 	sandboxUser      string
 	ghAppID          string
 	ghInstallationID string
@@ -78,6 +80,7 @@ func main() {
 	flag.IntVar(&cfg.minIters, "min-iters", 2, "lowest fixed iteration count per measurement")
 	flag.DurationVar(&cfg.baselineInterval, "baseline-interval", 7*24*time.Hour, "how often the reference libraries are measured again (also whenever their modules change; 0: never)")
 	flag.StringVar(&cfg.sandboxUser, "sandbox-user", os.Getenv("SANDBOX_USER"), "unprivileged user the builds and benchmark processes run as (env SANDBOX_USER); empty: as the daemon, and no fork is measured")
+	flag.StringVar(&cfg.approveLabel, "approve-label", "benchmark", "label that approves measuring a fork pull request at the head it is applied to (delivered by the GitHub webhook)")
 	flag.StringVar(&cfg.publicURL, "public-url", os.Getenv("PUBLIC_URL"), "public root of the web UI, used in links from GitHub (env PUBLIC_URL)")
 	flag.StringVar(&cfg.ghAppID, "gh-app-id", os.Getenv("GH_APP_ID"), "GitHub App id for check runs (env GH_APP_ID); empty: no checks")
 	flag.StringVar(&cfg.ghInstallationID, "gh-installation-id", os.Getenv("GH_INSTALLATION_ID"), "installation id of the App on the repository (env GH_INSTALLATION_ID)")
@@ -104,6 +107,7 @@ func main() {
 	cfg.baselines = strings.Split(baselines, ",")
 	cfg.packages = strings.Split(packages, ",")
 	cfg.token = os.Getenv("GITHUB_TOKEN")
+	cfg.webhookSecret = os.Getenv("GH_APP_WEBHOOK_SECRET")
 	cfg.runnerToken = os.Getenv("RUNNER_TOKEN")
 	if cfg.name == "" {
 		cfg.name, _ = os.Hostname()

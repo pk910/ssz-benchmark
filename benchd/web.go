@@ -2,10 +2,16 @@ package main
 
 import (
 	"context"
+	"crypto/hmac"
+	"crypto/sha256"
+	"crypto/subtle"
 	"embed"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"io"
 	"io/fs"
+	"log"
 	"math"
 	"net"
 	"net/http"
@@ -55,6 +61,7 @@ func (w *webServer) handler() (http.Handler, error) {
 	mux.HandleFunc("/api/op/", w.apiOp)
 	mux.HandleFunc("/api/compare", w.apiCompare)
 	mux.HandleFunc("/api/pr/", w.apiPR)
+	mux.HandleFunc("/webhook", w.webhook)
 	mux.HandleFunc("/api/noise", w.apiNoise)
 	mux.HandleFunc("/admin/queue", w.adminQueue)
 	mux.HandleFunc("/api/runners", w.apiRunners)
@@ -446,6 +453,70 @@ func (w *webServer) apiJob(rw http.ResponseWriter, req *http.Request) {
 	default:
 		http.NotFound(rw, req)
 	}
+}
+
+// webhook receives the GitHub App's deliveries. Only one thing is acted
+// on: the approval label being applied to a pull request, which approves
+// measuring the head the pull request has at that moment (the event
+// carries it, so a later push is not covered). A delivery must be signed
+// with the webhook secret.
+func (w *webServer) webhook(rw http.ResponseWriter, req *http.Request) {
+	if req.Method != http.MethodPost {
+		http.Error(rw, "POST only", http.StatusMethodNotAllowed)
+		return
+	}
+	if w.cfg.webhookSecret == "" {
+		http.Error(rw, "webhooks are not configured", http.StatusServiceUnavailable)
+		return
+	}
+	body, err := io.ReadAll(io.LimitReader(req.Body, 8<<20))
+	if err != nil {
+		http.Error(rw, "read error", http.StatusBadRequest)
+		return
+	}
+	mac := hmac.New(sha256.New, []byte(w.cfg.webhookSecret))
+	mac.Write(body)
+	want := "sha256=" + hex.EncodeToString(mac.Sum(nil))
+	if subtle.ConstantTimeCompare([]byte(want), []byte(req.Header.Get("X-Hub-Signature-256"))) != 1 {
+		http.Error(rw, "bad signature", http.StatusUnauthorized)
+		return
+	}
+	if req.Header.Get("X-GitHub-Event") != "pull_request" {
+		_, _ = io.WriteString(rw, "ignored\n")
+		return
+	}
+	var ev struct {
+		Action string `json:"action"`
+		Label  struct {
+			Name string `json:"name"`
+		} `json:"label"`
+		PullRequest struct {
+			Number int `json:"number"`
+			Head   struct {
+				SHA string `json:"sha"`
+			} `json:"head"`
+		} `json:"pull_request"`
+		Repository struct {
+			FullName string `json:"full_name"`
+		} `json:"repository"`
+		Sender struct {
+			Login string `json:"login"`
+		} `json:"sender"`
+	}
+	if err := json.Unmarshal(body, &ev); err != nil {
+		http.Error(rw, "bad payload", http.StatusBadRequest)
+		return
+	}
+	if ev.Action != "labeled" || ev.Label.Name != w.cfg.approveLabel || !strings.EqualFold(ev.Repository.FullName, w.cfg.github) || len(ev.PullRequest.Head.SHA) != 40 {
+		_, _ = io.WriteString(rw, "ignored\n")
+		return
+	}
+	if err := w.db.approvePR(ev.PullRequest.Number, ev.PullRequest.Head.SHA, ev.Sender.Login); err != nil {
+		http.Error(rw, "store error", http.StatusInternalServerError)
+		return
+	}
+	log.Printf("pull request #%d: measuring %s approved by %s (label %s)", ev.PullRequest.Number, shortSHA(ev.PullRequest.Head.SHA), ev.Sender.Login, ev.Label.Name)
+	_, _ = io.WriteString(rw, "approved\n")
 }
 
 // apiPR is the history of a pull request: every measured head against the

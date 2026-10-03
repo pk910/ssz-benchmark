@@ -17,6 +17,7 @@ import (
 	"log"
 	"math"
 	"net/http"
+	"net/url"
 	"os"
 	"sort"
 	"strconv"
@@ -257,6 +258,16 @@ func (c *checkReporter) sync(ctx context.Context, j *job) {
 	}
 }
 
+// removeLabel takes a label off a pull request; failing to is harmless.
+func (c *checkReporter) removeLabel(ctx context.Context, number int, label string) {
+	if c == nil {
+		return
+	}
+	if err := c.app.call(ctx, "DELETE", fmt.Sprintf("/repos/%s/issues/%d/labels/%s", c.repo, number, url.PathEscape(label)), nil, nil); err != nil {
+		log.Printf("pull request #%d: label %s not removed: %v", number, label, err)
+	}
+}
+
 // syncJob is sync for a job id, off the caller's path.
 func (c *checkReporter) syncJob(id int64) {
 	if c == nil {
@@ -371,7 +382,7 @@ func fmtCount(v float64) string {
 // renderCheck writes the check's title and Markdown summary: the geomean
 // per engine, then per object the operations with base, head and delta for
 // every engine. A delta beyond the operation's noise floor is marked.
-func renderCheck(j *job, results []result, nf noiseFloor, url, state string) (string, string) {
+func renderCheck(j *job, results []result, nf noiseFloor, link, state string) (string, string) {
 	var own []result
 	for _, r := range results {
 		if !r.Baseline {
@@ -487,8 +498,8 @@ func renderCheck(j *job, results []result, nf noiseFloor, url, state string) (st
 		}
 		sb.WriteString("\n</details>\n")
 	}
-	if url != "" {
-		fmt.Fprintf(&sb, "\n[Charts, every sample and the other SSZ libraries](%s)\n", url)
+	if link != "" {
+		fmt.Fprintf(&sb, "\n[Charts, every sample and the other SSZ libraries](%s)\n", link)
 	}
 	title := strings.Join(titleParts, " · ")
 	if title == "" {

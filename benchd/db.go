@@ -209,6 +209,13 @@ func openDB(path string) (*store, error) {
 			digest TEXT NOT NULL,
 			final INTEGER NOT NULL
 		)`,
+		`CREATE TABLE IF NOT EXISTS pr_approvals (
+			pr INTEGER NOT NULL,
+			head_sha TEXT NOT NULL,
+			by TEXT NOT NULL,
+			at INTEGER NOT NULL,
+			PRIMARY KEY (pr, head_sha)
+		)`,
 		`CREATE TABLE IF NOT EXISTS seen_refs (
 			ref TEXT PRIMARY KEY,
 			sha TEXT NOT NULL
@@ -609,6 +616,24 @@ func (s *store) pairJobIDs(headSHA, baseSHA, harness, runner string) ([]int64, e
 		ids = append(ids, id)
 	}
 	return ids, rows.Err()
+}
+
+// approvePR records that measuring this head of a pull request was
+// approved, and by whom.
+func (s *store) approvePR(pr int, headSHA, by string) error {
+	_, err := s.db.Exec(`INSERT INTO pr_approvals(pr, head_sha, by, at) VALUES(?, ?, ?, ?)
+		ON CONFLICT(pr, head_sha) DO UPDATE SET by = excluded.by, at = excluded.at`, pr, headSHA, by, time.Now().Unix())
+	return err
+}
+
+// prApproval returns who approved this head of the pull request, or "".
+func (s *store) prApproval(pr int, headSHA string) (string, error) {
+	var by string
+	err := s.db.QueryRow(`SELECT by FROM pr_approvals WHERE pr = ? AND head_sha = ?`, pr, headSHA).Scan(&by)
+	if err == sql.ErrNoRows {
+		return "", nil
+	}
+	return by, err
 }
 
 // jobCheck returns the check run of a job: its id on GitHub, the digest of

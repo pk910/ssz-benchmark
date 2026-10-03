@@ -3,10 +3,12 @@ package main
 import (
 	"context"
 	"crypto"
+	"crypto/hmac"
 	"crypto/rand"
 	"crypto/rsa"
 	"crypto/sha256"
 	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
 	"io"
 	"net/http"
@@ -258,5 +260,56 @@ func TestSandboxedCommand(t *testing.T) {
 	plain := (&runner{cfg: &config{}}).sandboxed(context.Background(), false, "setarch", "x86_64")
 	if got := strings.Join(plain.Args, " "); got != "setarch x86_64" {
 		t.Fatalf("without a sandbox user the command is wrapped: %q", got)
+	}
+}
+
+// The webhook records an approval only for a correctly signed "labeled"
+// event with the approval label on this repository, bound to the head the
+// event carries.
+func TestWebhookApproval(t *testing.T) {
+	db, err := openDB(filepath.Join(t.TempDir(), "t.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg := &config{github: "o/r", name: "ctl", approveLabel: "benchmark", webhookSecret: "s3cret"}
+	w := &webServer{cfg: cfg, db: db}
+	head := strings.Repeat("a", 40)
+	deliver := func(event, secret, body string) (int, string) {
+		req := httptest.NewRequest("POST", "/webhook", strings.NewReader(body))
+		mac := hmac.New(sha256.New, []byte(secret))
+		mac.Write([]byte(body))
+		req.Header.Set("X-Hub-Signature-256", "sha256="+hex.EncodeToString(mac.Sum(nil)))
+		req.Header.Set("X-GitHub-Event", event)
+		rec := httptest.NewRecorder()
+		w.webhook(rec, req)
+		return rec.Code, strings.TrimSpace(rec.Body.String())
+	}
+	payload := func(action, label, repo string) string {
+		return `{"action":"` + action + `","label":{"name":"` + label + `"},"pull_request":{"number":9,"head":{"sha":"` + head + `"}},"repository":{"full_name":"` + repo + `"},"sender":{"login":"maint"}}`
+	}
+	approved := func() string { by, _ := db.prApproval(9, head); return by }
+
+	if code, _ := deliver("pull_request", "wrong", payload("labeled", "benchmark", "o/r")); code != http.StatusUnauthorized || approved() != "" {
+		t.Fatalf("a delivery with a bad signature: %d, approved by %q", code, approved())
+	}
+	for _, c := range []struct{ event, body string }{
+		{"ping", `{"zen":"hi"}`},
+		{"pull_request", payload("opened", "benchmark", "o/r")},
+		{"pull_request", payload("labeled", "bug", "o/r")},
+		{"pull_request", payload("labeled", "benchmark", "someone/else")},
+	} {
+		if code, out := deliver(c.event, "s3cret", c.body); code != 200 || out != "ignored" || approved() != "" {
+			t.Fatalf("%s %s: %d %q, approved by %q", c.event, c.body, code, out, approved())
+		}
+	}
+	if code, out := deliver("pull_request", "s3cret", payload("labeled", "benchmark", "o/r")); code != 200 || out != "approved" || approved() != "maint" {
+		t.Fatalf("labeled: %d %q, approved by %q", code, out, approved())
+	}
+	if by, _ := db.prApproval(9, strings.Repeat("b", 40)); by != "" {
+		t.Fatalf("another head of the pull request is approved by %q", by)
+	}
+	w.cfg = &config{github: "o/r", approveLabel: "benchmark"}
+	if code, _ := deliver("pull_request", "", payload("labeled", "benchmark", "o/r")); code != http.StatusServiceUnavailable {
+		t.Fatalf("without a secret configured: %d", code)
 	}
 }
