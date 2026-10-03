@@ -295,6 +295,16 @@ Every job records its runner, results pool only with reruns on the same
 machine, and the noise page shows the floor per machine. The dashboard
 lists every runner with its state.
 
+## Housekeeping on the box
+
+- After every job the runner prunes the work disk: harness builds made
+  with a harness that is no longer current are removed at once; of the
+  rest the sixteen most recently used worktrees and builds stay.
+- The Go build cache trims itself (entries unused for five days); the
+  module cache only grows with new dependencies.
+- Job logs (`/srv/benchd/jobs/<id>`, about half a megabyte per job) and
+  the database are kept.
+
 ## GitHub integration
 
 - A GitHub App reports every commit job as a check run named `benchmark`

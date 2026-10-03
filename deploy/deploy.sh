@@ -39,5 +39,6 @@ ssh "$BOX" "set -e
     install -m 755 /tmp/benchd /srv/benchd/benchweb
     systemctl restart benchweb
   fi
+  rm -f /tmp/benchd /tmp/benchd.service /tmp/benchweb.service /tmp/bench-irq-affinity.service /tmp/bench-irq-affinity
   sleep 2
   systemctl --no-pager --lines=0 status benchd benchweb | grep -E 'service|Active'"

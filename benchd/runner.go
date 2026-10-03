@@ -84,7 +84,11 @@ func (r *runner) loop(ctx context.Context) {
 			sleepCtx(ctx, time.Minute)
 			continue
 		}
-		if !r.runJob(ctx, j) {
+		ok := r.runJob(ctx, j)
+		if ctx.Err() == nil {
+			r.prune()
+		}
+		if !ok {
 			// A failing environment must not spin through jobs.
 			sleepCtx(ctx, time.Minute)
 		}
@@ -270,6 +274,7 @@ func (r *runner) runJob(ctx context.Context, j *job) bool {
 		if err := r.buildBaselines(ctx, head, logw); err != nil {
 			return fail(fmt.Errorf("build baselines: %w", err))
 		}
+		used(head.hdir)
 		passes, err := r.measure(ctx, j, head, base, jobDir, logw)
 		if err != nil {
 			return fail(fmt.Errorf("measure: %w", err))
@@ -297,6 +302,8 @@ func (r *runner) runJob(ctx context.Context, j *job) bool {
 		if err := r.buildHarness(ctx, s, logw); err != nil {
 			return fail(fmt.Errorf("build %s: %w", s.name, err))
 		}
+		used(s.dir)
+		used(s.hdir)
 	}
 
 	passes, err := r.measure(ctx, j, head, base, jobDir, logw)
@@ -308,7 +315,6 @@ func (r *runner) runJob(ctx context.Context, j *job) bool {
 		logw("finish: %v", err)
 	}
 	r.setPhase(nil, "")
-	r.prune()
 	return true
 }
 
@@ -1113,10 +1119,20 @@ func parseBenchOutput(out []byte) []benchLine {
 	return lines
 }
 
-// prune keeps the worktrees and harness builds of the most recently used
-// commits.
+// prune clears the work directories after a job: harness builds made with
+// a harness that is no longer the current one are of no use to any future
+// job and go at once; of the rest, the sixteen most recently used
+// worktrees and builds stay (a directory is marked used whenever a job
+// takes it).
 func (r *runner) prune() {
 	const keep = 16
+	current := map[string]bool{}
+	if h, err := harnessHash(r.cfg.harnessDir); err == nil {
+		current[h] = true
+	}
+	if h, err := baselineHash(r.cfg.harnessDir); err == nil {
+		current[h] = true
+	}
 	for _, sub := range []string{"wt", "hb"} {
 		dir := filepath.Join(r.cfg.dataDir, sub)
 		entries, err := os.ReadDir(dir)
@@ -1133,6 +1149,10 @@ func (r *runner) prune() {
 			if err != nil {
 				continue
 			}
+			if hash, _, ok := strings.Cut(e.Name(), "-"); sub == "hb" && ok && len(current) > 0 && !current[hash] {
+				_ = os.RemoveAll(filepath.Join(dir, e.Name()))
+				continue
+			}
 			ents = append(ents, ent{e.Name(), info.ModTime()})
 		}
 		sort.Slice(ents, func(i, k int) bool { return ents[i].mod.After(ents[k].mod) })
@@ -1145,6 +1165,12 @@ func (r *runner) prune() {
 			}
 		}
 	}
+}
+
+// used marks a work directory as just used, for prune.
+func used(dir string) {
+	now := time.Now()
+	_ = os.Chtimes(dir, now, now)
 }
 
 // writeReport writes a plain-text table next to the raw logs.
