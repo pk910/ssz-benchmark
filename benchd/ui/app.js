@@ -36,6 +36,19 @@
   const liveEl = document.getElementById('live');
   const OBJECTS = ['FuluState', 'FuluBlock', 'FuluBlocks', 'GloasState', 'GloasBlock', 'GloasBlocks', 'GloasEnvelope'];
   const OPS = ['Unmarshal', 'UnmarshalReader', 'UnmarshalReaderUnknown', 'SizeSSZ', 'Marshal', 'MarshalTo', 'MarshalWriter', 'HashTreeRoot', 'GetTree'];
+  // What each benchmark object is; shown on hover of the info mark next to
+  // its name.
+  const OBJECT_INFO = {
+    FuluState: 'A real mainnet beacon state in the Fulu layout, 348 MB. Its pending lists are filled up artificially so every part of the state is exercised: 65,536 pending deposits, partial withdrawals and consolidations each, 2,048 eth1 data votes.',
+    FuluBlock: 'One real mainnet block, extended so that every operation list is at its mainnet limit: proposer and attester slashings, attestations with full aggregation bits, deposits, voluntary exits, BLS changes, deposit, withdrawal and consolidation requests, blob commitments. 2.4 MB. Real blocks almost never carry slashings, deposits or exits, so this block is what exercises every code path.',
+    FuluBlocks: 'The 32 real, unmodified mainnet blocks of one epoch, 40 KB to 323 KB each, 4.8 MB together. One iteration runs the operation on all 32 in sequence. This is the traffic the library sees in production: mostly transactions and attestations, in varying sizes.',
+    GloasState: 'The same state as FuluState, converted to the Gloas layout: identical content, different structure (progressive containers and lists, builder registry and payment lists). Differences to FuluState show what the Gloas SSZ changes cost.',
+    GloasBlock: 'The extended block of FuluBlock converted to the Gloas layout (progressive lists, payload attestations, the execution payload replaced by its bid). Identical content where the two forks overlap.',
+    GloasBlocks: 'The 32 real blocks of FuluBlocks converted to the Gloas layout. One iteration runs the operation on all 32 in sequence.',
+    GloasEnvelope: 'The signed execution payload envelope that belongs to GloasBlock: in Gloas the execution payload travels separately from the beacon block. 1.9 MB, mostly transactions.',
+  };
+  const objInfo = o => OBJECT_INFO[o] ? `<span class="info" tabindex="0" data-tip="${OBJECT_INFO[o].replace(/"/g, '&quot;')}">i</span>` : '';
+  const objName = o => `${o}${objInfo(o)}`;
   const ENGINES = ['Codegen', 'Reflection', 'CodegenAsync', 'ReflectionAsync', 'FastSSZ', 'FastSSZv1', 'FastSSZv2', 'PrysmSSZ', 'KaralabeSSZ', 'KaralabeSSZAsync'];
   const COLORS = ['#2f5fd1', '#d97706', '#7c3aed', '#0f9d8a', '#6b7280', '#db2777'];
   const METRICS = {
@@ -421,7 +434,7 @@
       </div>
       ${j.Note ? `<p class="note">${esc(j.Note)}</p>` : ''}${d.BaselineJob ? `<p class="note">Other libraries: values from the reference job <a href="#/job/${d.BaselineJob}">#${d.BaselineJob}</a> on the same machine and payload. They cannot hash Gloas objects unless they implement progressive merkleization (PrysmSSZ does), and none but PrysmSSZ can express the Gloas state.</p>` : ''}${j.Error ? `<pre class="err">${esc(j.Error)}</pre>` : ''}
       <div class="toolbar">${metricTabs()}<span class="muted">${m.label} ${m.unit}: base → head and Δ per engine and operation. Green/red: |Δ| exceeds this operation's noise floor (p95 of the self-comparisons, at least 0.5%); bold: |Δ| ≥ 5%; grey: within noise. Click a bar or cell for every sample.</span></div>
-      ${mxs.map((mx, i) => `<h2>${mx.obj}</h2><div class="chart" style="height:${mx.ops.length * Math.max(30, ([...mx.engines, ...mx.asyncEngines].length) * 14 + 8) + 70}px"><canvas id="dc${i}"></canvas></div><p class="note">One bar per engine (colours in the legend) per operation: the bar spans the ${m.label.toLowerCase()} deltas of the single runs (each run compares head and base measured minutes apart), the white tick and the number are the mean over the runs. A long bar means the runs disagreed. The grey band behind each row is that operation's noise floor on this machine: how far two measurements of the same code differ (p95 over the master-vs-master noise jobs, at least 0.5%). A result inside the band is not a change. Async engines appear only on HashTreeRoot.</p>${matrixTable(mx, m, j.ID)}`).join('') || '<p class="muted">no results yet</p>'}
+      ${mxs.map((mx, i) => `<h2>${objName(mx.obj)}</h2><div class="chart" style="height:${mx.ops.length * Math.max(30, ([...mx.engines, ...mx.asyncEngines].length) * 14 + 8) + 70}px"><canvas id="dc${i}"></canvas></div><p class="note">One bar per engine (colours in the legend) per operation: the bar spans the ${m.label.toLowerCase()} deltas of the single runs (each run compares head and base measured minutes apart), the white tick and the number are the mean over the runs. A long bar means the runs disagreed. The grey band behind each row is that operation's noise floor on this machine: how far two measurements of the same code differ (p95 over the master-vs-master noise jobs, at least 0.5%). A result inside the band is not a change. Async engines appear only on HashTreeRoot.</p>${matrixTable(mx, m, j.ID)}`).join('') || '<p class="muted">no results yet</p>'}
       ${d.Noise && d.Noise.Jobs ? `<p class="note">Noise floor over ${d.Noise.Jobs} self-comparisons: median |Δ time| ${d.Noise.MedianAbs.toFixed(2)}%, p95 ${d.Noise.P95Abs.toFixed(2)}%.</p>` : ''}
       <details><summary>Raw files</summary><p class="mono">${(d.Files || []).map(f => `<a href="/raw/${j.ID}/${f}" target="_blank">${f}</a>`).join(' · ')}</p></details>`;
     bindMetricTabs(() => viewJob(id));
@@ -493,7 +506,7 @@
       <div class="toolbar">${metricTabs()}<span class="muted">latest head value per engine and library; master trend over 30 days once three master points exist</span></div>
       <div class="toolbar chips" id="engsel">${all.map(e => `<a href="#" data-e="${e}" class="chip ${opsHidden.has(e) ? '' : 'commit'}" title="show or hide this column">${e}</a>`).join(' ')}<a href="#" data-e="*" class="chip">all</a><a href="#" data-e="-" class="chip">ours only</a></div>
       <div style="overflow-x:auto"><table><thead><tr><th>Object</th><th>Operation</th>${engines.map(e => `<th class="grp">${e}</th>`).join('')}</tr></thead><tbody>
-      ${rows.map(r => `<tr><td>${r.Object}</td><td class="mono"><a href="#/op/${r.Object}/${r.Op}">${r.Op}</a></td>${engines.map(e => cell(r, e)).join('')}</tr>`).join('')}
+      ${rows.map((r, i) => `<tr><td>${i > 0 && rows[i - 1].Object === r.Object ? `<span class="muted">${r.Object}</span>` : objName(r.Object)}</td><td class="mono"><a href="#/op/${r.Object}/${r.Op}">${r.Op}</a></td>${engines.map(e => cell(r, e)).join('')}</tr>`).join('')}
       </tbody></table></div>`;
     bindMetricTabs(viewOps);
     document.querySelectorAll('#engsel a').forEach(a => a.onclick = (ev => {
@@ -542,7 +555,7 @@
     const v = await get(`/api/op/${object}/${op}`);
     const m = METRICS[metric];
     const main = (await get('/api/status')).MainBranch;
-    app.innerHTML = `<h1><span class="mono">${object} / ${op}</span></h1>
+    app.innerHTML = `<h1><span class="mono">${object} / ${op}</span>${objInfo(object)}</h1>
       <div class="cards">${v.Engines.map((e, i) => {
         const l = v.Latest[e], t = v.Trends[e], n = v.Noise[e];
         return `<div class="card"><h3><i class="legend"><i style="background:${COLORS[i]}"></i></i>${e}</h3><div class="big">${fmtNs(l.Ns.Head)}</div><div class="sub">${fmtBytes(l.Bytes.Head)} · ${fmtNum(l.Allocs.Head)} allocs/op · latest head (job <a href="#/job/${l.JobID}">#${l.JobID}</a>)</div>${t && t.N >= 3 ? `<div class="sub">master trend ${pct(t.SlopePct30d, 1)} / 30d over ${t.N} points (R² ${t.R2.toFixed(2)}), projected ${fmtNs(t.Projected30d)}</div>` : ''}${n ? `<div class="sub">noise floor p95 |Δ| ${n.toFixed(2)}%</div>` : ''}</div>`;

@@ -130,3 +130,9 @@ td.cell .d > .muted.small { min-width: 78px; }
 .note { max-width: 1100px; }
 .toolbar .muted { max-width: 1100px; }
 .chip.skipped { background: var(--chip); color: var(--muted); text-decoration: line-through; }
+
+/* info mark with an explanation on hover or focus */
+.info { display: inline-flex; align-items: center; justify-content: center; width: 14px; height: 14px; margin-left: 6px; border-radius: 50%; border: 1px solid var(--muted); color: var(--muted); font: italic 600 10px/1 Georgia, serif; cursor: help; position: relative; vertical-align: 1px; text-transform: none; letter-spacing: 0; }
+.info:hover, .info:focus { color: var(--acc); border-color: var(--acc); outline: none; }
+.info:hover::after, .info:focus::after { content: attr(data-tip); position: absolute; left: 20px; top: -6px; z-index: 30; width: min(460px, 60vw); padding: 9px 11px; border-radius: 8px; background: var(--card); color: var(--fg); border: 1px solid var(--line); box-shadow: 0 6px 24px rgba(0,0,0,.35); font: 400 12px/1.45 -apple-system, "Segoe UI", Inter, Roboto, system-ui, sans-serif; white-space: normal; text-align: left; }
+.tw:has(.info:hover), .tw:has(.info:focus) { overflow: visible; }
