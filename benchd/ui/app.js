@@ -339,6 +339,31 @@
     if (!(M.PN > 1)) return [delta(M), delta(M)];
     return [Math.min(M.PQ1, delta(M)), Math.max(M.PQ3, delta(M))];
   }
+  // chartRows lists the rows of an object's chart: its operations, and
+  // below an operation that the async engines run too, a row of its own
+  // for them. Every row then holds one candle per engine; the async engine
+  // takes the colour of its synchronous one. With sameUnit, an async row
+  // whose values are in another unit on this tab is left out.
+  function chartRows(mx, m, sameUnit) {
+    const rows = [];
+    mx.ops.forEach(op => {
+      rows.push({ label: op, op, async: false });
+      const eng = mx.asyncEngines.filter(e => mx.cells[e + '/' + op]);
+      if (!eng.length) return;
+      const other = metricFor(m, eng[0]) !== m;
+      if (other && sameUnit) return;
+      rows.push({ label: op + (other ? ' (async, time)' : ' (async)'), op, async: true });
+    });
+    return rows;
+  }
+  // rowCell is the result an engine shows in a row, with the metric it is
+  // read by, or null.
+  function rowCell(mx, m, e, row) {
+    const engine = row.async ? e + 'Async' : e;
+    if (row.async && !mx.asyncEngines.includes(engine)) return null;
+    const key = metricFor(m, engine).key, r = mx.cells[engine + '/' + row.op];
+    return r && !unmeasured(r[key]) ? { r, key, engine, op: row.op } : null;
+  }
   // barLabels draws the mean as a tick on each bar and writes it beyond
   // the bar's far end.
   const barLabels = {
@@ -352,9 +377,9 @@
         const meta = c.getDatasetMeta(di);
         if (meta.hidden) return;
         meta.data.forEach((bar, i) => {
-          const r = ds.meta[i];
-          if (!r) return;
-          const M = r[ds.mkey || key], [lo, hi] = range(M), [b0, b1] = body(M);
+          const cell = ds.meta[i];
+          if (!cell) return;
+          const M = cell.r[cell.key], [lo, hi] = range(M), [b0, b1] = body(M);
           const h = Math.max(4, bar.height), area = c.chartArea;
           // whisker: every pass, a thin line clipped to the chart
           const wl = Math.max(area.left, x.getPixelForValue(lo)), wr = Math.min(area.right, x.getPixelForValue(hi));
@@ -403,24 +428,21 @@
     },
   };
   function deltaChartCfg(mx, m, jobID) {
-    const labels = mx.ops;
-    const datasets = [];
-    const all = [...mx.engines, ...mx.asyncEngines];
-    all.forEach((e, i) => {
+    const rows = chartRows(mx, m, false), labels = rows.map(r => r.label);
+    const datasets = mx.engines.map((e, i) => {
       const color = COLORS[i % COLORS.length];
-      const em = metricFor(m, e);
-      const cells = labels.map(op => { const r = mx.cells[e + '/' + op]; return r && !unmeasured(r[em.key]) ? r : null; });
-      datasets.push({
-        label: e + (em !== m ? ' (time)' : ''), type: 'bar', backgroundColor: color + 'aa', borderColor: color, borderWidth: 1, mkey: em.key,
-        data: cells.map(r => r ? body(r[em.key]) : null),
+      const cells = rows.map(row => rowCell(mx, m, e, row));
+      return {
+        label: e, type: 'bar', backgroundColor: color + 'aa', borderColor: color, borderWidth: 1,
+        data: cells.map(c => c ? body(c.r[c.key]) : null),
         meta: cells,
         barPercentage: 0.8, categoryPercentage: 0.8, minBarLength: 3,
-      });
+      };
     });
-    const floors = labels.map(op => Math.max(...all.map(e => { const r = mx.cells[e + '/' + op]; const M = r && r[metricFor(m, e).key]; return M && !unmeasured(M) ? bandOf(M, e + '/' + mx.obj + '/' + op) : 0; })));
+    const floors = rows.map((row, i) => Math.max(0, ...datasets.map(d => { const c = d.meta[i]; return c ? bandOf(c.r[c.key], c.engine + '/' + mx.obj + '/' + c.op) : 0; })));
     // The axis shows every candle with both ends of its thin line, zero
     // and the bands, with room for the labels; it need not be symmetric.
-    const ends = datasets.flatMap(d => d.meta.filter(Boolean).flatMap(r => range(r[d.mkey || m.key])));
+    const ends = datasets.flatMap(d => d.meta.filter(Boolean).flatMap(c => range(c.r[c.key])));
     const maxFloor = Math.max(0.5, ...floors);
     let lo = Math.min(0, -maxFloor, ...ends), hi = Math.max(0, maxFloor, ...ends);
     const pad = (hi - lo) * 0.09;
@@ -430,7 +452,7 @@
       plugins: [noiseBand, barLabels],
       options: {
         indexAxis: 'y', responsive: true, maintainAspectRatio: false, animation: false,
-        onClick: (ev, els, c) => { if (els.length && jobID) location.hash = `#/job/${jobID}/leaf/${all[els[0].datasetIndex]}/${mx.obj}/${labels[els[0].index]}`; },
+        onClick: (ev, els, c) => { if (els.length && jobID) { const c = datasets[els[0].datasetIndex].meta[els[0].index]; location.hash = `#/job/${jobID}/leaf/${c.engine}/${mx.obj}/${c.op}`; } },
         onHover: (ev, els) => { ev.native.target.style.cursor = els.length ? 'pointer' : 'default'; },
         scales: {
           x: { min: lo, max: hi, ticks: { callback: v => (v > 0 ? '+' : '') + (Math.round(v * 100) / 100) + '%', maxTicksLimit: 9 }, grid: { color: ctx => ctx.tick.value === 0 ? getComputedStyle(document.body).getPropertyValue('--fg') : getComputedStyle(document.body).getPropertyValue('--line2') } },
@@ -445,8 +467,8 @@
           noiseBand: { floors },
           barLabels: { key: m.key },
           tooltip: { callbacks: { label: ctx => {
-            const c = ctx.dataset.meta[ctx.dataIndex], M = c[ctx.dataset.mkey || m.key], [lo, hi] = range(M);
-            return `${ctx.dataset.label}: median ${pct(delta(M))} · single passes ${pct(lo, 2)} to ${pct(hi, 2)}${M.PN > 0 ? ` · ${M.PAgree} of ${M.PN} agree` : ''} · ${m.fmt(M.Base)} → ${m.fmt(M.Head)}`;
+            const c = ctx.dataset.meta[ctx.dataIndex], M = c.r[c.key], [lo, hi] = range(M), cm = Object.values(METRICS).find(x => x.key === c.key) || m;
+            return `${c.engine}: median ${pct(delta(M))} · single passes ${pct(lo, 2)} to ${pct(hi, 2)}${M.PN > 0 ? ` · ${M.PAgree} of ${M.PN} agree` : ''} · ${cm.fmt(M.Base)} → ${cm.fmt(M.Head)}`;
           } } },
         },
       },
@@ -478,9 +500,9 @@
         const meta = c.getDatasetMeta(di);
         if (meta.hidden) return;
         meta.data.forEach((bar, i) => {
-          const r = ds.meta[i];
-          if (!r) return;
-          const M = r[opts.key], h = Math.max(4, bar.height);
+          const cell = ds.meta[i];
+          if (!cell) return;
+          const M = cell.r[cell.key], h = Math.max(4, bar.height);
           const [hlo, hhi] = headRange(M);
           ctx.strokeStyle = ds.borderColor;
           ctx.lineWidth = 1.5;
@@ -510,30 +532,39 @@
   // runs, the tick on it is their mean. An engine whose values are in
   // another unit on this tab (the async engines on the counter tabs) is
   // left out.
-  const absEngines = (mx, m) => [...mx.engines, ...mx.asyncEngines, ...(chartLibs ? mx.baselines : [])].filter(e => metricFor(m, e) === m);
-  // absRowBars is the largest number of bars one operation of the object
-  // shows; every row gets room for that many bars of the same thickness.
-  const absRowBars = (mx, m) => Math.max(1, ...mx.ops.map(op => absEngines(mx, m).filter(e => { const r = mx.cells[e + '/' + op]; return r && !unmeasured(r[m.key]) && r[m.key].Head > 0; }).length));
+  const absEngines = mx => [...mx.engines, ...(chartLibs ? mx.baselines : [])];
+  // absCell is the value an engine or library shows in a row, or null; a
+  // library has no async rows.
+  function absCell(mx, m, e, row) {
+    if (mx.baselines.includes(e)) {
+      const r = !row.async && mx.cells[e + '/' + row.op];
+      return r && metricFor(m, e) === m && !unmeasured(r[m.key]) && r[m.key].Head > 0 ? { r, key: m.key, engine: e, op: row.op } : null;
+    }
+    const c = rowCell(mx, m, e, row);
+    return c && c.key === m.key && c.r[m.key].Head > 0 ? c : null;
+  }
+  // absRowBars is the largest number of bars one row of the object shows;
+  // every row gets room for that many bars of the same thickness.
+  const absRowBars = (mx, m) => Math.max(1, ...chartRows(mx, m, true).map(row => absEngines(mx).filter(e => absCell(mx, m, e, row)).length));
   function absChartCfg(mx, m, jobID) {
-    const labels = mx.ops;
-    const all = absEngines(mx, m);
-    const datasets = all.map((e, i) => {
+    const rows = chartRows(mx, m, true), labels = rows.map(r => r.label);
+    const datasets = absEngines(mx).map((e, i) => {
       const color = COLORS[i % COLORS.length], ref = mx.baselines.includes(e);
-      const cells = labels.map(op => { const r = mx.cells[e + '/' + op]; return r && !unmeasured(r[m.key]) && r[m.key].Head > 0 ? r : null; });
+      const cells = rows.map(row => absCell(mx, m, e, row));
       return {
         label: e + (ref ? ' (library)' : ''), type: 'bar', backgroundColor: color + (ref ? '55' : 'aa'), borderColor: color, borderWidth: 1,
-        data: cells.map(r => r ? headBody(r[m.key]) : null),
-        meta: cells, engine: e, own: !ref, skipNull: true,
+        data: cells.map(c => c ? headBody(c.r[m.key]) : null),
+        meta: cells, own: !ref, skipNull: true,
         barThickness: 9, minBarLength: 3,
       };
     });
-    const vals = datasets.flatMap(d => d.meta.filter(Boolean).flatMap(r => [...headRange(r[m.key]), d.own && r[m.key].Base > 0 ? r[m.key].Base : r[m.key].Head]));
+    const vals = datasets.flatMap(d => d.meta.filter(Boolean).flatMap(c => [...headRange(c.r[m.key]), d.own && c.r[m.key].Base > 0 ? c.r[m.key].Base : c.r[m.key].Head]));
     return {
       data: { labels, datasets },
       plugins: [absLabels],
       options: {
         indexAxis: 'y', responsive: true, maintainAspectRatio: false, animation: false,
-        onClick: (ev, els) => { if (els.length && jobID && datasets[els[0].datasetIndex].own) location.hash = `#/job/${jobID}/leaf/${datasets[els[0].datasetIndex].engine}/${mx.obj}/${labels[els[0].index]}`; },
+        onClick: (ev, els) => { if (els.length && jobID && datasets[els[0].datasetIndex].own) { const c = datasets[els[0].datasetIndex].meta[els[0].index]; location.hash = `#/job/${jobID}/leaf/${c.engine}/${mx.obj}/${c.op}`; } },
         scales: {
           x: { type: 'logarithmic', min: vals.length ? Math.min(...vals) / 1.6 : undefined, max: vals.length ? Math.max(...vals) * 2.5 : undefined, ticks: { callback: v => m.fmt(v), maxTicksLimit: 10 }, title: { display: true, text: `${m.label} ${m.unit}, logarithmic` } },
           y: { grid: { display: false } },
@@ -542,8 +573,8 @@
           legend: { labels: { boxWidth: 12 } },
           absLabels: { fmt: m.fmt, key: m.key },
           tooltip: { callbacks: { label: ctx => {
-            const c = ctx.dataset.meta[ctx.dataIndex], M = c[m.key], [lo, hi] = headRange(M);
-            return `${ctx.dataset.label}: mean ${m.fmt(M.Head)} · single runs ${m.fmt(lo)} to ${m.fmt(hi)}${ctx.dataset.own ? ` · base ${m.fmt(M.Base)} (${pct(M.Delta)})` : ''} · ${c.N} runs`;
+            const cell = ctx.dataset.meta[ctx.dataIndex], c = cell.r, M = c[m.key], [lo, hi] = headRange(M);
+            return `${cell.engine}: mean ${m.fmt(M.Head)} · single runs ${m.fmt(lo)} to ${m.fmt(hi)}${ctx.dataset.own ? ` · base ${m.fmt(M.Base)} (${pct(M.Delta)})` : ''} · ${c.N} runs`;
           } } },
         },
       },
@@ -569,7 +600,7 @@
       </div>
       ${j.Note ? `<p class="note">${esc(j.Note)}</p>` : ''}${d.BaselineJob ? `<p class="note">Other libraries: values from the reference job <a href="#/job/${d.BaselineJob}">#${d.BaselineJob}</a> on the same machine and payload. They cannot hash Gloas objects unless they implement progressive merkleization (PrysmSSZ does), and none but PrysmSSZ can express the Gloas state.</p>` : ''}${j.Error ? `<pre class="err">${esc(j.Error)}</pre>` : ''}
       <div class="toolbar">${metricTabs()}<div class="tabs" id="modeTabs"><button data-mode="rel" class="${chartMode === 'rel' ? 'active' : ''}" title="charts show head against base in percent">change in %</button><button data-mode="abs" class="${chartMode === 'abs' ? 'active' : ''}" title="charts show the measured values">measured values</button></div>${chartMode === 'abs' ? `<label class="check"><input type="checkbox" id="chartLibs" ${chartLibs ? 'checked' : ''}> with the other libraries</label>` : ''}<span class="muted">${m.label} ${m.unit}: base → head and Δ per engine and operation. Δ is the median over the passes. Green/red: a change (outside the band, most passes agree); bold: |Δ| ≥ 5%; grey: no change. Click a bar or cell for every sample.</span></div>
-      ${mxs.map((mx, i) => { const bars = chartMode === 'abs' ? absRowBars(mx, m) : [...mx.engines, ...mx.asyncEngines].length; return `<h2>${objName(mx.obj)}</h2><div class="chart" style="height:${mx.ops.length * Math.max(30, bars * 14 + 8) + 80}px"><canvas id="dc${i}"></canvas></div><p class="note">${chartMode === 'abs' ? `One bar per engine${chartLibs ? ' and reference library' : ''} per operation, in measured ${m.label.toLowerCase()}: the thick body is the middle half of the single runs' values and the thin line reaches to the lowest and the highest run, the white tick and the number are their mean, the grey tick on our own engines is the base's mean. The axis is logarithmic because the operations of one object span several orders of magnitude, so a bar is short when the runs agree.${chartLibs ? ' Paler bars are the other libraries, from the latest reference job.' : ''}` : `One candle per engine (colours in the legend) per operation. The thick body is the middle half of the per-pass ${m.label.toLowerCase()} deltas (each pass links head and base with another function layout and measures them minutes apart), the thin line reaches to the lowest and the highest pass, the white tick and the number are the median. A single pass far off shows as a long thin line and leaves the body and the scale alone; an arrow head means the line continues beyond the chart. The grey band behind each row is what does not count as a change there: the operation's noise floor on this machine, widened where the passes scatter. A result is a change when its median lies outside the band and at least three quarters of the passes agree. Async engines appear only on HashTreeRoot.`}</p>${matrixTable(mx, m, j.ID)}`; }).join('') || '<p class="muted">no results yet</p>'}
+      ${mxs.map((mx, i) => { const bars = chartMode === 'abs' ? absRowBars(mx, m) : mx.engines.length, rows = chartRows(mx, m, chartMode === 'abs').length; return `<h2>${objName(mx.obj)}</h2><div class="chart" style="height:${rows * Math.max(30, bars * 14 + 8) + 80}px"><canvas id="dc${i}"></canvas></div><p class="note">${chartMode === 'abs' ? `One bar per engine${chartLibs ? ' and reference library' : ''} per operation, in measured ${m.label.toLowerCase()}: the thick body is the middle half of the single runs' values and the thin line reaches to the lowest and the highest run, the white tick and the number are their mean, the grey tick on our own engines is the base's mean. The axis is logarithmic because the operations of one object span several orders of magnitude, so a bar is short when the runs agree.${chartLibs ? ' Paler bars are the other libraries, from the latest reference job.' : ''}` : `One candle per engine (colours in the legend) per operation. The thick body is the middle half of the per-pass ${m.label.toLowerCase()} deltas (each pass links head and base with another function layout and measures them minutes apart), the thin line reaches to the lowest and the highest pass, the white tick and the number are the median. A single pass far off shows as a long thin line and leaves the body and the scale alone; an arrow head means the line continues beyond the chart. The grey band behind each row is what does not count as a change there: the operation's noise floor on this machine, widened where the passes scatter. A result is a change when its median lies outside the band and at least three quarters of the passes agree. The async engines have a row of their own below the operation they run, in the colour of their engine; on the counter tabs that row shows time, because the counters see only one of their threads.`}</p>${matrixTable(mx, m, j.ID)}`; }).join('') || '<p class="muted">no results yet</p>'}
       ${d.Noise && d.Noise.Jobs ? `<p class="note">Noise floor over ${d.Noise.Jobs} self-comparisons: median |Δ time| ${d.Noise.MedianAbs.toFixed(2)}%, p95 ${d.Noise.P95Abs.toFixed(2)}%.</p>` : ''}
       <details><summary>Raw files</summary><p class="mono">${(d.Files || []).map(f => `<a href="/raw/${j.ID}/${f}" target="_blank">${f}</a>`).join(' · ')}</p></details>`;
     bindMetricTabs(() => viewJob(id));
