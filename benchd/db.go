@@ -97,6 +97,7 @@ type metric struct {
 	Lo, Hi           float64 // 95% interval of Delta in percent
 	P                float64 // Welch p-value
 	DMin, DMax       float64 // smallest and largest delta of a single run (base and head of the same pass), percent
+	HMin, HMax       float64 // smallest and largest head value of a single run
 }
 
 type result struct {
@@ -195,11 +196,11 @@ func openDB(path string) (*store, error) {
 			n INTEGER NOT NULL,
 			iters INTEGER NOT NULL,
 			steal INTEGER NOT NULL,
-			ns_base REAL, ns_head REAL, ns_med_base REAL, ns_med_head REAL, ns_cv_base REAL, ns_cv_head REAL, ns_delta REAL, ns_med_delta REAL, ns_lo REAL, ns_hi REAL, ns_p REAL, ns_dmin REAL, ns_dmax REAL,
-			b_base REAL, b_head REAL, b_med_base REAL, b_med_head REAL, b_cv_base REAL, b_cv_head REAL, b_delta REAL, b_med_delta REAL, b_lo REAL, b_hi REAL, b_p REAL, b_dmin REAL, b_dmax REAL,
-			a_base REAL, a_head REAL, a_med_base REAL, a_med_head REAL, a_cv_base REAL, a_cv_head REAL, a_delta REAL, a_med_delta REAL, a_lo REAL, a_hi REAL, a_p REAL, a_dmin REAL, a_dmax REAL,
-			c_base REAL, c_head REAL, c_med_base REAL, c_med_head REAL, c_cv_base REAL, c_cv_head REAL, c_delta REAL, c_med_delta REAL, c_lo REAL, c_hi REAL, c_p REAL, c_dmin REAL, c_dmax REAL,
-			i_base REAL, i_head REAL, i_med_base REAL, i_med_head REAL, i_cv_base REAL, i_cv_head REAL, i_delta REAL, i_med_delta REAL, i_lo REAL, i_hi REAL, i_p REAL, i_dmin REAL, i_dmax REAL,
+			ns_base REAL, ns_head REAL, ns_med_base REAL, ns_med_head REAL, ns_cv_base REAL, ns_cv_head REAL, ns_delta REAL, ns_med_delta REAL, ns_lo REAL, ns_hi REAL, ns_p REAL, ns_dmin REAL, ns_dmax REAL, ns_hmin REAL, ns_hmax REAL,
+			b_base REAL, b_head REAL, b_med_base REAL, b_med_head REAL, b_cv_base REAL, b_cv_head REAL, b_delta REAL, b_med_delta REAL, b_lo REAL, b_hi REAL, b_p REAL, b_dmin REAL, b_dmax REAL, b_hmin REAL, b_hmax REAL,
+			a_base REAL, a_head REAL, a_med_base REAL, a_med_head REAL, a_cv_base REAL, a_cv_head REAL, a_delta REAL, a_med_delta REAL, a_lo REAL, a_hi REAL, a_p REAL, a_dmin REAL, a_dmax REAL, a_hmin REAL, a_hmax REAL,
+			c_base REAL, c_head REAL, c_med_base REAL, c_med_head REAL, c_cv_base REAL, c_cv_head REAL, c_delta REAL, c_med_delta REAL, c_lo REAL, c_hi REAL, c_p REAL, c_dmin REAL, c_dmax REAL, c_hmin REAL, c_hmax REAL,
+			i_base REAL, i_head REAL, i_med_base REAL, i_med_head REAL, i_cv_base REAL, i_cv_head REAL, i_delta REAL, i_med_delta REAL, i_lo REAL, i_hi REAL, i_p REAL, i_dmin REAL, i_dmax REAL, i_hmin REAL, i_hmax REAL,
 			PRIMARY KEY (job_id, engine, object, op)
 		)`,
 		`CREATE INDEX IF NOT EXISTS results_leaf ON results(object, op, engine, job_id)`,
@@ -270,7 +271,7 @@ func openDB(path string) (*store, error) {
 		}
 	}
 	for _, prefix := range []string{"ns_", "b_", "a_", "c_", "i_"} {
-		for _, col := range []string{"dmin", "dmax"} {
+		for _, col := range []string{"dmin", "dmax", "hmin", "hmax"} {
 			migrations = append(migrations, `ALTER TABLE results ADD COLUMN `+prefix+col+` REAL NOT NULL DEFAULT 0`)
 		}
 	}
@@ -278,7 +279,7 @@ func openDB(path string) (*store, error) {
 		_, _ = db.Exec(stmt) // fails when the column exists
 	}
 	s := &store{db: db, dataDir: filepath.Dir(path)}
-	if err := s.refreshResults("results:run-range"); err != nil {
+	if err := s.refreshResults("results:head-range"); err != nil {
 		return nil, err
 	}
 	return s, nil
@@ -777,18 +778,18 @@ func (s *store) samplesFor(jobID int64) ([]sample, error) {
 }
 
 const resultColumns = `job_id, engine, object, op, baseline, n, iters, steal,
-	ns_base, ns_head, ns_med_base, ns_med_head, ns_cv_base, ns_cv_head, ns_delta, ns_med_delta, ns_lo, ns_hi, ns_p, ns_dmin, ns_dmax,
-	b_base, b_head, b_med_base, b_med_head, b_cv_base, b_cv_head, b_delta, b_med_delta, b_lo, b_hi, b_p, b_dmin, b_dmax,
-	a_base, a_head, a_med_base, a_med_head, a_cv_base, a_cv_head, a_delta, a_med_delta, a_lo, a_hi, a_p, a_dmin, a_dmax,
-	c_base, c_head, c_med_base, c_med_head, c_cv_base, c_cv_head, c_delta, c_med_delta, c_lo, c_hi, c_p, c_dmin, c_dmax,
-	i_base, i_head, i_med_base, i_med_head, i_cv_base, i_cv_head, i_delta, i_med_delta, i_lo, i_hi, i_p, i_dmin, i_dmax`
+	ns_base, ns_head, ns_med_base, ns_med_head, ns_cv_base, ns_cv_head, ns_delta, ns_med_delta, ns_lo, ns_hi, ns_p, ns_dmin, ns_dmax, ns_hmin, ns_hmax,
+	b_base, b_head, b_med_base, b_med_head, b_cv_base, b_cv_head, b_delta, b_med_delta, b_lo, b_hi, b_p, b_dmin, b_dmax, b_hmin, b_hmax,
+	a_base, a_head, a_med_base, a_med_head, a_cv_base, a_cv_head, a_delta, a_med_delta, a_lo, a_hi, a_p, a_dmin, a_dmax, a_hmin, a_hmax,
+	c_base, c_head, c_med_base, c_med_head, c_cv_base, c_cv_head, c_delta, c_med_delta, c_lo, c_hi, c_p, c_dmin, c_dmax, c_hmin, c_hmax,
+	i_base, i_head, i_med_base, i_med_head, i_cv_base, i_cv_head, i_delta, i_med_delta, i_lo, i_hi, i_p, i_dmin, i_dmax, i_hmin, i_hmax`
 
 func metricArgs(m *metric) []any {
-	return []any{&m.Base, &m.Head, &m.MedBase, &m.MedHead, &m.CVBase, &m.CVHead, &m.Delta, &m.MedDelta, &m.Lo, &m.Hi, &m.P, &m.DMin, &m.DMax}
+	return []any{&m.Base, &m.Head, &m.MedBase, &m.MedHead, &m.CVBase, &m.CVHead, &m.Delta, &m.MedDelta, &m.Lo, &m.Hi, &m.P, &m.DMin, &m.DMax, &m.HMin, &m.HMax}
 }
 
 func metricValues(m metric) []any {
-	return []any{m.Base, m.Head, m.MedBase, m.MedHead, m.CVBase, m.CVHead, m.Delta, m.MedDelta, m.Lo, m.Hi, m.P, m.DMin, m.DMax}
+	return []any{m.Base, m.Head, m.MedBase, m.MedHead, m.CVBase, m.CVHead, m.Delta, m.MedDelta, m.Lo, m.Hi, m.P, m.DMin, m.DMax, m.HMin, m.HMax}
 }
 
 func (s *store) replaceResults(jobID int64, results []result) error {
@@ -800,7 +801,7 @@ func (s *store) replaceResults(jobID int64, results []result) error {
 		tx.Rollback()
 		return err
 	}
-	stmt, err := tx.Prepare(`INSERT INTO results(` + resultColumns + `) VALUES(` + strings.TrimSuffix(strings.Repeat("?,", 73), ",") + `)`)
+	stmt, err := tx.Prepare(`INSERT INTO results(` + resultColumns + `) VALUES(` + strings.TrimSuffix(strings.Repeat("?,", 83), ",") + `)`)
 	if err != nil {
 		tx.Rollback()
 		return err

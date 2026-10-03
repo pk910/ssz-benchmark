@@ -417,12 +417,18 @@
     };
   }
 
-  // absLabels writes each bar's value at its end and marks the base value
-  // of our own engines with a tick.
+  // headRange is the span of the single runs' head values of a metric; a
+  // result without the range recorded spans its mean only.
+  function headRange(M) {
+    if (!(M.HMax > 0)) return [M.Head, M.Head];
+    return [Math.min(M.HMin, M.Head), Math.max(M.HMax, M.Head)];
+  }
+  // absLabels marks the mean on each bar with a white tick, the base mean
+  // of our own engines with a grey one, and writes the mean beyond the bar.
   const absLabels = {
     id: 'absLabels',
     afterDatasetsDraw(c, args, opts) {
-      const ctx = c.ctx, x = c.scales.x;
+      const ctx = c.ctx, x = c.scales.x, fg = getComputedStyle(document.body).getPropertyValue('--fg').trim() || '#fff', muted = getComputedStyle(document.body).getPropertyValue('--muted').trim() || '#888';
       ctx.save();
       ctx.font = '11px ' + Chart.defaults.font.family;
       ctx.textBaseline = 'middle';
@@ -431,24 +437,30 @@
         const meta = c.getDatasetMeta(di);
         if (meta.hidden) return;
         meta.data.forEach((bar, i) => {
-          const v = ds.data[i];
-          if (v === null || v === undefined) return;
-          const h = Math.max(4, bar.height);
-          if (ds.baseVals && ds.baseVals[i] > 0) {
-            ctx.fillStyle = getComputedStyle(document.body).getPropertyValue('--fg').trim() || '#fff';
-            ctx.fillRect(x.getPixelForValue(ds.baseVals[i]) - 1, bar.y - h / 2, 2, h);
+          const r = ds.meta[i];
+          if (!r) return;
+          const M = r[opts.key], h = Math.max(4, bar.height);
+          let right = x.getPixelForValue(headRange(M)[1]);
+          if (ds.own && M.Base > 0) {
+            ctx.fillStyle = muted;
+            ctx.fillRect(x.getPixelForValue(M.Base) - 1, bar.y - h / 2, 2, h);
+            right = Math.max(right, x.getPixelForValue(M.Base));
           }
+          ctx.fillStyle = fg;
+          ctx.fillRect(x.getPixelForValue(M.Head) - 1, bar.y - h / 2, 2, h);
           ctx.fillStyle = ds.borderColor;
-          ctx.fillText(opts.fmt(v), Math.max(bar.x, ds.baseVals && ds.baseVals[i] > 0 ? x.getPixelForValue(ds.baseVals[i]) : 0) + 5, bar.y);
+          ctx.fillText(opts.fmt(M.Head), right + 5, bar.y);
         });
       });
       ctx.restore();
     },
   };
-  // absChartCfg: per operation the measured head value of every engine and
+  // absChartCfg: per operation the measured values of every engine and
   // reference library on a logarithmic axis (operations of one object span
-  // nanoseconds to seconds). An engine whose values are in another unit on
-  // this tab (the async engines on the counter tabs) is left out.
+  // nanoseconds to seconds). A bar spans the head values of the single
+  // runs, the tick on it is their mean. An engine whose values are in
+  // another unit on this tab (the async engines on the counter tabs) is
+  // left out.
   function absChartCfg(mx, m, jobID) {
     const labels = mx.ops;
     const all = [...mx.engines, ...mx.asyncEngines, ...mx.baselines].filter(e => metricFor(m, e) === m);
@@ -457,29 +469,28 @@
       const cells = labels.map(op => { const r = mx.cells[e + '/' + op]; return r && !unmeasured(r[m.key]) && r[m.key].Head > 0 ? r : null; });
       return {
         label: e + (ref ? ' (library)' : ''), type: 'bar', backgroundColor: color + (ref ? '55' : 'aa'), borderColor: color, borderWidth: 1,
-        data: cells.map(r => r ? r[m.key].Head : null),
-        baseVals: ref ? null : cells.map(r => r ? r[m.key].Base : null),
-        meta: cells, engine: e, skipNull: true,
+        data: cells.map(r => r ? headRange(r[m.key]) : null),
+        meta: cells, engine: e, own: !ref, skipNull: true,
         barPercentage: 0.85, categoryPercentage: 0.85, minBarLength: 3,
       };
     });
-    const vals = datasets.flatMap(d => d.data.filter(v => v !== null));
+    const vals = datasets.flatMap(d => d.meta.filter(Boolean).flatMap(r => [...headRange(r[m.key]), d.own && r[m.key].Base > 0 ? r[m.key].Base : r[m.key].Head]));
     return {
       data: { labels, datasets },
       plugins: [absLabels],
       options: {
         indexAxis: 'y', responsive: true, maintainAspectRatio: false, animation: false,
-        onClick: (ev, els) => { if (els.length && jobID && !mx.baselines.includes(datasets[els[0].datasetIndex].engine)) location.hash = `#/job/${jobID}/leaf/${datasets[els[0].datasetIndex].engine}/${mx.obj}/${labels[els[0].index]}`; },
+        onClick: (ev, els) => { if (els.length && jobID && datasets[els[0].datasetIndex].own) location.hash = `#/job/${jobID}/leaf/${datasets[els[0].datasetIndex].engine}/${mx.obj}/${labels[els[0].index]}`; },
         scales: {
-          x: { type: 'logarithmic', min: vals.length ? Math.min(...vals) / 2 : undefined, max: vals.length ? Math.max(...vals) * 4 : undefined, ticks: { callback: v => m.fmt(v), maxTicksLimit: 10 }, title: { display: true, text: `${m.label} ${m.unit}, logarithmic` } },
+          x: { type: 'logarithmic', min: vals.length ? Math.min(...vals) / 1.6 : undefined, max: vals.length ? Math.max(...vals) * 2.5 : undefined, ticks: { callback: v => m.fmt(v), maxTicksLimit: 10 }, title: { display: true, text: `${m.label} ${m.unit}, logarithmic` } },
           y: { grid: { display: false } },
         },
         plugins: {
           legend: { labels: { boxWidth: 12 } },
-          absLabels: { fmt: m.fmt },
+          absLabels: { fmt: m.fmt, key: m.key },
           tooltip: { callbacks: { label: ctx => {
-            const c = ctx.dataset.meta[ctx.dataIndex], M = c[m.key];
-            return ctx.dataset.baseVals ? `${ctx.dataset.label}: ${m.fmt(M.Base)} → ${m.fmt(M.Head)} (${pct(M.Delta)})` : `${ctx.dataset.label}: ${m.fmt(M.Head)}`;
+            const c = ctx.dataset.meta[ctx.dataIndex], M = c[m.key], [lo, hi] = headRange(M);
+            return `${ctx.dataset.label}: mean ${m.fmt(M.Head)} · single runs ${m.fmt(lo)} to ${m.fmt(hi)}${ctx.dataset.own ? ` · base ${m.fmt(M.Base)} (${pct(M.Delta)})` : ''} · ${c.N} runs`;
           } } },
         },
       },
@@ -505,7 +516,7 @@
       </div>
       ${j.Note ? `<p class="note">${esc(j.Note)}</p>` : ''}${d.BaselineJob ? `<p class="note">Other libraries: values from the reference job <a href="#/job/${d.BaselineJob}">#${d.BaselineJob}</a> on the same machine and payload. They cannot hash Gloas objects unless they implement progressive merkleization (PrysmSSZ does), and none but PrysmSSZ can express the Gloas state.</p>` : ''}${j.Error ? `<pre class="err">${esc(j.Error)}</pre>` : ''}
       <div class="toolbar">${metricTabs()}<div class="tabs" id="modeTabs"><button data-mode="rel" class="${chartMode === 'rel' ? 'active' : ''}" title="charts show head against base in percent">change in %</button><button data-mode="abs" class="${chartMode === 'abs' ? 'active' : ''}" title="charts show the measured values of every engine and library">measured values</button></div><span class="muted">${m.label} ${m.unit}: base → head and Δ per engine and operation. Green/red: |Δ| exceeds this operation's noise floor (p95 of the self-comparisons, at least 0.5%); bold: |Δ| ≥ 5%; grey: within noise. Click a bar or cell for every sample.</span></div>
-      ${mxs.map((mx, i) => { const bars = chartMode === 'abs' ? [...mx.engines, ...mx.asyncEngines, ...mx.baselines].filter(e => metricFor(m, e) === m).length : [...mx.engines, ...mx.asyncEngines].length; return `<h2>${objName(mx.obj)}</h2><div class="chart" style="height:${mx.ops.length * Math.max(30, bars * 14 + 8) + 80}px"><canvas id="dc${i}"></canvas></div><p class="note">${chartMode === 'abs' ? `One bar per engine and reference library per operation: the measured ${m.label.toLowerCase()} of the head, on a logarithmic axis because the operations of one object span several orders of magnitude. The white tick on a bar of our own engines is the base value. Paler bars are the other libraries, from the latest reference job.` : `One bar per engine (colours in the legend) per operation: the bar spans the ${m.label.toLowerCase()} deltas of the single runs (each run compares head and base measured minutes apart), the white tick and the number are the mean over the runs. A long bar means the runs disagreed. The grey band behind each row is that operation's noise floor on this machine: how far two measurements of the same code differ (p95 over the master-vs-master noise jobs, at least 0.5%). A result inside the band is not a change. Async engines appear only on HashTreeRoot.`}</p>${matrixTable(mx, m, j.ID)}`; }).join('') || '<p class="muted">no results yet</p>'}
+      ${mxs.map((mx, i) => { const bars = chartMode === 'abs' ? [...mx.engines, ...mx.asyncEngines, ...mx.baselines].filter(e => metricFor(m, e) === m).length : [...mx.engines, ...mx.asyncEngines].length; return `<h2>${objName(mx.obj)}</h2><div class="chart" style="height:${mx.ops.length * Math.max(30, bars * 14 + 8) + 80}px"><canvas id="dc${i}"></canvas></div><p class="note">${chartMode === 'abs' ? `One bar per engine and reference library per operation, in measured ${m.label.toLowerCase()}: the bar spans the values of the single runs, the white tick and the number are their mean, the grey tick on our own engines is the base's mean. The axis is logarithmic because the operations of one object span several orders of magnitude, so a bar is short when the runs agree. Paler bars are the other libraries, from the latest reference job.` : `One bar per engine (colours in the legend) per operation: the bar spans the ${m.label.toLowerCase()} deltas of the single runs (each run compares head and base measured minutes apart), the white tick and the number are the mean over the runs. A long bar means the runs disagreed. The grey band behind each row is that operation's noise floor on this machine: how far two measurements of the same code differ (p95 over the master-vs-master noise jobs, at least 0.5%). A result inside the band is not a change. Async engines appear only on HashTreeRoot.`}</p>${matrixTable(mx, m, j.ID)}`; }).join('') || '<p class="muted">no results yet</p>'}
       ${d.Noise && d.Noise.Jobs ? `<p class="note">Noise floor over ${d.Noise.Jobs} self-comparisons: median |Δ time| ${d.Noise.MedianAbs.toFixed(2)}%, p95 ${d.Noise.P95Abs.toFixed(2)}%.</p>` : ''}
       <details><summary>Raw files</summary><p class="mono">${(d.Files || []).map(f => `<a href="/raw/${j.ID}/${f}" target="_blank">${f}</a>`).join(' · ')}</p></details>`;
     bindMetricTabs(() => viewJob(id));

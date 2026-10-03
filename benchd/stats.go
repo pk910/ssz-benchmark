@@ -155,6 +155,14 @@ func lgamma(x float64) float64 {
 // compareMetric folds the per-side samples of one quantity into a metric.
 func compareMetric(base, head []float64) metric {
 	m := metric{Base: mean(base), Head: mean(head), MedBase: median(base), MedHead: median(head)}
+	for i, v := range head {
+		if i == 0 || v < m.HMin {
+			m.HMin = v
+		}
+		if i == 0 || v > m.HMax {
+			m.HMax = v
+		}
+	}
 	if len(base) == 0 {
 		// Baseline leaf: head only.
 		m.CVHead = cv(head, m.Head)
