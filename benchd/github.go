@@ -499,7 +499,13 @@ func renderCheck(j *job, results []result, nf noiseFloor, link, state string) (s
 		sb.WriteString("\n</details>\n")
 	}
 	if link != "" {
-		fmt.Fprintf(&sb, "\n[Charts, every sample and the other SSZ libraries](%s)\n", link)
+		fmt.Fprintf(&sb, "\n[Charts, every sample and the other SSZ libraries](%s)", link)
+		if j.PR != 0 {
+			if i := strings.Index(link, "#/job/"); i >= 0 {
+				fmt.Fprintf(&sb, " · [every measured commit of this pull request](%s#/pr/%d)", link[:i], j.PR)
+			}
+		}
+		sb.WriteString("\n")
 	}
 	title := strings.Join(titleParts, " · ")
 	if title == "" {

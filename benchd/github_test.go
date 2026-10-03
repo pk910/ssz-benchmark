@@ -135,7 +135,7 @@ func TestCheckReporter(t *testing.T) {
 		// the pre-reporter job and the first head were both waiting
 		t.Fatalf("superseded %v %v", skipped, err)
 	}
-	second := &job{Kind: kindCommit, Branch: "feature", HeadSHA: strings.Repeat("2", 40), BaseSHA: strings.Repeat("b", 40), BaseRef: "master"}
+	second := &job{Kind: kindCommit, Branch: "feature", HeadSHA: strings.Repeat("2", 40), BaseSHA: strings.Repeat("b", 40), BaseRef: "master", PR: 77}
 	if err := db.insertJob(second); err != nil {
 		t.Fatal(err)
 	}
@@ -168,7 +168,7 @@ func TestCheckReporter(t *testing.T) {
 	if p.Status != "in_progress" || !strings.Contains(p.Output.Title, "Codegen -10.00%") || !strings.Contains(p.Output.Title, "provisional") {
 		t.Fatalf("provisional check %+v", p.Output.Title)
 	}
-	for _, want := range []string{"| Codegen | -10.00% |", "<summary><b>FuluState</b></summary>", "| Unmarshal |", "**-10.00%**", "https://bench.example/#/job/"} {
+	for _, want := range []string{"| Codegen | -10.00% |", "<summary><b>FuluState</b></summary>", "| Unmarshal |", "**-10.00%**", "https://bench.example/#/job/", "(https://bench.example/#/pr/77)"} {
 		if !strings.Contains(p.Output.Summary, want) {
 			t.Fatalf("summary lacks %q:\n%s", want, p.Output.Summary[:min(1500, len(p.Output.Summary))])
 		}
