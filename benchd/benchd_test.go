@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -674,5 +675,17 @@ func TestStoredBaseRuns(t *testing.T) {
 		{Side: "base", Extra: map[string]float64{"from": 7}}, {Side: "base", Extra: map[string]float64{"from": 7}}, {Side: "base"}, {Side: "head"}})
 	if !strings.Contains(note, "2 of 3 base runs") || !strings.Contains(note, "#7") {
 		t.Fatalf("note %q", note)
+	}
+}
+
+func TestResultLines(t *testing.T) {
+	var buf bytes.Buffer
+	n := 0
+	w := &resultLines{buf: &buf, fn: func() { n++ }}
+	for _, chunk := range []string{"goos: linux\nBenchmarkReal/A/B/C \t 1\t 5 ns", "/op\nBenchmarkReal/A/B/D \t 1\t 7 ns/op\nPASS\n"} {
+		_, _ = w.Write([]byte(chunk))
+	}
+	if n != 2 || !strings.Contains(buf.String(), "PASS") {
+		t.Fatalf("%d result lines, output %q", n, buf.String())
 	}
 }

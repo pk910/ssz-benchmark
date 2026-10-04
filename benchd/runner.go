@@ -41,6 +41,9 @@ type runner struct {
 	goVersionCached string
 
 	// What the passes of the running job measured, for the diagnostic runs.
+	// onResult is called for every result line a benchmark process prints.
+	onResult func()
+
 	jobSamples []sample
 	jobIters   map[string]int
 	jobLeaves  map[string]leaf
@@ -814,8 +817,21 @@ func (r *runner) measure(ctx context.Context, j *job, head, base *side, jobDir s
 			}
 			done := 0
 			for _, g := range groups {
-				r.setPhase(j, fmt.Sprintf("pass %d (round %d, seed %s): %s/%s %d/%d", passes+1, round+1, seed, g.engine, g.object, done+1, len(leaves)))
-				r.setProgress(progress{Pass: passes + 1, Round: round + 1, Seed: seed, Leaf: done + 1, Leaves: len(leaves), Passes: passes, Measured: measured + time.Since(passStart), LastPass: lastPass, PlannedPasses: planned()})
+				// The position inside the group advances with every result
+				// line the benchmark process prints; a group with a base
+				// runs once per side.
+				lines := 0
+				report := func() {
+					at := done + 1 + lines/max(1, len(order))
+					if g.leaves[0].Baseline {
+						at = done + 1 + lines
+					}
+					at = min(at, done+len(g.leaves))
+					r.setPhase(j, fmt.Sprintf("pass %d (round %d, seed %s): %s/%s %d/%d", passes+1, round+1, seed, g.engine, g.object, at, len(leaves)))
+					r.setProgress(progress{Pass: passes + 1, Round: round + 1, Seed: seed, Leaf: at, Leaves: len(leaves), Passes: passes, Measured: measured + time.Since(passStart), LastPass: lastPass, PlannedPasses: planned()})
+				}
+				r.onResult = func() { lines++; report() }
+				report()
 				sides := order
 				if g.leaves[0].Baseline {
 					sides = []*side{head}
@@ -852,6 +868,7 @@ func (r *runner) measure(ctx context.Context, j *job, head, base *side, jobDir s
 					}
 					r.jobSamples = append(r.jobSamples, bySide[s]...)
 				}
+				r.onResult = nil
 				done += len(g.leaves)
 				if ctx.Err() != nil {
 					return passes, ctx.Err()
@@ -1019,6 +1036,32 @@ func (r *runner) diagnose(ctx context.Context, j *job, head, base *side, jobDir 
 			}
 		}
 	}
+}
+
+// resultLines collects the output of a benchmark process and calls fn for
+// every result line as it arrives.
+type resultLines struct {
+	buf  *bytes.Buffer
+	fn   func()
+	line []byte
+}
+
+func (w *resultLines) Write(p []byte) (int, error) {
+	w.buf.Write(p)
+	if w.fn == nil {
+		return len(p), nil
+	}
+	for _, c := range p {
+		if c != '\n' {
+			w.line = append(w.line, c)
+			continue
+		}
+		if bytes.HasPrefix(w.line, []byte("Benchmark")) && bytes.Contains(w.line, []byte("ns/op")) {
+			w.fn()
+		}
+		w.line = w.line[:0]
+	}
+	return len(p), nil
 }
 
 // counterPairs are the names of the two pairs of further counters the
@@ -1203,7 +1246,7 @@ func (r *runner) runBinary(ctx context.Context, s *side, pkg, seed, pattern, ben
 	}
 	cmd.Env = append(cmd.Env, env...)
 	var out, errb bytes.Buffer
-	cmd.Stdout, cmd.Stderr = &out, &errb
+	cmd.Stdout, cmd.Stderr = &resultLines{buf: &out, fn: r.onResult}, &errb
 	before := r.cpuSteal()
 	err := cmd.Run()
 	steal := r.cpuSteal() - before
