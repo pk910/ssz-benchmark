@@ -17,5 +17,3 @@ require (
 )
 
 replace benchkit => ../../kit
-
-replace github.com/karalabe/ssz => ./ssz

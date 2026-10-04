@@ -42,7 +42,7 @@ type config struct {
 	ghAppID          string
 	ghInstallationID string
 	ghAppKey         string
-	baselineInterval time.Duration
+	libPoll          time.Duration
 	counterPairs     bool    // count a rotating pair of further hardware counters in every run
 	outlierPct       float64 // re-measure a sample this far off the leaf's running median
 	target           time.Duration
@@ -79,7 +79,7 @@ func main() {
 	flag.StringVar(&seeds, "seeds", "101,202,303,404", "linker layout seeds, one build per seed and side")
 	flag.StringVar(&cfg.benchTime, "benchtime", "300ms", "benchtime used once per leaf to fix its iteration count")
 	flag.IntVar(&cfg.minIters, "min-iters", 2, "lowest fixed iteration count per measurement")
-	flag.DurationVar(&cfg.baselineInterval, "baseline-interval", 7*24*time.Hour, "how often the reference libraries are measured again (also whenever their modules change; 0: never)")
+	flag.DurationVar(&cfg.libPoll, "lib-poll", 15*time.Minute, "how often the repositories of the other libraries are checked for new commits and releases")
 	flag.StringVar(&cfg.sandboxUser, "sandbox-user", os.Getenv("SANDBOX_USER"), "unprivileged user the builds and benchmark processes run as (env SANDBOX_USER); empty: as the daemon, and no fork is measured")
 	flag.StringVar(&cfg.approveLabel, "approve-label", "benchmark", "label that approves measuring a fork pull request at the head it is applied to (delivered by the GitHub webhook)")
 	flag.StringVar(&cfg.publicURL, "public-url", os.Getenv("PUBLIC_URL"), "public root of the web UI, used in links from GitHub (env PUBLIC_URL)")
@@ -186,6 +186,13 @@ func main() {
 		}
 		if err := db.migrateStorage(filepath.Join(cfg.dataDir, "benchd.db")); err != nil {
 			log.Fatalf("storage migration: %v", err)
+		}
+		// The reference job is gone; one still waiting is not run.
+		if _, err := db.db.Exec(`UPDATE jobs SET state = ?, error = 'replaced by the jobs of the single libraries' WHERE kind = ? AND state = ?`, stateSkipped, kindBaseline, stateQueued); err != nil {
+			log.Fatal(err)
+		}
+		if err := db.backfillCommitValues(); err != nil {
+			log.Fatalf("pooled values: %v", err)
 		}
 		compressAllJobLogs(cfg.dataDir)
 		r := &runner{cfg: cfg, store: local, git: git, name: cfg.name, sched: sched}

@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"math"
@@ -515,5 +516,91 @@ func TestExtraFigures(t *testing.T) {
 	env := strings.Join(r.passEnv("CodegenAsync", 0, "101"), " ")
 	if !strings.Contains(env, "BENCH_ALL_THREADS=1") || !strings.Contains(env, "BENCH_MEMORY=1") {
 		t.Fatalf("env %s", env)
+	}
+}
+
+func TestLibraryTargetsAndPooledValues(t *testing.T) {
+	tags := map[string]string{"v1.0.0": "a", "v2.0.0": "b", "v2.1.0": "c", "v2.10.1": "d", "v2.9.9": "e", "v3.0.0-rc1": "f"}
+	if name, ok := highestTag(tags, `^v2\.\d+\.\d+$`); !ok || name != "v2.10.1" {
+		t.Fatalf("highest 2.x tag %q", name)
+	}
+	if m := pseudoVersion.FindStringSubmatch("v0.0.0-20260703104215-9be4f5c6a334"); m == nil || m[1] != "9be4f5c6a334" {
+		t.Fatalf("pseudo-version commit %v", m)
+	}
+	db, err := openDB(filepath.Join(t.TempDir(), "t.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	// A commit measured as the head of one job and the base of another:
+	// its value pools both.
+	run := func(j *job, side string, ns ...float64) {
+		if err := db.insertJob(j); err != nil {
+			t.Fatal(err)
+		}
+		var samples []sample
+		for i, v := range ns {
+			samples = append(samples, sample{JobID: j.ID, Side: side, Engine: "Codegen", Object: "Block", Op: "Marshal", Seed: fmt.Sprint(i), Pass: i, Iters: 1, Ns: v, Cycles: v * 3, Instrs: v * 5})
+		}
+		if err := db.insertSamples(samples); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := db.db.Exec(`UPDATE jobs SET state = ?, harness = 'h', finished = 1 WHERE id = ?`, stateDone, j.ID); err != nil {
+			t.Fatal(err)
+		}
+		done, _ := db.getJob(j.ID)
+		if err := db.updateCommitValues(done); err != nil {
+			t.Fatal(err)
+		}
+	}
+	run(&job{Kind: kindCommit, Branch: "master", HeadSHA: "c1", BaseSHA: "c0"}, "head", 100, 102)
+	run(&job{Kind: kindCommit, Branch: "master", HeadSHA: "c2", BaseSHA: "c1"}, "base", 104, 106)
+	vals, err := db.commitValues(subjectDynSSZ, "c1")
+	if err != nil || len(vals) != 1 || vals[0].N != 4 || vals[0].Ns != 103 || vals[0].Cycles != 309 {
+		t.Fatalf("pooled value of c1: %+v, %v", vals, err)
+	}
+	if vals, _ := db.commitValues(subjectDynSSZ, "c2"); len(vals) != 0 {
+		t.Fatalf("c2 has head samples of nobody: %+v", vals)
+	}
+	// A library: its release has a value, its master commit none yet, so
+	// the page shows the release value under both modes' fallbacks.
+	lib := &librarySubjects[1]
+	run(libJob(lib, "r1", []string{targetRelease}, []string{"v2.0.0"}, ""), "head", 50, 52)
+	if err := db.setTarget(targetState{Subject: lib.Name, Name: targetRelease, SHA: "r1", Label: "v2.0.0"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.setTarget(targetState{Subject: lib.Name, Name: targetMaster, SHA: "m9", Label: "main"}); err != nil {
+		t.Fatal(err)
+	}
+	w := &webServer{cfg: &config{mainBranch: "master", github: "o/r"}, db: db}
+	targets, _ := db.targets()
+	if sv := w.valuesOf(lib.Name, targetRelease, targets); sv == nil || sv.SHA != "r1" || sv.Wanted != "" || len(sv.values) != 1 || sv.values[0].Ns != 51 {
+		t.Fatalf("release values %+v", sv)
+	}
+	if sv := w.valuesOf(lib.Name, targetMaster, targets); sv == nil || len(sv.values) != 0 {
+		t.Fatalf("master has values without a job: %+v", sv)
+	}
+	if rs := w.libraryResults(); len(rs) != 1 || !rs[0].Baseline || rs[0].Ns.Head != 51 {
+		t.Fatalf("library results %+v", rs)
+	}
+	// The same commit is not queued twice for one adapter version; a new
+	// adapter version measures it again.
+	if ok, _ := db.libJobExists(lib.Name, "r1", "h"); !ok {
+		t.Fatal("the finished job of r1 is not seen")
+	}
+	if ok, _ := db.libJobExists(lib.Name, "r1", "h2"); ok {
+		t.Fatal("a job of another adapter version counts")
+	}
+}
+
+func TestResolveTargetsLive(t *testing.T) {
+	if os.Getenv("BENCH_LIVE") == "" {
+		t.Skip("needs the network")
+	}
+	for i := range librarySubjects {
+		states, err := resolveTargets(context.Background(), &librarySubjects[i])
+		t.Logf("%s: %+v %v", librarySubjects[i].Name, states, err)
+		if err != nil {
+			t.Fail()
+		}
 	}
 }

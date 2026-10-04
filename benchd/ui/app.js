@@ -72,6 +72,7 @@
   const allThreads = r => !!(r && r.Extra && r.Extra.threads);
   const metricFor = (m, engine, r) => engine.endsWith('Async') && (m.key === 'Cycles' || m.key === 'Instrs') && !allThreads(r) ? METRICS.ns : m;
   let repo = '';
+  let subjectRepos = {}; // library -> repository URL, from the status
   const charts = [];
 
   /* ---------- helpers ---------- */
@@ -174,7 +175,9 @@
   }
   const ciText = m => `<span class="ci">[${pct(m.Lo, 1)}, ${pct(m.Hi, 1)}]</span>`;
   const chip = j => `<span class="chip ${j.State}">${j.State}</span> <span class="chip ${j.Kind}">${j.Kind}</span>`;
-  const commitLink = sha => sha === 'baselines' ? '<span class="muted">reference libraries</span>' : `<a class="mono" href="${repo}/commit/${sha}" target="_blank" rel="noopener">${short(sha)}</a>`;
+  // commitLink links a commit in the repository of its library (ours when
+  // none is named).
+  const commitLink = (sha, subject) => !sha ? '<span class="muted">-</span>' : sha === 'baselines' ? '<span class="muted">reference libraries</span>' : `<a class="mono" href="${(subject && subjectRepos[subject]) || repo}/commit/${sha}" target="_blank" rel="noopener">${short(sha)}</a>`;
   const prLink = j => j.PR ? ` · <a href="${repo}/pull/${j.PR}" target="_blank" rel="noopener">PR #${j.PR}</a> <a href="#/pr/${j.PR}" title="every measured head of this pull request">history</a>` : '';
   const sortLeaf = (a, b) => rank(OBJECTS, a.Object) - rank(OBJECTS, b.Object) || a.Object.localeCompare(b.Object)
     || rank(OPS, a.Op) - rank(OPS, b.Op) || a.Op.localeCompare(b.Op) || rank(ENGINES, a.Engine) - rank(ENGINES, b.Engine);
@@ -256,6 +259,7 @@
     try {
       const s = await get('/api/status');
       repo = s.Repo || repo;
+      subjectRepos = s.Subjects || subjectRepos;
       const active = (s.Runners || []).filter(r => r.Current && !r.Down);
       if (s.DaemonDown) {
         liveEl.innerHTML = `<span class="err">controller daemon not reporting</span> · ${s.Queued} queued`;
@@ -276,8 +280,8 @@
         const sums = row.Summaries ? `<td><div class="chips">${engineTotals(row.Summaries).map(s => `<span class="chip" title="geomean of head/base ${s.Cycles ? 'cycles' : 'time'} over ${s.N} operations of every object">${s.Engine} <b>${pct(s.Geomean, 1)}</b></span>`).join('')}</div></td>` : (opts.summaries ? '<td></td>' : '');
         const fin = j.State === 'queued' ? `${j.Priority ? 'priority ' + j.Priority + ' · ' : ''}${ago(j.Created)}` : j.State === 'running' ? `since ${when(j.Started)}` : when(j.Finished);
         return `<tr><td><a href="#/job/${j.ID}">${j.ID}</a></td><td>${chip(j)}</td><td class="mono">${esc(j.Branch)}${prLink(j)}</td>` +
-          `<td>${commitLink(j.HeadSHA)} <span class="muted desc" style="display:inline-block;vertical-align:bottom">${esc(j.HeadDesc).replace(/^[0-9a-f]{7} /, '')}</span></td>` +
-          `<td>${commitLink(j.BaseSHA)} <span class="muted">${esc(j.BaseRef)}</span></td><td class="mono muted">${esc(j.Runner || '')}</td>${sums}<td class="num">${j.Passes || ''}</td><td class="num">${j.Seconds ? dur(j.Seconds) : ''}</td>` +
+          `<td>${commitLink(j.HeadSHA, j.Subject)} <span class="muted desc" style="display:inline-block;vertical-align:bottom">${esc(j.HeadDesc).replace(/^[0-9a-f]{7} /, '')}</span></td>` +
+          `<td>${commitLink(j.BaseSHA, j.Subject)} <span class="muted">${esc(j.BaseRef)}</span></td><td class="mono muted">${esc(j.Runner || '')}</td>${sums}<td class="num">${j.Passes || ''}</td><td class="num">${j.Seconds ? dur(j.Seconds) : ''}</td>` +
           `<td class="muted">${fin}${j.Error ? ` <span class="err" title="${esc(j.Error)}">error</span>` : ''}</td></tr>`;
       }).join('') + '</tbody></table>';
   }
@@ -700,13 +704,13 @@
     app.innerHTML = `<h1>Job #${j.ID} ${chip(j)}${d.Live ? '<span class="chip running">live</span>' : ''}</h1>
       ${live}
       <div class="cards">
-        <div class="card"><h3>Head</h3><div class="mono">${commitLink(j.HeadSHA)} ${esc(j.HeadDesc).replace(/^[0-9a-f]{7} /, '')}</div><div class="sub mono">${esc(j.Branch)}${prLink(j)}</div></div>
-        <div class="card"><h3>Base (${esc(j.BaseRef)})</h3><div class="mono">${commitLink(j.BaseSHA)} ${esc(j.BaseDesc).replace(/^[0-9a-f]{7} /, '')}</div>${j.BaseSHA !== j.HeadSHA ? `<div class="sub"><a href="${repo}/compare/${j.BaseSHA}...${j.HeadSHA}" target="_blank" rel="noopener">diff on GitHub</a></div>` : ''}</div>
+        <div class="card"><h3>Head</h3><div class="mono">${commitLink(j.HeadSHA, j.Subject)} ${esc(j.HeadDesc).replace(/^[0-9a-f]{7} /, '')}</div><div class="sub mono">${esc(j.Branch)}${prLink(j)}</div></div>
+        <div class="card"${j.BaseSHA ? '' : ' style="display:none"'}><h3>Base (${esc(j.BaseRef)})</h3><div class="mono">${commitLink(j.BaseSHA)} ${esc(j.BaseDesc).replace(/^[0-9a-f]{7} /, '')}</div>${j.BaseSHA !== j.HeadSHA ? `<div class="sub"><a href="${repo}/compare/${j.BaseSHA}...${j.HeadSHA}" target="_blank" rel="noopener">diff on GitHub</a></div>` : ''}</div>
         <div class="card"><h3>Measurement</h3><div class="mono">${j.Passes} passes${j.Seconds ? ', ' + dur(j.Seconds) : ''}${runs}</div><div class="sub">runner ${esc(j.Runner || '-')}</div><div class="sub">${esc(j.GoVersion)} · harness ${j.Harness}${d.Steal ? ` · ${d.Steal} steal ticks (wake-ups, within the limit)` : ' · no steal'}</div><div class="sub">queued ${when(j.Created)} · finished ${when(j.Finished)}</div></div>
         ${buildCard(d.Builds)}
         <div class="card"><h3>Ratio per engine <span class="muted" style="text-transform:none">(cycles when counted, else time)</span></h3><div class="chips">${engineTotals(d.Summaries || []).map(x => `<span class="chip" title="geomean of head/base ${x.Cycles ? 'cycles' : 'time'} over ${x.N} operations of every object">${x.Engine} <b>${pct(x.Geomean, 1)}</b></span>`).join('') || '<span class="muted">-</span>'}</div><details class="small" style="margin-top:6px"><summary>per object</summary><div class="chips" style="margin-top:4px">${(d.Summaries || []).map(x => `<span class="chip">${x.Engine}·${x.Object} <b>${pct(x.Geomean, 1)}</b></span>`).join('')}</div></details></div>
       </div>
-      ${j.Note ? `<p class="note">${esc(j.Note)}</p>` : ''}${d.BaselineJob ? `<p class="note">Other libraries: values from the reference job <a href="#/job/${d.BaselineJob}">#${d.BaselineJob}</a> on the same machine and payload. They cannot hash Gloas objects unless they implement progressive merkleization (PrysmSSZ does), and none but PrysmSSZ can express the Gloas state.</p>` : ''}${j.Error ? `<pre class="err">${esc(j.Error)}</pre>` : ''}
+      ${j.Note ? `<p class="note">${esc(j.Note)}</p>` : ''}${d.Subject === 'dynamic-ssz' ? `<p class="note">Other libraries: their pooled values at their latest release, measured by their own jobs on the same machine and payload (see <a href="#/ops">Operations</a>). They cannot hash Gloas objects unless they implement progressive merkleization.</p>` : ''}${j.Error ? `<pre class="err">${esc(j.Error)}</pre>` : ''}
       <div class="toolbar">${metricTabs()}<div class="tabs" id="modeTabs"><button data-mode="rel" class="${chartMode === 'rel' ? 'active' : ''}" title="charts show head against base in percent">change in %</button><button data-mode="abs" class="${chartMode === 'abs' ? 'active' : ''}" title="charts show the measured values">measured values</button></div>${chartMode === 'abs' ? `<label class="check"><input type="checkbox" id="chartLibs" ${chartLibs ? 'checked' : ''}> with the other libraries</label>` : ''}<span class="muted">${m.label} ${m.unit}: base → head and Δ per engine and operation. Δ is the median over the passes. Green/red: a change (outside the band, most passes agree); bold: |Δ| ≥ 5%; grey: no change. Click a bar or cell for every sample.</span></div>
       ${mxs.map((mx, i) => { const bars = chartMode === 'abs' ? absRowBars(mx, m) : mx.engines.length, rows = chartRows(mx, m, chartMode === 'abs').length; return `<h2>${objName(mx.obj)}</h2><div class="chart" style="height:${rows * Math.max(30, bars * 14 + 8) + 80}px"><canvas id="dc${i}"></canvas></div><p class="note">${chartMode === 'abs' ? `One bar per engine${chartLibs ? ' and reference library' : ''} per operation, in measured ${m.label.toLowerCase()}: the thick body is the middle half of the single runs' values and the thin line reaches to the lowest and the highest run, the white tick and the number are their mean, the grey tick on our own engines is the base's mean. The axis is logarithmic because the operations of one object span several orders of magnitude, so a bar is short when the runs agree.${chartLibs ? ' Paler bars are the other libraries, from the latest reference job.' : ''}` : `One candle per engine (colours in the legend) per operation. The thick body is the middle half of the per-pass ${m.label.toLowerCase()} deltas (each pass links head and base with another function layout and measures them minutes apart), the thin line reaches to the lowest and the highest pass, the white tick and the number are the median. A single pass far off shows as a long thin line and leaves the body and the scale alone; an arrow head means the line continues beyond the chart. The grey band behind each row is what does not count as a change there: the operation's noise floor on this machine, widened where the passes scatter. A result is a change when its median lies outside the band and at least three quarters of the passes agree. The async engines have a row of their own below the operation they run, in the colour of their engine. On the counter tabs that row shows the cycles and instructions of all their threads together (the total work, not the latency), or time for a job measured before all threads were counted.`}</p>${matrixTable(mx, m, j.ID)}`; }).join('') || '<p class="muted">no results yet</p>'}
       ${d.Noise && d.Noise.Jobs ? `<p class="note">Noise floor over ${d.Noise.Jobs} self-comparisons: median |Δ time| ${d.Noise.MedianAbs.toFixed(2)}%, p95 ${d.Noise.P95Abs.toFixed(2)}%.</p>` : ''}
@@ -786,29 +790,45 @@
 
   // The engines shown in the operations table; remembered per browser.
   let opsHidden = new Set(JSON.parse(localStorage.getItem('opsHidden') || '[]'));
+  // Which commit of every library the operations page shows: the head of
+  // its main branch, or its latest release. Remembered per browser.
+  let opsMode = localStorage.getItem('opsMode') === 'release' ? 'release' : 'master';
+  const shortRef = sha => /^[0-9a-f]{40}$/.test(sha) ? sha.slice(0, 12) : sha;
+
   async function viewOps() {
-    const rows = await get('/api/ops');
-    const m = METRICS[metric];
+    const d = await get('/api/ops?mode=' + opsMode);
+    const rows = d.Rows, m = METRICS[metric];
     // One column per engine or library; its async variant has a row of
     // its own below the operation it runs.
-    const all = sortEngines([...new Set(rows.flatMap(r => r.Engines).map(e => e.replace(/Async$/, '')))]);
+    const all = sortEngines([...new Set(d.Engines.map(e => e.replace(/Async$/, '')))]);
     const engines = all.filter(e => !opsHidden.has(e));
     const cell = (r, e) => {
-      const l = r.Latest[e], t = r.Trends[e];
-      if (!l) return '<td class="grp muted">-</td>';
-      const em = metricFor(m, e);
-      if (unmeasured(l[em.key])) return '<td class="grp muted">-</td>';
-      return `<td class="grp"><b>${em.fmt(l[em.key].Head)}</b>${t && t.N >= 3 ? ` <span class="ci">trend ${pct(t.SlopePct30d, 1)}/30d</span>` : ''}</td>`;
+      const c = r.Cells[e];
+      if (!c) return '<td class="grp muted">-</td>';
+      const em = metricFor(m, e), v = c[em.key];
+      if (!(v > 0) && em.key !== 'Bytes' && em.key !== 'Allocs') return '<td class="grp muted">-</td>';
+      const rel = c.Rel && c.Rel[em.key] !== undefined ? c.Rel[em.key] : null;
+      const cv = em.key === 'Ns' ? c.CVNs : em.key === 'Cycles' ? c.CVCycles : 0;
+      return `<td class="grp"><a href="#/job/${c.JobID}/leaf/${e}/${r.Object}/${r.Op}" title="${c.N} runs pooled${cv ? `, spread ${cv.toFixed(1)}%` : ''}"><b>${em.fmt(v)}</b></a>${rel !== null ? ` <span class="ci ${Math.abs(rel) < 1 ? '' : rel < 0 ? 'better' : 'worse'}" title="master against the latest release of the same library">${pct(rel, 1)} vs release</span>` : ''}</td>`;
     };
-    const asyncRow = r => r.Engines.some(e => e.endsWith('Async'))
+    const asyncRow = r => Object.keys(r.Cells).some(e => e.endsWith('Async'))
       ? `<tr><td><span class="muted">${r.Object}</span></td><td class="mono muted">${r.Op} (async${metricFor(m, 'Async') !== m ? ', time' : ''})</td>${engines.map(e => cell(r, e + 'Async')).join('')}</tr>` : '';
+    const subjectChip = s => {
+      const link = /^[0-9a-f]{12,40}$/.test(s.SHA) ? `<a href="${s.Repo}/commit/${s.SHA}" target="_blank" rel="noopener" class="mono">${shortRef(s.SHA)}</a>` : `<span class="mono">${esc(s.SHA)}</span>`;
+      const state = !s.JobID ? ' · <span class="muted">not measured</span>' : ` · <a href="#/job/${s.JobID}">job #${s.JobID}</a>`;
+      const wanted = s.Wanted ? ` · <span class="worse" title="the target points to ${esc(s.Wanted)}, which is not measured yet or does not build; an older commit is shown">stale</span>` : '';
+      return `<div class="card"><h3>${esc(s.Name)}${s.Target === 'fixed' ? ' <span class="muted" style="text-transform:none">(fixed version)</span>' : ''}</h3><div class="sub">${esc(s.Label)} · ${link}${state}${wanted}</div></div>`;
+    };
     app.innerHTML = `<h1>Operations</h1>
-      <div class="toolbar">${metricTabs()}<span class="muted">latest head value per engine and library; master trend over 30 days once three master points exist</span></div>
+      <div class="toolbar">${metricTabs()}<div class="tabs" id="opsMode"><button data-mode="master" class="${opsMode === 'master' ? 'active' : ''}" title="every library at the head of its main branch">master</button><button data-mode="release" class="${opsMode === 'release' ? 'active' : ''}" title="every library at its latest release">release</button></div>
+        <span class="muted">${opsMode === 'master' ? 'every library at the head of its main branch, with the change against its latest release' : 'every library at its latest release'}; values pooled over all runs of that commit and refined in idle time</span></div>
+      <div class="cards">${d.Subjects.map(subjectChip).join('')}</div>
       <div class="toolbar chips" id="engsel">${all.map(e => `<a href="#" data-e="${e}" class="chip ${opsHidden.has(e) ? '' : 'commit'}" title="show or hide this column">${e}</a>`).join(' ')}<a href="#" data-e="*" class="chip">all</a><a href="#" data-e="-" class="chip">ours only</a></div>
       <div style="overflow-x:auto"><table><thead><tr><th>Object</th><th>Operation</th>${engines.map(e => `<th class="grp">${e}</th>`).join('')}</tr></thead><tbody>
       ${rows.map((r, i) => `<tr><td>${i > 0 && rows[i - 1].Object === r.Object ? `<span class="muted">${r.Object}</span>` : objName(r.Object)}</td><td class="mono"><a href="#/op/${r.Object}/${r.Op}">${r.Op}</a></td>${engines.map(e => cell(r, e)).join('')}</tr>${asyncRow(r)}`).join('')}
       </tbody></table></div>`;
     bindMetricTabs(viewOps);
+    document.querySelectorAll('#opsMode button').forEach(b => b.onclick = () => { opsMode = b.dataset.mode; localStorage.setItem('opsMode', opsMode); viewOps(); });
     document.querySelectorAll('#engsel a').forEach(a => a.onclick = (ev => {
       ev.preventDefault();
       const e = a.dataset.e;
@@ -946,7 +966,7 @@
       ${body}
       <h2>Measured commits <span class="muted small">click a pair to compare its two sides</span></h2>
       <table><thead><tr><th>Job</th><th>Kind</th><th>Branch</th><th>Head</th><th>Base</th><th>Finished</th><th></th></tr></thead><tbody>
-      ${d.Jobs.filter(j => j.State === 'done').map(j => `<tr><td><a href="#/job/${j.ID}">#${j.ID}</a></td><td><span class="chip ${j.Kind}">${j.Kind}</span></td><td class="mono">${esc(j.Branch)}</td><td>${commitLink(j.HeadSHA)} <span class="muted">${esc(j.HeadDesc).replace(/^[0-9a-f]{7} /, '')}</span></td><td>${commitLink(j.BaseSHA)} <span class="muted">${esc(j.BaseRef)}</span></td><td class="muted">${when(j.Finished)}</td><td><a href="#/compare?a=${j.BaseSHA}&b=${j.HeadSHA}">compare</a></td></tr>`).join('')}
+      ${d.Jobs.filter(j => j.State === 'done').map(j => `<tr><td><a href="#/job/${j.ID}">#${j.ID}</a></td><td><span class="chip ${j.Kind}">${j.Kind}</span></td><td class="mono">${esc(j.Branch)}</td><td>${commitLink(j.HeadSHA)} <span class="muted">${esc(j.HeadDesc).replace(/^[0-9a-f]{7} /, '')}</span></td><td>${commitLink(j.BaseSHA, j.Subject)} <span class="muted">${esc(j.BaseRef)}</span></td><td class="muted">${when(j.Finished)}</td><td><a href="#/compare?a=${j.BaseSHA}&b=${j.HeadSHA}">compare</a></td></tr>`).join('')}
       </tbody></table>`;
     document.getElementById('cmp').onsubmit = ev => { ev.preventDefault(); const f = ev.target; location.hash = `#/compare?a=${encodeURIComponent(f.a.value.trim())}&b=${encodeURIComponent(f.b.value.trim())}`; };
     bindMetricTabs(() => viewCompare(params));

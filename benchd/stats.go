@@ -390,10 +390,6 @@ func leafLess(o1, p1, e1, o2, p2, e2 string) bool {
 	return e1 < e2
 }
 
-func sortLeaves(xs [][2]string) {
-	sort.Slice(xs, func(i, j int) bool { return leafLess(xs[i][0], xs[i][1], "", xs[j][0], xs[j][1], "") })
-}
-
 // sortLeafList orders leaves engine-major so a pass walks one engine's
 // objects and operations in sequence (state loads stay grouped).
 func sortLeafList(xs []leaf) {

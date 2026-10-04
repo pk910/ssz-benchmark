@@ -1,0 +1,91 @@
+package: "baseline/prysmssz/gloas"
+types:
+  - name: "AttestationData"
+  - name: "BeaconBlockHeader"
+  - name: "Checkpoint"
+  - name: "Deposit"
+  - name: "DepositData"
+  - name: "ETH1Data"
+  - name: "Fork"
+  - name: "ProposerSlashing"
+  - name: "SignedBeaconBlockHeader"
+  - name: "SignedVoluntaryExit"
+  - name: "Validator"
+  - name: "VoluntaryExit"
+  - name: "AltairSyncAggregate"
+  - name: "AltairSyncCommittee"
+  - name: "CapellaBLSToExecutionChange"
+  - name: "CapellaHistoricalSummary"
+  - name: "CapellaSignedBLSToExecutionChange"
+  - name: "CapellaWithdrawal"
+  - name: "ElectraConsolidationRequest"
+  - name: "ElectraDepositRequest"
+  - name: "ElectraPendingDeposit"
+  - name: "ElectraPendingConsolidation"
+  - name: "ElectraPendingPartialWithdrawal"
+  - name: "ElectraWithdrawalRequest"
+  - name: "GloasAttestation"
+    progressive: {}
+    fields:
+      AggregationBits: {type: "ProgressiveBitlist"}
+  - name: "GloasAttesterSlashing"
+  - name: "GloasBeaconBlock"
+  - name: "GloasBeaconBlockBody"
+    progressive: {}
+    fields:
+      ProposerSlashings: {type: "ProgressiveList"}
+      AttesterSlashings: {type: "ProgressiveList"}
+      Attestations: {type: "ProgressiveList"}
+      Deposits: {type: "ProgressiveList"}
+      VoluntaryExits: {type: "ProgressiveList"}
+      BLSToExecutionChanges: {type: "ProgressiveList"}
+      PayloadAttestations: {type: "ProgressiveList"}
+  - name: "GloasBeaconState"
+    progressive: {}
+    fields:
+      Validators: {type: "ProgressiveList"}
+      Balances: {type: "ProgressiveList"}
+      PreviousEpochParticipation: {type: "ProgressiveList"}
+      CurrentEpochParticipation: {type: "ProgressiveList"}
+      InactivityScores: {type: "ProgressiveList"}
+      PendingDeposits: {type: "ProgressiveList"}
+      PendingPartialWithdrawals: {type: "ProgressiveList"}
+      PendingConsolidations: {type: "ProgressiveList"}
+      Builders: {type: "ProgressiveList"}
+      BuilderPendingWithdrawals: {type: "ProgressiveList"}
+      PayloadExpectedWithdrawals: {type: "ProgressiveList"}
+  - name: "GloasBuilder"
+  - name: "GloasBuilderDepositRequest"
+  - name: "GloasBuilderExitRequest"
+  - name: "GloasBuilderPendingPayment"
+  - name: "GloasBuilderPendingWithdrawal"
+  - name: "GloasExecutionPayload"
+    progressive: {}
+    fields:
+      Transactions: {type: "ProgressiveList", element: {type: "ProgressiveByteList"}}
+      Withdrawals: {type: "ProgressiveList"}
+      BlockAccessList: {type: "ProgressiveList"}
+  - name: "GloasExecutionPayloadBid"
+    progressive: {}
+    fields:
+      BlobKZGCommitments: {type: "ProgressiveList"}
+  - name: "GloasExecutionPayloadEnvelope"
+    progressive: {}
+  - name: "GloasExecutionRequests"
+    progressive: {}
+    fields:
+      Deposits: {type: "ProgressiveList"}
+      Withdrawals: {type: "ProgressiveList"}
+      Consolidations: {type: "ProgressiveList"}
+      BuilderDeposits: {type: "ProgressiveList"}
+      BuilderExits: {type: "ProgressiveList"}
+  - name: "GloasIndexedAttestation"
+    progressive: {}
+    fields:
+      AttestingIndices: {type: "ProgressiveList"}
+  - name: "GloasPayloadAttestation"
+    progressive: {}
+  - name: "GloasPayloadAttestationData"
+  - name: "GloasSignedBeaconBlock"
+  - name: "GloasSignedExecutionPayloadBid"
+  - name: "GloasSignedExecutionPayloadEnvelope"

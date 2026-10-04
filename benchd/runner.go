@@ -162,14 +162,8 @@ func harnessHash(dir string) (string, error) {
 	return hashTree(dir, func(rel string) bool { return !strings.HasPrefix(rel, "baselines/") })
 }
 
-// baselineHash identifies the baseline libraries' modules and the kit they
-// share with the harness.
-func baselineHash(dir string) (string, error) {
-	return hashTree(dir, func(rel string) bool { return strings.HasPrefix(rel, "baselines/") || strings.HasPrefix(rel, "kit/") })
-}
-
-// hashTree hashes the Go sources and module files under dir that keep
-// accepts (generated gen_* files follow from the rest).
+// hashTree hashes the Go sources, module files and generation recipes
+// under dir that keep accepts (generated gen_* files follow from the rest).
 func hashTree(dir string, keep func(rel string) bool) (string, error) {
 	h := sha256.New()
 	var files []string
@@ -185,7 +179,8 @@ func hashTree(dir string, keep func(rel string) bool) (string, error) {
 		if !keep(filepath.ToSlash(rel)) {
 			return nil
 		}
-		if (strings.HasSuffix(name, ".go") && !strings.HasPrefix(name, "gen_")) || name == "go.mod" || name == "go.sum" {
+		recipe := name == "generate.sh" || name == "order.txt" || strings.HasSuffix(name, ".yaml")
+		if (strings.HasSuffix(name, ".go") && !strings.HasPrefix(name, "gen_")) || name == "go.mod" || name == "go.sum" || recipe {
 			files = append(files, path)
 		}
 		return nil
@@ -235,11 +230,15 @@ func (r *runner) runJob(ctx context.Context, j *job) bool {
 	if len(j.Seeds) > 0 {
 		r.seeds = j.Seeds
 	}
-	hashOf := harnessHash
-	if j.Kind == kindBaseline {
-		hashOf = baselineHash
+	hash, err := harnessHash(r.cfg.harnessDir)
+	lib := subjectByName(j.Subject)
+	if j.Kind == kindLib {
+		if lib == nil {
+			err = fmt.Errorf("unknown library %q", j.Subject)
+		} else {
+			hash, err = libHash(r.cfg.harnessDir, lib.Adapter)
+		}
 	}
-	hash, err := hashOf(r.cfg.harnessDir)
 	if err != nil {
 		log.Printf("job %d: harness: %v", j.ID, err)
 		return false
@@ -274,13 +273,17 @@ func (r *runner) runJob(ctx context.Context, j *job) bool {
 	}
 	head := &side{name: "head", sha: j.HeadSHA}
 	base := &side{name: "base", sha: j.BaseSHA}
-	if j.Kind == kindBaseline {
-		// The reference libraries are measured on their own: no checkout,
-		// one side, every leaf a baseline.
-		head.hdir = filepath.Join(r.cfg.dataDir, "hb", hash+"-baselines")
-		r.setPhase(j, "building baseline libraries")
-		if err := r.buildBaselines(ctx, head, logw); err != nil {
-			return fail(fmt.Errorf("build baselines: %w", err))
+	if j.Kind == kindLib {
+		// A library commit is measured on its own: no checkout (the module
+		// is fetched at that commit), one side, every leaf a baseline.
+		short := j.HeadSHA
+		if len(short) > 12 {
+			short = short[:12]
+		}
+		head.hdir = filepath.Join(r.cfg.dataDir, "hb", hash+"-"+lib.Name+"-"+short)
+		r.setPhase(j, "building "+lib.Name)
+		if err := r.buildLibrary(ctx, head, lib, logw); err != nil {
+			return fail(fmt.Errorf("build %s: %w", lib.Name, err))
 		}
 		used(head.hdir)
 		passes, err := r.measure(ctx, j, head, base, jobDir, logw)
@@ -465,11 +468,11 @@ func (r *runner) buildHarness(ctx context.Context, s *side, logw func(string, ..
 	return nil
 }
 
-// buildBaselines compiles every baseline library module under
-// baselines/<lib> of the harness: one test binary per fork package and
-// layout seed, the package named <lib>-<fork>. A library that does not
-// build is left out. The result is cached per baseline hash.
-func (r *runner) buildBaselines(ctx context.Context, s *side, logw func(string, ...any)) error {
+// buildLibrary builds the adapter of a library against the commit of the
+// side: a copy of the harness in which the adapter's recipe fetches the
+// library at that commit and generates its code with that commit's
+// generator, then one test binary per fork and layout seed.
+func (r *runner) buildLibrary(ctx context.Context, s *side, lib *subject, logw func(string, ...any)) error {
 	s.bins = map[string]map[string]string{}
 	if data, err := os.ReadFile(filepath.Join(s.hdir, "ok")); err == nil {
 		for _, pkg := range strings.Fields(string(data)) {
@@ -497,52 +500,50 @@ func (r *runner) buildBaselines(ctx context.Context, s *side, logw func(string, 
 	if err := r.own(s.hdir); err != nil {
 		return err
 	}
-	libs, err := os.ReadDir(filepath.Join(s.hdir, "baselines"))
-	if err != nil {
+	libDir := filepath.Join(s.hdir, "baselines", lib.Adapter)
+	// The recipe picks the Go toolchain its generator needs itself.
+	gen := r.sandboxed(ctx, true, "bash", "generate.sh", s.sha)
+	gen.Dir = libDir
+	gen.Env = append(gen.Env, "GOTOOLCHAIN=auto")
+	if err := runLogged(gen); err != nil {
+		return fmt.Errorf("generate: %w", err)
+	}
+	if err := runLogged(r.goCmd(ctx, libDir, "mod", "tidy")); err != nil {
 		return err
 	}
 	var built []string
-	for _, lib := range libs {
-		libDir := filepath.Join(s.hdir, "baselines", lib.Name())
-		if _, err := os.Stat(filepath.Join(libDir, "go.mod")); err != nil {
+	forks, _ := os.ReadDir(libDir)
+	for _, fork := range forks {
+		if _, err := os.Stat(filepath.Join(libDir, fork.Name(), "bench_test.go")); err != nil {
 			continue
 		}
-		if err := runLogged(r.goCmd(ctx, libDir, "mod", "tidy")); err != nil {
-			logw("baseline %s left out: %v", lib.Name(), err)
+		pkg := lib.Adapter + "-" + fork.Name()
+		bins := map[string]string{}
+		var err error
+		for _, seed := range r.seeds {
+			out := filepath.Join(s.hdir, "seed-"+seed+"-"+pkg+".test")
+			if err = r.compile(ctx, s, pkg, seed, out); err != nil {
+				break
+			}
+			bins[seed] = out
+		}
+		if err != nil {
+			logw("%s left out: %v", pkg, err)
 			continue
 		}
-		forks, _ := os.ReadDir(libDir)
-		for _, fork := range forks {
-			if _, err := os.Stat(filepath.Join(libDir, fork.Name(), "bench_test.go")); err != nil {
-				continue
-			}
-			pkg := lib.Name() + "-" + fork.Name()
-			bins := map[string]string{}
-			for _, seed := range r.seeds {
-				out := filepath.Join(s.hdir, "seed-"+seed+"-"+pkg+".test")
-				if err = runLogged(r.goCmd(ctx, libDir, "test", "-c", "-o", out, "-ldflags", "-funcalign=64 -randlayout="+seed, "./"+fork.Name())); err != nil {
-					break
-				}
-				bins[seed] = out
-			}
-			if err != nil {
-				logw("baseline %s left out: %v", pkg, err)
-				continue
-			}
-			s.bins[pkg] = bins
-			built = append(built, pkg)
-		}
+		s.bins[pkg] = bins
+		built = append(built, pkg)
 	}
 	if err := ctx.Err(); err != nil {
 		return err
 	}
 	if len(built) == 0 {
-		return fmt.Errorf("no baseline library builds")
+		return fmt.Errorf("no package of the adapter builds")
 	}
 	if err := os.WriteFile(filepath.Join(s.hdir, "ok"), []byte(strings.Join(built, " ")), 0o644); err != nil {
 		return err
 	}
-	logw("baseline libraries built in %s (%s)", time.Since(start).Round(time.Second), strings.Join(built, ", "))
+	logw("%s built at %s in %s (%s)", lib.Name, s.sha, time.Since(start).Round(time.Second), strings.Join(built, ", "))
 	return nil
 }
 
@@ -706,7 +707,7 @@ func (r *runner) measure(ctx context.Context, j *job, head, base *side, jobDir s
 		if len(leaves) == 0 {
 			return 0, fmt.Errorf("no benchmarks found")
 		}
-		if j.Kind == kindBaseline {
+		if j.Kind == kindLib {
 			for i := range leaves {
 				leaves[i].Baseline = true
 			}
@@ -1287,8 +1288,10 @@ func (r *runner) prune() {
 	if h, err := harnessHash(r.cfg.harnessDir); err == nil {
 		current[h] = true
 	}
-	if h, err := baselineHash(r.cfg.harnessDir); err == nil {
-		current[h] = true
+	for i := range librarySubjects {
+		if h, err := libHash(r.cfg.harnessDir, librarySubjects[i].Adapter); err == nil {
+			current[h] = true
+		}
 	}
 	for _, sub := range []string{"wt", "hb"} {
 		dir := filepath.Join(r.cfg.dataDir, sub)

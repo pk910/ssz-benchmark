@@ -414,13 +414,17 @@ type scheduler struct {
 	git       *gitRepo
 	prs       *prCache
 	idleCount int
-	runner    *runner        // publishes the fetch status with its own
-	checks    *checkReporter // nil without a GitHub App
-	ready     chan struct{}  // closed after the first fetch
-	readyOnce sync.Once
-	mu        sync.Mutex
-	lastFetch time.Time
-	lastErr   string
+	idleTurn  int
+	// lastLibPoll is when the other libraries' repositories were last
+	// checked.
+	lastLibPoll time.Time
+	runner      *runner        // publishes the fetch status with its own
+	checks      *checkReporter // nil without a GitHub App
+	ready       chan struct{}  // closed after the first fetch
+	readyOnce   sync.Once
+	mu          sync.Mutex
+	lastFetch   time.Time
+	lastErr     string
 }
 
 func (s *scheduler) loop(ctx context.Context) {
@@ -461,7 +465,11 @@ func (s *scheduler) tick(ctx context.Context) {
 	// The periodic noise job goes in first so its number matches its place
 	// in the queue on the first run.
 	s.scheduleNoise()
-	s.scheduleBaseline()
+	if time.Since(s.lastLibPoll) >= s.cfg.libPoll {
+		s.lastLibPoll = time.Now()
+		s.pollLibraries(ctx)
+	}
+	s.updateOwnTargets()
 	if n, err := s.db.seenCount(); err == nil && n == 0 {
 		s.bootstrap(branches)
 	}
@@ -718,43 +726,15 @@ func (s *scheduler) scheduleNoise() {
 	}
 }
 
-// baselineRef stands in for the commit of a baseline job, which measures
-// no checkout.
-const baselineRef = "baselines"
-
-// scheduleBaseline queues a measurement of the reference libraries when
-// their modules changed since the last one or the interval has passed.
-func (s *scheduler) scheduleBaseline() {
-	if s.cfg.baselineInterval <= 0 {
-		return
+// updateOwnTargets records what dynamic-ssz's master and release targets
+// point to.
+func (s *scheduler) updateOwnTargets() {
+	if sha, ok := s.git.branches2(s.cfg.mainBranch); ok {
+		_ = s.db.setTarget(targetState{Subject: subjectDynSSZ, Name: targetMaster, SHA: sha, Label: s.cfg.mainBranch})
 	}
-	hash, err := baselineHash(s.cfg.harnessDir)
-	if err != nil {
-		return
+	if tag, sha, err := s.git.latestRelease(); err == nil {
+		_ = s.db.setTarget(targetState{Subject: subjectDynSSZ, Name: targetRelease, SHA: sha, Label: tag})
 	}
-	last, err := s.db.lastJobOfKind(kindBaseline)
-	if err != nil {
-		return
-	}
-	if last != nil {
-		if last.State == stateQueued || last.State == stateRunning {
-			return
-		}
-		if last.Harness == hash && time.Since(last.Created) < s.cfg.baselineInterval {
-			return
-		}
-	}
-	j := baselineJob("the other SSZ libraries on the same payload")
-	j.Priority = 1
-	if err := s.db.insertJob(j); err != nil {
-		log.Printf("baseline job: %v", err)
-	}
-}
-
-// baselineJob is a measurement of the reference libraries; its runs pool
-// like those of any pair.
-func baselineJob(note string) *job {
-	return &job{Kind: kindBaseline, Branch: "-", HeadSHA: baselineRef, HeadDesc: "reference SSZ libraries", BaseSHA: baselineRef, Note: note}
 }
 
 // resolvePRs fills the pull request of main-branch commit jobs that have
@@ -799,7 +779,20 @@ func (g *gitRepo) branches2(name string) (string, bool) {
 // comparison in between.
 // The machine never idles; every rerun pools with the earlier runs of its
 // pair and tightens that comparison.
+// libIdleRuns is how many library refinement runs follow one idle job of
+// dynamic-ssz.
+const libIdleRuns = 6
+
 func (s *scheduler) idleJob() (*job, error) {
+	// Idle time is shared about half and half between dynamic-ssz and the
+	// other libraries: a library job takes about a seventh of ours, so
+	// libIdleRuns of them follow every idle job of ours.
+	s.idleTurn++
+	if s.idleTurn%(libIdleRuns+1) != 1 {
+		if j, err := s.idleLibJob(); err != nil || j != nil {
+			return j, err
+		}
+	}
 	s.idleCount++
 	switch s.idleCount % 8 {
 	case 0:
@@ -807,10 +800,6 @@ func (s *scheduler) idleJob() (*job, error) {
 	case 2, 6:
 		if j, err := s.releaseJob(); err != nil || j != nil {
 			return j, err
-		}
-	case 4:
-		if s.cfg.baselineInterval > 0 {
-			return baselineJob("idle refresh of the reference libraries"), nil
 		}
 	}
 	prev, err := s.db.leastRefinedPair()

@@ -65,9 +65,6 @@ func BenchmarkReal(b *testing.B) {
 	dir := filepath.Join(bench.DataDir(), "fulu")
 	for _, e := range engines {
 		b.Run(e.name, func(b *testing.B) {
-			b.Run("FuluState", func(b *testing.B) {
-				bench.RunOne(b, codec(func() ssz.Object { return new(FuluBeaconState) }, e.only, e.hash, func(o ssz.Object) ssz.Object { return o }), bench.LoadOne(dir, "state"))
-			})
 			b.Run("FuluBlock", func(b *testing.B) {
 				bench.RunOne(b, codec(func() ssz.Object { return new(ElectraSignedBeaconBlock) }, e.only, e.hash, func(o ssz.Object) ssz.Object { return o.(*ElectraSignedBeaconBlock).Message }), bench.LoadOne(dir, "block"))
 			})

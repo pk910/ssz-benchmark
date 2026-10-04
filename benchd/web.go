@@ -296,7 +296,17 @@ func (w *webServer) apiStatus(rw http.ResponseWriter, req *http.Request) {
 		Repo            string
 		MainBranch      string
 		Controller      string
-	}{st, runtime.Version(), w.cfg.cpus, w.cfg.gomaxprocs, w.cfg.asyncGomaxprocs, w.cfg.seeds, w.cfg.benchTime, w.cfg.minIters, w.cfg.target.String(), w.cfg.godebug, "https://github.com/" + w.cfg.github, w.cfg.mainBranch, w.cfg.name})
+		// Subjects maps every measured library to its repository.
+		Subjects map[string]string
+	}{st, runtime.Version(), w.cfg.cpus, w.cfg.gomaxprocs, w.cfg.asyncGomaxprocs, w.cfg.seeds, w.cfg.benchTime, w.cfg.minIters, w.cfg.target.String(), w.cfg.godebug, "https://github.com/" + w.cfg.github, w.cfg.mainBranch, w.cfg.name, w.subjectRepos()})
+}
+
+func (w *webServer) subjectRepos() map[string]string {
+	repos := map[string]string{}
+	for _, name := range subjectNames() {
+		repos[name] = repoURL(w.cfg, name)
+	}
+	return repos
 }
 
 // apiDashboard: status, the queue in execution order, recently finished
@@ -376,10 +386,9 @@ func (w *webServer) apiJob(rw http.ResponseWriter, req *http.Request) {
 		if j.State == stateDone {
 			runs, _ = w.db.pairJobIDs(j.HeadSHA, j.BaseSHA, j.Harness, j.Runner)
 		}
-		// The reference libraries are measured by their own job; its latest
-		// results stand next to every other job's.
-		var baselineJob int64
-		if j.Kind != kindBaseline {
+		// The other libraries are measured by their own jobs; their pooled
+		// values stand next to every job of ours.
+		if j.Kind != kindBaseline && j.Kind != kindLib {
 			own := results[:0:0]
 			for _, r := range results {
 				if !r.Baseline {
@@ -387,7 +396,7 @@ func (w *webServer) apiJob(rw http.ResponseWriter, req *http.Request) {
 				}
 			}
 			results = own
-			refs, id := w.baselineResults(true)
+			refs := w.libraryResults()
 			have := map[string]bool{}
 			for _, r := range results {
 				have[joinKey(r.Engine, r.Object, r.Op)] = true
@@ -395,7 +404,6 @@ func (w *webServer) apiJob(rw http.ResponseWriter, req *http.Request) {
 			for _, r := range refs {
 				if !have[joinKey(r.Engine, r.Object, r.Op)] {
 					results = append(results, r)
-					baselineJob = id
 				}
 			}
 		}
@@ -412,10 +420,8 @@ func (w *webServer) apiJob(rw http.ResponseWriter, req *http.Request) {
 			Runs      []int64
 			Noise     noiseFloor
 			Repo      string
-			// BaselineJob is the job the reference library values come from
-			// when they are not this job's own.
-			BaselineJob int64
-		}{j, j.State == stateRunning, live, st, results, summaries(results), files, steal, builds, runs, w.noiseFloor(), "https://github.com/" + w.cfg.github, baselineJob})
+			Subject   string
+		}{j, j.State == stateRunning, live, st, results, summaries(results), files, steal, builds, runs, w.noiseFloor(), "https://github.com/" + w.cfg.github, j.Subject})
 	case tail == "samples":
 		samples, _ := w.db.samplesFor(j.ID)
 		w.writeJSON(rw, samples)
@@ -662,21 +668,6 @@ func stepResults(prev, cur []result) []result {
 	return out
 }
 
-// baselineResults returns the results of the newest finished baseline job
-// and its id; with full, including the statistics the job page shows.
-func (w *webServer) baselineResults(full bool) ([]result, int64) {
-	j, err := w.db.lastDoneJobOfKind(kindBaseline)
-	if err != nil || j == nil {
-		return nil, 0
-	}
-	if full {
-		results, _ := w.db.fullResults(j)
-		return results, j.ID
-	}
-	results, _ := w.db.resultsFor(j.ID)
-	return results, j.ID
-}
-
 // opView is the history of one object/op across engines.
 type opView struct {
 	Object, Op string
@@ -771,41 +762,13 @@ func sortedBy(set map[string]bool, order []string) []string {
 	return out
 }
 
-func (w *webServer) apiOps(rw http.ResponseWriter, req *http.Request) {
-	rows := w.pages.get(w.db.doneStamp(), "ops", w.buildOps)
-	w.writeJSON(rw, rows)
-}
-
-// buildOps assembles the operations page: per operation the newest value
-// of every engine and library and the main branch's trend.
-func (w *webServer) buildOps() any {
-	leaves, _ := w.db.leaves()
-	refs, _ := w.baselineResults(false)
-	type row struct {
-		Object, Op string
-		Engines    []string
-		Latest     map[string]*result
-		Trends     map[string]trendFit
-	}
-	rows := []row{}
-	for _, l := range leaves {
-		v, ok := w.opView(l[0], l[1], 200, refs)
-		if !ok {
-			continue
-		}
-		rows = append(rows, row{l[0], l[1], v.Engines, v.Latest, v.Trends})
-	}
-	return rows
-}
-
 func (w *webServer) apiOp(rw http.ResponseWriter, req *http.Request) {
 	parts := strings.SplitN(strings.TrimPrefix(req.URL.Path, "/api/op/"), "/", 2)
 	if len(parts) != 2 {
 		http.NotFound(rw, req)
 		return
 	}
-	refs, _ := w.baselineResults(false)
-	v, ok := w.opView(parts[0], parts[1], 2000, refs)
+	v, ok := w.opView(parts[0], parts[1], 2000, w.libraryResults())
 	if !ok {
 		http.NotFound(rw, req)
 		return

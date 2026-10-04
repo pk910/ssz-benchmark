@@ -48,12 +48,6 @@ type ETH1Data struct {
 	BlockHash    [32]byte
 }
 
-type Fork struct {
-	PreviousVersion [4]byte
-	CurrentVersion  [4]byte
-	Epoch           uint64
-}
-
 type ProposerSlashing struct {
 	SignedHeader1 *SignedBeaconBlockHeader
 	SignedHeader2 *SignedBeaconBlockHeader
@@ -69,17 +63,6 @@ type SignedVoluntaryExit struct {
 	Signature [96]byte
 }
 
-type Validator struct {
-	PublicKey                  [48]byte
-	WithdrawalCredentials      [32]byte
-	EffectiveBalance           uint64
-	Slashed                    bool
-	ActivationEligibilityEpoch uint64
-	ActivationEpoch            uint64
-	ExitEpoch                  uint64
-	WithdrawableEpoch          uint64
-}
-
 type VoluntaryExit struct {
 	Epoch          uint64
 	ValidatorIndex uint64
@@ -92,11 +75,6 @@ type AltairSyncAggregate struct {
 	SyncCommitteeSignature [96]byte
 }
 
-type AltairSyncCommittee struct {
-	Pubkeys         [512][48]byte
-	AggregatePubkey [48]byte
-}
-
 // Bellatrix types
 
 // Capella types
@@ -105,11 +83,6 @@ type CapellaBLSToExecutionChange struct {
 	ValidatorIndex     uint64
 	FromBLSPubkey      [48]byte
 	ToExecutionAddress [20]byte
-}
-
-type CapellaHistoricalSummary struct {
-	BlockSummaryRoot [32]byte
-	StateSummaryRoot [32]byte
 }
 
 type CapellaSignedBLSToExecutionChange struct {
@@ -144,26 +117,6 @@ type DenebExecutionPayload struct {
 	Withdrawals   []*CapellaWithdrawal `ssz-max:"16"`
 	BlobGasUsed   uint64
 	ExcessBlobGas uint64
-}
-
-type DenebExecutionPayloadHeader struct {
-	ParentHash       [32]byte
-	FeeRecipient     [20]byte
-	StateRoot        [32]byte
-	ReceiptsRoot     [32]byte
-	LogsBloom        [256]byte
-	PrevRandao       [32]byte
-	BlockNumber      uint64
-	GasLimit         uint64
-	GasUsed          uint64
-	Timestamp        uint64
-	ExtraData        []byte `ssz-max:"32"`
-	BaseFeePerGas    *uint256.Int
-	BlockHash        [32]byte
-	TransactionsRoot [32]byte
-	WithdrawalsRoot  [32]byte
-	BlobGasUsed      uint64
-	ExcessBlobGas    uint64
 }
 
 // Electra types
@@ -230,25 +183,6 @@ type ElectraIndexedAttestation struct {
 	Signature        [96]byte
 }
 
-type ElectraPendingDeposit struct {
-	Pubkey                [48]byte
-	WithdrawalCredentials [32]byte
-	Amount                uint64
-	Signature             [96]byte
-	Slot                  uint64
-}
-
-type ElectraPendingConsolidation struct {
-	SourceIndex uint64
-	TargetIndex uint64
-}
-
-type ElectraPendingPartialWithdrawal struct {
-	ValidatorIndex    uint64
-	Amount            uint64
-	WithdrawableEpoch uint64
-}
-
 type ElectraSignedBeaconBlock struct {
 	Message   *ElectraBeaconBlock
 	Signature [96]byte
@@ -261,43 +195,3 @@ type ElectraWithdrawalRequest struct {
 }
 
 // Fulu types
-type FuluBeaconState struct {
-	GenesisTime                   uint64
-	GenesisValidatorsRoot         [32]byte
-	Slot                          uint64
-	Fork                          *Fork
-	LatestBlockHeader             *BeaconBlockHeader
-	BlockRoots                    [8192][32]byte
-	StateRoots                    [8192][32]byte
-	HistoricalRoots               [][32]byte `ssz-max:"16777216"`
-	ETH1Data                      *ETH1Data
-	ETH1DataVotes                 []*ETH1Data `ssz-max:"2048"`
-	ETH1DepositIndex              uint64
-	Validators                    []*Validator `ssz-max:"1099511627776"`
-	Balances                      []uint64     `ssz-max:"1099511627776"`
-	RANDAOMixes                   [65536][32]byte
-	Slashings                     [8192]uint64
-	PreviousEpochParticipation    []uint8 `ssz-max:"1099511627776"`
-	CurrentEpochParticipation     []uint8 `ssz-max:"1099511627776"`
-	JustificationBits             [1]byte `ssz-size:"4" ssz:"bits"`
-	PreviousJustifiedCheckpoint   *Checkpoint
-	CurrentJustifiedCheckpoint    *Checkpoint
-	FinalizedCheckpoint           *Checkpoint
-	InactivityScores              []uint64 `ssz-max:"1099511627776"`
-	CurrentSyncCommittee          *AltairSyncCommittee
-	NextSyncCommittee             *AltairSyncCommittee
-	LatestExecutionPayloadHeader  *DenebExecutionPayloadHeader
-	NextWithdrawalIndex           uint64
-	NextWithdrawalValidatorIndex  uint64
-	HistoricalSummaries           []*CapellaHistoricalSummary `ssz-max:"16777216"`
-	DepositRequestsStartIndex     uint64
-	DepositBalanceToConsume       uint64
-	ExitBalanceToConsume          uint64
-	EarliestExitEpoch             uint64
-	ConsolidationBalanceToConsume uint64
-	EarliestConsolidationEpoch    uint64
-	PendingDeposits               []*ElectraPendingDeposit           `ssz-max:"134217728"`
-	PendingPartialWithdrawals     []*ElectraPendingPartialWithdrawal `ssz-max:"134217728"`
-	PendingConsolidations         []*ElectraPendingConsolidation     `ssz-max:"262144"`
-	ProposerLookahead             [64]uint64
-}

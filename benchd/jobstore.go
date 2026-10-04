@@ -242,6 +242,11 @@ func (s *localStore) finish(id int64, passes int, errText string, seconds float6
 	if err := s.db.finishJob(id, stateDone, passes, "", seconds); err != nil {
 		return err
 	}
+	if done, err := s.db.getJob(id); err == nil && done != nil {
+		if err := s.db.updateCommitValues(done); err != nil {
+			log.Printf("job %d: pooled values: %v", id, err)
+		}
+	}
 	if j.Kind == kindNoise && j.Runner != s.local && j.Runner != "" {
 		s.qualify(j, results)
 	}

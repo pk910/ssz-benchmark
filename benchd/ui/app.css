@@ -143,3 +143,6 @@ select { padding: 4px 8px; border: 1px solid var(--line); border-radius: 6px; ba
 .kind { display: inline-block; margin-right: 6px; padding: 0 5px; border-radius: 4px; font-size: 10px; text-transform: uppercase; letter-spacing: .03em; border: 1px solid var(--line2, var(--line)); color: var(--muted); }
 .kind.code { color: var(--acc); border-color: var(--acc); }
 td.warn { color: var(--warn); font-weight: 600; }
+
+.chip.lib { background: #e6f4ea; color: #1b7a3d; }
+@media (prefers-color-scheme: dark) { .chip.lib { background: #15351f; color: #86e0a3; } }

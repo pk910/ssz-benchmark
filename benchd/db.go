@@ -21,6 +21,8 @@ const (
 	// kindBaseline measures the reference libraries (other SSZ
 	// implementations) on the same payload, on their own schedule.
 	kindBaseline = "baseline"
+	// kindLib measures one commit of another SSZ library, one-sided.
+	kindLib = "lib"
 )
 
 // Job states.
@@ -41,6 +43,7 @@ type job struct {
 	Finished  *time.Time
 	State     string
 	Kind      string
+	Subject   string // the library the job measures
 	Branch    string
 	HeadSHA   string
 	HeadDesc  string
@@ -235,6 +238,32 @@ func openDB(path string) (*store, error) {
 			build_seconds REAL NOT NULL,
 			PRIMARY KEY (job_id, side, pkg)
 		)`,
+		`CREATE TABLE IF NOT EXISTS targets (
+			subject TEXT NOT NULL,
+			name TEXT NOT NULL,
+			sha TEXT NOT NULL,
+			label TEXT NOT NULL,
+			checked INTEGER NOT NULL,
+			PRIMARY KEY (subject, name)
+		)`,
+		`CREATE TABLE IF NOT EXISTS commit_values (
+			subject TEXT NOT NULL,
+			sha TEXT NOT NULL,
+			harness TEXT NOT NULL,
+			engine TEXT NOT NULL,
+			object TEXT NOT NULL,
+			op TEXT NOT NULL,
+			job_id INTEGER NOT NULL,
+			n INTEGER NOT NULL,
+			ns REAL NOT NULL,
+			cycles REAL NOT NULL,
+			instrs REAL NOT NULL,
+			bytes REAL NOT NULL,
+			allocs REAL NOT NULL,
+			cv_ns REAL NOT NULL,
+			cv_cycles REAL NOT NULL,
+			PRIMARY KEY (subject, sha, harness, engine, object, op)
+		)`,
 		`CREATE TABLE IF NOT EXISTS job_samples (
 			job_id INTEGER PRIMARY KEY,
 			data BLOB NOT NULL
@@ -302,6 +331,7 @@ func openDB(path string) (*store, error) {
 		`ALTER TABLE samples ADD COLUMN cycles REAL NOT NULL DEFAULT 0`,
 		`ALTER TABLE samples ADD COLUMN instrs REAL NOT NULL DEFAULT 0`,
 		`ALTER TABLE samples ADD COLUMN extra TEXT NOT NULL DEFAULT ''`,
+		`ALTER TABLE jobs ADD COLUMN subject TEXT NOT NULL DEFAULT '` + subjectDynSSZ + `'`,
 	}
 	for _, stmt := range migrations {
 		_, _ = db.Exec(stmt) // fails when the column exists
@@ -393,9 +423,12 @@ func (s *store) hasJobFor(headSHA, baseSHA string) (bool, error) {
 }
 
 func (s *store) insertJob(j *job) error {
-	res, err := s.db.Exec(`INSERT INTO jobs(created, state, kind, branch, head_sha, head_desc, base_sha, base_desc, base_ref, pr, note, priority, runner)
-		VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		time.Now().Unix(), stateQueued, j.Kind, j.Branch, j.HeadSHA, j.HeadDesc, j.BaseSHA, j.BaseDesc, j.BaseRef, j.PR, j.Note, j.Priority, j.Runner)
+	if j.Subject == "" {
+		j.Subject = subjectDynSSZ
+	}
+	res, err := s.db.Exec(`INSERT INTO jobs(created, state, kind, branch, head_sha, head_desc, base_sha, base_desc, base_ref, pr, note, priority, runner, subject)
+		VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		time.Now().Unix(), stateQueued, j.Kind, j.Branch, j.HeadSHA, j.HeadDesc, j.BaseSHA, j.BaseDesc, j.BaseRef, j.PR, j.Note, j.Priority, j.Runner, j.Subject)
 	if err != nil {
 		return err
 	}
@@ -403,13 +436,13 @@ func (s *store) insertJob(j *job) error {
 	return nil
 }
 
-const jobColumns = `id, created, started, finished, state, kind, branch, head_sha, head_desc, base_sha, base_desc, base_ref, pr, passes, error, note, seconds, go_version, priority, harness, runner`
+const jobColumns = `id, created, started, finished, state, kind, branch, head_sha, head_desc, base_sha, base_desc, base_ref, pr, passes, error, note, seconds, go_version, priority, harness, runner, subject`
 
 func scanJob(row interface{ Scan(...any) error }) (*job, error) {
 	j := &job{}
 	var created int64
 	var started, finished sql.NullInt64
-	if err := row.Scan(&j.ID, &created, &started, &finished, &j.State, &j.Kind, &j.Branch, &j.HeadSHA, &j.HeadDesc, &j.BaseSHA, &j.BaseDesc, &j.BaseRef, &j.PR, &j.Passes, &j.Error, &j.Note, &j.Seconds, &j.GoVersion, &j.Priority, &j.Harness, &j.Runner); err != nil {
+	if err := row.Scan(&j.ID, &created, &started, &finished, &j.State, &j.Kind, &j.Branch, &j.HeadSHA, &j.HeadDesc, &j.BaseSHA, &j.BaseDesc, &j.BaseRef, &j.PR, &j.Passes, &j.Error, &j.Note, &j.Seconds, &j.GoVersion, &j.Priority, &j.Harness, &j.Runner, &j.Subject); err != nil {
 		return nil, err
 	}
 	j.Created = time.Unix(created, 0)
@@ -974,25 +1007,6 @@ func (s *store) leafHistoryOn(object, op string, kinds []string, runner string, 
 		jobs[r.JobID] = jb
 	}
 	return results, jobs, nil
-}
-
-// leaves lists every object/op combination with a result, in a fixed order.
-func (s *store) leaves() ([][2]string, error) {
-	rows, err := s.db.Query(`SELECT DISTINCT object, op FROM results`)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	var out [][2]string
-	for rows.Next() {
-		var object, op string
-		if err := rows.Scan(&object, &op); err != nil {
-			return nil, err
-		}
-		out = append(out, [2]string{object, op})
-	}
-	sortLeaves(out)
-	return out, rows.Err()
 }
 
 func (s *store) benchIters() (map[string]int, error) {

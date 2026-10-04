@@ -208,6 +208,43 @@ Gloas type features) is measured on the packages it builds.
 - **Build facts** per job side and harness package: size of the binary,
   of its code and of the generated source, and the build time.
 
+## Libraries and targets
+
+Every measured library is a subject. dynamic-ssz is the one with
+branches, pull requests, two-sided jobs and GitHub checks. The other
+libraries are measured one-sided (`lib` jobs), at the commits their
+targets point to (`benchd/subjects.go`):
+
+| subject | fixed | release | master |
+|---|---|---|---|
+| fastssz-v1 | `v1.0.0` | | |
+| fastssz | | latest `v2.x.y` tag | `main` |
+| karalabe-ssz | | latest tag | `main` |
+| methodical-ssz | | the version the latest Prysm release pins | `progression` (what Prysm ships from) |
+
+- Every 15 minutes (`-lib-poll`) the daemon resolves the targets with
+  `git ls-remote` (and Prysm's go.mod); a commit that has no job with the
+  current adapter gets one, ahead of the queue. No checkout: the job's
+  build fetches the library module at that commit.
+- A library job copies the harness, runs the adapter's
+  `baselines/<adapter>/generate.sh <commit>` in the sandbox (it fetches
+  the library, runs that commit's generator with the Go toolchain it
+  needs, and tidies the module), and links one binary per fork and seed.
+  A build that fails fails the job with its error; the commit is not
+  tried again until the adapter changes or the target moves.
+- `baselines/gen.sh` is the offline step: it converts the harness types
+  for every adapter (needs Python) and runs the recipes at their pinned
+  default versions. Its output is checked in.
+- Idle time is shared about half and half: six library refinement runs
+  (the least measured target commit first) follow every idle job of
+  dynamic-ssz.
+- Pooled values: when a job finishes, the values of the commits it
+  measured are recomputed over every job of the same harness version that
+  had the commit on either side (`commit_values`). The Operations page
+  shows them per library at its master or its release target, in master
+  mode with the change against the release; our job pages show the
+  libraries' release values next to our own.
+
 ## Scheduling
 
 - Mirror fetched every minute. First run: the last 10 first-parent commits
@@ -227,30 +264,20 @@ Gloas type features) is measured on the packages it builds.
   Independently, a master-vs-master noise job is queued with priority every
   6 hours so the noise floor is tracked at a steady cadence while commits
   wait.
-- Reference libraries: a `baseline` job measures the other SSZ libraries on
-  the same payload files, one side only, with the same method (fixed
-  iteration counts, four layout seeds, pooled over its runs). It is queued
-  with priority whenever the baseline modules or the kit change and every
-  `-baseline-interval` (7 days) otherwise. Its latest results appear as the
-  "other libraries" column of every job and in the operations table. The
-  modules live in `harness/baselines/<lib>` with types converted from the
-  harness types and generated code checked in; `baselines/gen.sh`
-  regenerates them (pinned generator versions; karalabe's generator needs
-  the Go 1.23 toolchain and methodical-ssz the Go 1.25 one, both run in a
-  scratch module). What each library can express:
+- Other libraries: see "Libraries and targets". What each can express:
 
-  | library | Fulu state, block(s) | Gloas block(s), envelope | Gloas state |
-  |---|---|---|---|
-  | PrysmSSZ (methodical-ssz) | everything | everything, hashing included | everything |
-  | FastSSZv1, FastSSZv2 | everything | serialization only | not expressible |
-  | KaralabeSSZ | everything | serialization only | not expressible |
+  | library | Fulu state | Fulu block(s) | Gloas block(s), envelope | Gloas state |
+  |---|---|---|---|---|
+  | PrysmSSZ (methodical-ssz) | everything | everything | everything, hashing included | everything |
+  | FastSSZv1, FastSSZv2 | everything | everything | serialization only | not expressible |
+  | KaralabeSSZ | not expressible | everything | serialization only | not expressible |
 
   "Serialization only": no progressive merkleization. "Not expressible":
-  the generator has no vector of containers. karalabe/ssz has closed lists
-  of vector lengths; the baseline builds against a copy
-  (`baselines/karalabessz/ssz`) with the 64-element uint64 vector of Fulu's
-  proposer lookahead added. Bounds given to progressive lists for these
-  generators are nominal (they have none) and do not affect serialization.
+  the generator has no vector of containers (Gloas state), or, for
+  karalabe/ssz, no vector of 64 uint64 among its closed list of vector
+  lengths (Fulu's proposer lookahead). Bounds given to progressive lists
+  for these generators are nominal (they have none) and do not affect
+  serialization.
 - Interrupted jobs are queued again. Jobs by hand (local only):
   `curl -X POST localhost/admin/queue -d kind=commit -d head=<ref> -d base=<ref> -d priority=2`
   (`kind=noise` / `kind=release` for idle-style jobs).
