@@ -50,6 +50,10 @@ type repoCommit struct {
 	// Steps holds per leaf of the page the ratio to the commit before it,
 	// of time and of cycles; zero where one of the two has no value.
 	Steps [][2]float64 `json:",omitempty"`
+	// Values holds per leaf of the page the commit's own time and cycles
+	// per operation (ns, cycles), of the newest harness version it was
+	// measured with; zero where it has none.
+	Values [][2]float64 `json:",omitempty"`
 }
 
 type repoTarget struct{ Name, Label, SHA string }
@@ -180,6 +184,7 @@ func (w *webServer) repoView(sub *subject, offset, limit int, steps bool) (*repo
 	seen := map[leaf]bool{}
 	type step struct{ ns, cycles float64 }
 	perCommit := make([]map[leaf]step, len(commits))
+	owns := make([]*hv, len(commits))
 	for i := range commits {
 		c := &commits[i]
 		cur := values[c.SHA]
@@ -200,6 +205,7 @@ func (w *webServer) repoView(sub *subject, offset, limit int, steps bool) (*repo
 			continue
 		}
 		v.Measured++
+		owns[i] = own
 		// Measured as something else than the head of the branch (a
 		// release on it, the base of a job) counts as well.
 		c.State = stateDone
@@ -273,6 +279,13 @@ func (w *webServer) repoView(sub *subject, offset, limit int, steps bool) (*repo
 		sort.Slice(c.Engines, func(x, y int) bool { return leafLess("", "", c.Engines[x].Engine, "", "", c.Engines[y].Engine) })
 	}
 	if steps {
+		for i := offset; i < min(len(commits), offset+limit); i++ {
+			if owns[i] != nil {
+				for l := range owns[i].values {
+					seen[l] = true
+				}
+			}
+		}
 		for l := range seen {
 			v.Leaves = append(v.Leaves, l)
 		}
@@ -280,6 +293,13 @@ func (w *webServer) repoView(sub *subject, offset, limit int, steps bool) (*repo
 			return leafLess(v.Leaves[a].Object, v.Leaves[a].Op, v.Leaves[a].Engine, v.Leaves[b].Object, v.Leaves[b].Op, v.Leaves[b].Engine)
 		})
 		for i := offset; i < min(len(commits), offset+limit); i++ {
+			if owns[i] != nil {
+				commits[i].Values = make([][2]float64, len(v.Leaves))
+				for k, l := range v.Leaves {
+					cv := owns[i].values[l]
+					commits[i].Values[k] = [2]float64{cv.Ns, cv.Cycles}
+				}
+			}
 			if perCommit[i] == nil {
 				continue
 			}

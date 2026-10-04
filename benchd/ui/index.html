@@ -4,6 +4,9 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>dynamic-ssz benchmarks</title>
+<link rel="alternate" type="text/markdown" href="/llms.txt" title="this site as text, for agents">
+<!-- For agents and scripts: this page is drawn by a script, and the part of a link after "#" never reaches the server.
+     Read /llms.txt for how a link maps to text and JSON, e.g. /#/job/12 -> /job/12.md, /#/commit/<library>/<sha> -> /commit/<library>/<sha>.md, /#/repo/<library> -> /repo/<library>.md -->
 <link rel="stylesheet" href="/ui/app.css">
 <script src="/ui/vendor/chart.umd.min.js"></script>
 </head>
@@ -20,6 +23,7 @@
   <div class="live" id="live"></div>
 </header>
 <main id="app"><div class="loading">loading…</div></main>
+<noscript>This page needs a script. As text: <a href="/llms.txt">/llms.txt</a> explains how a link maps to text and JSON (/#/job/12 is /job/12.md, /#/commit/&lt;library&gt;/&lt;sha&gt; is /commit/&lt;library&gt;/&lt;sha&gt;.md, /#/repo/&lt;library&gt; is /repo/&lt;library&gt;.md).</noscript>
 <script src="/ui/app.js"></script>
 </body>
 </html>

@@ -340,14 +340,23 @@ routes:
   newest commits of its main branch. `#/repo/<library>`: all of them,
   200 a page, each with its age, its tags and, when measured, the change per engine
   against the measured commit before it (from the pooled values of both,
-  within one harness version), and a chart with one line per operation:
-  its change since the oldest measured commit of the page, a dot per measured
-  commit. The list is the history of the branch as the repository has it:
+  within one harness version), and charts with one line per operation: its
+  time (or cycles) per call at every measured commit, aggregated over the
+  payload types (geometric mean, or sum), operations of a similar size
+  sharing a chart. The change column shows one badge per engine or one
+  per engine and operation, and engines can be hidden. The list is the history of the branch as the repository has it:
   the commits on the branch itself, a merge as one commit. It is read from
   a local repository when the page is built: the mirror, or, for another
   library, `work/history/<library>.git`, into which the target poller
   fetches the commits of the branch without their files. Commits without a
   measurement are listed as such.
+- As text, for an agent given a link: `/llms.txt` explains how a page
+  link maps to text and JSON and how to read the numbers; `/job/<id>.md`,
+  `/commit/<library>/<sha>.md` (`?base=`) and `/repo/<library>.md`
+  (`?page=`) give a job, a commit and a library's commits as Markdown,
+  with the verdict, band and kind of change per operation and links to
+  the JSON, the single runs and the log files. The pages link their text
+  version; the page source and a `noscript` note point to the guide.
 - `#/job/<id>`: per object a delta chart (bars = 95% intervals, ticks =
   means) and a matrix operations × engines, each cell base → head with the
   delta and its interval; a metric switch (time / memory / allocations)

@@ -169,3 +169,11 @@ table.commits .chip .moved span + span { margin-left: 3px; }
 .chip.tag { background: transparent; border: 1px solid var(--line); color: var(--fg); font-weight: 600; }
 td.nowrap { white-space: nowrap; }
 tr.unmeasured td { opacity: .55; }
+.oprow { display: flex; align-items: baseline; gap: 8px; margin: 2px 0; }
+.oprow .eng { flex: 0 0 96px; color: var(--muted); font-size: 11.5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.chip.flat { color: var(--muted); }
+.chip.flat b { font-weight: 500; }
+.chip.toggle { cursor: pointer; user-select: none; }
+.chip.toggle.off { opacity: .45; text-decoration: line-through; }
+a.agent { font-size: 11px; font-weight: 500; margin-left: 8px; padding: 1px 7px; border: 1px solid var(--line); border-radius: 10px; color: var(--muted); text-decoration: none; vertical-align: middle; }
+a.agent:hover { color: var(--fg); }

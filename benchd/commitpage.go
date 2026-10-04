@@ -172,18 +172,45 @@ func releaseBefore(dataDir, sha string) (tag, commit string) {
 	return "", ""
 }
 
+// commitPage is everything measured of a commit, compared with a base.
+type commitPage struct {
+	Subject  string
+	SHA      string
+	Desc     string
+	Harness  string
+	Repo     string
+	Base     string // the commit compared against ("" for none)
+	BaseRuns int    // jobs that measured the base
+	NoBase   bool   // the chosen base has no runs with this harness version
+	Bases    []commitBase
+	Jobs     []*job // the jobs that measured the commit
+	BaseJobs []*job
+	Results  []result
+	Noise    noiseFloor
+}
+
 func (w *webServer) apiCommit(rw http.ResponseWriter, req *http.Request) {
 	parts := strings.SplitN(strings.TrimPrefix(req.URL.Path, "/api/commit/"), "/", 2)
 	if len(parts) != 2 || subjectByName(parts[0]) == nil || parts[1] == "" {
 		http.NotFound(rw, req)
 		return
 	}
-	sub, sha := subjectByName(parts[0]), parts[1]
-	harness := w.db.harnessOf(sub.Name, sha)
-	head, jobs, err := w.db.commitRuns(sub.Name, sha, harness)
+	page, err := w.commitView(subjectByName(parts[0]), parts[1], req.URL.Query().Get("base"))
 	if err != nil {
 		http.Error(rw, err.Error(), http.StatusInternalServerError)
 		return
+	}
+	w.writeJSON(rw, page)
+}
+
+// commitView pools the runs of a commit and compares them with the runs
+// of a base: the one named ("none" for none), else the default for the
+// commit.
+func (w *webServer) commitView(sub *subject, sha, baseSHA string) (*commitPage, error) {
+	harness := w.db.harnessOf(sub.Name, sha)
+	head, jobs, err := w.db.commitRuns(sub.Name, sha, harness)
+	if err != nil {
+		return nil, err
 	}
 	if len(jobs) == 0 {
 		// Nothing measured (yet): the jobs that have the commit as their
@@ -247,7 +274,6 @@ func (w *webServer) apiCommit(rw http.ResponseWriter, req *http.Request) {
 		}
 	}
 	offer(master, "head of the main branch")
-	baseSHA := req.URL.Query().Get("base")
 	if baseSHA == "" {
 		baseSHA = def
 	}
@@ -281,19 +307,5 @@ func (w *webServer) apiCommit(rw http.ResponseWriter, req *http.Request) {
 	if baseJobs == nil {
 		baseJobs = []*job{}
 	}
-	w.writeJSON(rw, struct {
-		Subject  string
-		SHA      string
-		Desc     string
-		Harness  string
-		Repo     string
-		Base     string // the commit compared against ("" for none)
-		BaseRuns int    // jobs that measured the base
-		NoBase   bool   // the chosen base has no runs with this harness version
-		Bases    []commitBase
-		Jobs     []*job // the jobs that measured the commit
-		BaseJobs []*job
-		Results  []result
-		Noise    noiseFloor
-	}{sub.Name, sha, desc, harness, repoURL(sub.Name), baseSHA, len(baseJobs), baseSHA != "" && len(base) == 0, bases, jobs, baseJobs, results, w.noiseFloor()})
+	return &commitPage{sub.Name, sha, desc, harness, repoURL(sub.Name), baseSHA, len(baseJobs), baseSHA != "" && len(base) == 0, bases, jobs, baseJobs, results, w.noiseFloor()}, nil
 }

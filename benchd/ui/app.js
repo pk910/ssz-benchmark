@@ -427,61 +427,93 @@
         <p class="note"><a href="#/repo/${encodeURIComponent(v.Name)}">${v.Total > v.Commits.length ? 'view all commits' : 'repository page'} →</a></p></section>`).join('');
   }
 
+  // opBadges: per engine one line with a badge per operation: the change
+  // against the measured commit before, as the geomean over the payload
+  // types (cycles, else time).
+  function opBadges(v, c, hidden) {
+    if (!c.Steps) return stepChips(c, v);
+    const acc = {};
+    v.Leaves.forEach((l, k) => {
+      if (hidden.has(l.Engine)) return;
+      const st = c.Steps[k], r = st ? (l.Engine.endsWith('Async') ? st[0] : (st[1] || st[0])) : 0;
+      if (!(r > 0)) return;
+      const e = acc[l.Engine] || (acc[l.Engine] = {}), a = e[l.Op] || (e[l.Op] = { sum: 0, n: 0 });
+      a.sum += Math.log(r); a.n++;
+    });
+    const engines = sortEngines(Object.keys(acc));
+    if (!engines.length) return '<span class="muted">-</span>';
+    const skipped = c.Skipped ? `<div class="muted small">against ${short(c.Against).slice(0, 8)}, ${c.Skipped} unmeasured between</div>` : '';
+    return engines.map(e => `<div class="oprow"><span class="eng">${esc(engName(e).replace(/^dynamic-ssz /, ''))}</span><div class="chips">${Object.keys(acc[e]).sort((a, b) => rank(OPS, a) - rank(OPS, b)).map(op => {
+      const a = acc[e][op], d = (Math.exp(a.sum / a.n) - 1) * 100;
+      return `<span class="chip ${Math.abs(d) < 0.5 ? 'flat' : d < 0 ? 'better' : 'worse'}" title="${esc(engName(e))} ${op}: geomean over ${a.n} payload type${a.n === 1 ? '' : 's'} against the measured commit before">${op} <b>${pct(d, 1)}</b></span>`;
+    }).join('')}</div></div>`).join('') + skipped;
+  }
+
   async function viewRepo(name, page) {
     page = Math.max(1, parseInt(page, 10) || 1);
     const v = await get(`/api/repo/${encodeURIComponent(name)}?page=${page}`);
+    if (v.Error) throw new Error(v.Error);
     const pages = Math.max(1, Math.ceil(v.Total / v.PageSize));
     const pageHref = p => `#/repo/${encodeURIComponent(name)}${p > 1 ? '?page=' + p : ''}`;
     const pager = pages < 2 ? '' : `<div class="toolbar pager">${page > 1 ? `<a class="chip" href="${pageHref(page - 1)}">← newer</a>` : ''}${Array.from({ length: pages }, (_, i) => i + 1).filter(p => p === 1 || p === pages || Math.abs(p - page) <= 2).map((p, i, shown) => `${i && p - shown[i - 1] > 1 ? '<span class="muted">…</span>' : ''}<a class="chip ${p === page ? 'commit' : ''}" href="${pageHref(p)}">${p}</a>`).join('')}${page < pages ? `<a class="chip" href="${pageHref(page + 1)}">older →</a>` : ''}<span class="muted">commits ${(page - 1) * v.PageSize + 1}–${(page - 1) * v.PageSize + v.Commits.length} of ${v.Total}</span></div>`;
-    if (v.Error) throw new Error(v.Error);
-    // Oldest first for the chart; a line is the running product of an
-    // operation's changes, starting at the oldest commit shown.
-    const chain = v.Commits.filter(c => c.Runs > 0).reverse();
+    // The measured commits of the page, oldest first, for the charts.
+    const chain = v.Commits.filter(c => c.Values).reverse();
     const engines = sortEngines([...new Set((v.Leaves || []).map(l => l.Engine))]);
-    let engine = localStorage.getItem('repoEngine');
-    if (!engines.includes(engine)) engine = engines[0];
-    const useNs = localStorage.getItem('repoMetric') === 'ns';
+    const pref = (key, def, allowed) => { const x = localStorage.getItem(key); return !allowed || allowed.includes(x) ? (x || def) : def; };
+    const engine = pref('repoEngine', engines[0], engines);
+    const useNs = pref('repoMetric', 'ns', ['ns', 'cycles']) === 'ns' || (engine || '').endsWith('Async');
+    const agg = pref('repoAgg', 'geomean', ['geomean', 'sum']);
+    const precision = pref('repoPrecision', 'engines', ['engines', 'ops']);
+    let hidden = new Set((localStorage.getItem('repoHidden') || '').split(',').filter(e => engines.includes(e)));
+    if (hidden.size >= engines.length) hidden = new Set();
     const tabs = (id, items, cur) => `<div class="tabs" id="${id}">${items.map(([k, label]) => `<button data-k="${k}" class="${k === cur ? 'active' : ''}">${esc(label)}</button>`).join('')}</div>`;
-    app.innerHTML = `<h1>${repoTitle(v)}</h1>
+    const rows = commits => !commits.length ? repoCommits(v, commits)
+      : `<table class="commits"><thead><tr><th>Commit</th><th>Date</th><th>Description</th><th>Change against the measured commit before <span class="muted" style="text-transform:none">(${precision === 'ops' ? 'per engine and operation, over the payload types' : 'per engine'})</span></th><th class="num">Runs</th><th>Measured</th></tr></thead><tbody>${commits.map(c => {
+        const shown = Object.assign({}, c, { Engines: (c.Engines || []).filter(e => !hidden.has(e.Engine)) });
+        return `<tr class="${c.State ? '' : 'unmeasured'}"><td class="nowrap">${commitLink(c.SHA, v.Name)}${tagBadges(c)}</td><td class="muted nowrap">${commitAge(c.Committed)}</td><td><span class="muted desc" style="display:inline-block;vertical-align:bottom">${esc(c.Desc).replace(/^[0-9a-f]{7,12} /, '')}</span></td><td>${precision === 'ops' && c.Compared ? opBadges(v, c, hidden) : stepChips(shown, v)}</td><td class="num">${c.Runs || ''}</td><td class="muted nowrap">${c.Jobs ? `${c.Measured ? when(c.Measured * 1000) : esc(c.State)} · <a href="#/jobs?repo=${encodeURIComponent(v.Name)}&sha=${c.SHA}">${c.Jobs} job${c.Jobs === 1 ? '' : 's'}</a>` : ''}</td></tr>`;
+      }).join('')}</tbody></table>`;
+    const charted = engines.length && chain.length > 1;
+    app.innerHTML = `<h1>${repoTitle(v)} <a class="agent" href="/repo/${encodeURIComponent(name)}.md${page > 1 ? '?page=' + page : ''}" title="this page as text, for an agent">text</a></h1>
       <div class="toolbar">${repoTargets(v)}<span class="muted">${v.Total} commit${v.Total === 1 ? '' : 's'} of ${esc(v.Branch || 'the main branch')}, ${v.Measured} measured</span></div>
-      ${engines.length && chain.length > 1 ? `<div class="toolbar">${tabs('repoEngine', engines.map(e => [e, engName(e)]), engine)}${tabs('repoMetric', [['cycles', 'Cycles'], ['ns', 'Time']], useNs ? 'ns' : 'cycles')}<span class="muted">one line per operation: change since the oldest measured commit of this page, a dot per measured commit; colour by object</span></div>
-      <div class="chart" style="height:420px"><canvas id="rc"></canvas></div>` : ''}
-      <h2>Commits <span class="muted small">newest first</span></h2>${pager}${repoCommits(v, v.Commits)}${pager}`;
-    const bind = (id, key) => document.querySelectorAll(`#${id} button`).forEach(b => b.onclick = () => { localStorage.setItem(key, b.dataset.k); viewRepo(name, page); });
-    bind('repoEngine', 'repoEngine'); bind('repoMetric', 'repoMetric');
+      ${charted ? `<div class="toolbar">${tabs('repoEngine', engines.map(e => [e, engName(e)]), engine)}${tabs('repoMetric', [['ns', 'Time'], ['cycles', 'Cycles']], useNs ? 'ns' : 'cycles')}${tabs('repoAgg', [['geomean', 'Mean over payload types'], ['sum', 'Sum']], agg)}</div>
+      <p class="note">One line per operation: its ${useNs ? 'time' : 'cycles'} per call at every measured commit, ${agg === 'sum' ? 'summed over the payload types (the largest type dominates)' : 'as the geometric mean over the payload types (every type counts alike)'}. Operations of a similar size share a chart and its scale.</p>
+      <div id="repoCharts"></div>` : ''}
+      <h2>Commits <span class="muted small">newest first</span></h2>
+      ${engines.length ? `<div class="toolbar"><span class="muted">detail</span>${tabs('repoPrecision', [['engines', 'Engines'], ['ops', 'Operations']], precision)}<span class="muted">show</span><span id="repoHidden">${engines.map(e => `<a class="chip toggle ${hidden.has(e) ? 'off' : 'commit'}" data-e="${e}" title="click to ${hidden.has(e) ? 'show' : 'hide'}">${esc(engName(e))}</a>`).join(' ')}</span></div>` : ''}
+      ${pager}${rows(v.Commits)}${pager}`;
+    const again = () => viewRepo(name, page);
+    ['repoEngine', 'repoMetric', 'repoAgg', 'repoPrecision'].forEach(id => document.querySelectorAll(`#${id} button`).forEach(b => b.onclick = () => { localStorage.setItem(id, b.dataset.k); again(); }));
+    document.querySelectorAll('#repoHidden a').forEach(a => a.onclick = () => { hidden.has(a.dataset.e) ? hidden.delete(a.dataset.e) : hidden.add(a.dataset.e); localStorage.setItem('repoHidden', [...hidden].join(',')); again(); });
     destroyCharts();
-    if (!engines.length || chain.length < 2) return;
-    const objects = [...new Set(v.Leaves.map(l => l.Object))].sort((a, b) => rank(OBJECTS, a) - rank(OBJECTS, b));
-    const datasets = [];
-    v.Leaves.forEach((l, k) => {
-      if (l.Engine !== engine) return;
-      // Async engines have no cycle counts of one thread: time.
-      const col = useNs || engine.endsWith('Async') ? 0 : 1;
-      let level = 1, any = false;
-      const data = chain.map((c, i) => {
-        if (i === 0) return 0;
-        const r = c.Steps && c.Steps[k] ? (c.Steps[k][col] || c.Steps[k][0]) : 0;
-        if (r > 0) { level *= r; any = true; }
-        return (level - 1) * 100;
-      });
-      if (!any) return;
-      const color = COLORS[objects.indexOf(l.Object) % COLORS.length];
-      datasets.push({ label: `${l.Object} / ${l.Op}`, object: l.Object, data, borderColor: color + '99', backgroundColor: color, pointRadius: 2.5, pointHoverRadius: 5, borderWidth: 1, tension: 0 });
+    if (!charted) return;
+    // Per operation the payload types every measured commit has a value
+    // of, so that a line is the same set of types throughout.
+    const col = useNs ? 0 : 1, series = [];
+    [...new Set(v.Leaves.filter(l => l.Engine === engine).map(l => l.Op))].sort((a, b) => rank(OPS, a) - rank(OPS, b)).forEach(op => {
+      const ks = v.Leaves.map((l, k) => l.Engine === engine && l.Op === op ? k : -1).filter(k => k >= 0 && chain.every(c => c.Values[k] && c.Values[k][col] > 0));
+      if (!ks.length) return;
+      const data = chain.map(c => agg === 'sum' ? ks.reduce((t, k) => t + c.Values[k][col], 0) : Math.exp(ks.reduce((t, k) => t + Math.log(c.Values[k][col]), 0) / ks.length));
+      series.push({ op, n: ks.length, data, mid: data.slice().sort((a, b) => a - b)[data.length >> 1] });
     });
-    chart('rc', {
+    // Operations within a factor of five share a chart.
+    const groups = [];
+    series.slice().sort((a, b) => b.mid - a.mid).forEach(sr => { const g = groups[groups.length - 1]; if (g && g[0].mid / sr.mid <= 5) g.push(sr); else groups.push([sr]); });
+    const fmt = useNs ? fmtNs : fmtNum;
+    document.getElementById('repoCharts').innerHTML = groups.map((g, i) => `<div class="chart" style="height:${200 + 14 * g.length}px"><canvas id="rc${i}"></canvas></div>`).join('');
+    groups.forEach((g, i) => chart('rc' + i, {
       type: 'line',
-      data: { labels: chain.map(c => short(c.SHA).slice(0, 8)), datasets },
+      data: { labels: chain.map(c => short(c.SHA).slice(0, 8)), datasets: g.map(sr => { const color = COLORS[series.indexOf(sr) % COLORS.length]; return { label: sr.op, n: sr.n, data: sr.data, borderColor: color, backgroundColor: color, pointRadius: 3, pointHoverRadius: 5, borderWidth: 1.5, tension: 0 }; }) },
       options: {
         responsive: true, maintainAspectRatio: false, animation: false,
-        interaction: { mode: 'nearest', intersect: false },
-        scales: { x: { ticks: { maxRotation: 0, autoSkip: true } }, y: { ticks: { callback: val => pct(val, 0) }, title: { display: true, text: `${useNs || engine.endsWith('Async') ? 'time' : 'cycles'} per op, change since ${short(chain[0].SHA).slice(0, 8)}` } } },
+        interaction: { mode: 'index', intersect: false },
+        scales: { x: { ticks: { maxRotation: 0, autoSkip: true, display: i === groups.length - 1 } }, y: { ticks: { callback: val => fmt(val) }, title: { display: true, text: useNs ? 'time per call' : 'cycles per call' } } },
         onClick: (ev, els) => { if (els.length) location.hash = commitHref(v.Name, chain[els[0].index].SHA); },
         plugins: {
-          legend: { labels: { boxWidth: 12, generateLabels: () => objects.filter(o => datasets.some(d => d.object === o)).map(o => ({ text: o, fillStyle: COLORS[objects.indexOf(o) % COLORS.length], strokeStyle: 'transparent', fontColor: Chart.defaults.color })) }, onClick: () => {} },
-          tooltip: { callbacks: { title: items => { const c = chain[items[0].dataIndex]; return `${short(c.SHA)} ${(c.Desc || '').replace(/^[0-9a-f]{7,12} /, '').slice(0, 70)}`; }, label: ctx => `${ctx.dataset.label}: ${pct(ctx.raw, 2)}` } },
+          legend: { position: 'right', labels: { boxWidth: 12 } },
+          tooltip: { callbacks: { title: items => { const c = chain[items[0].dataIndex]; return `${short(c.SHA)} ${(c.Desc || '').replace(/^[0-9a-f]{7,12} /, '').slice(0, 70)}`; }, label: ctx => { const prev = ctx.dataIndex > 0 ? ctx.dataset.data[ctx.dataIndex - 1] : 0; return `${ctx.dataset.label}: ${fmt(ctx.raw)}${prev ? ` (${pct((ctx.raw / prev - 1) * 100, 1)} against the commit before)` : ''} · ${ctx.dataset.n} type${ctx.dataset.n === 1 ? '' : 's'}`; } } },
         },
       },
-    });
+    }));
   }
 
   /* job page: metric switch, delta charts, matrices */
@@ -887,7 +919,7 @@
     const r = d.Runner, p = (r && r.Progress) || {};
     const live = d.Live ? `<div class="card wide"><div class="sub">${r ? esc(r.Runner) + ': ' + esc(r.Phase) : 'running on ' + esc(j.Runner) + ' (no live report yet)'}</div>${r && p.Leaves ? `<div class="bar"><div style="width:${r.Percent}%"></div></div><div class="sub">pass ${p.Pass}${p.PlannedPasses ? ' of ~' + p.PlannedPasses : ''} · leaf ${p.Leaf}/${p.Leaves} · ${dur(p.Measured / 1e9)} measured · running ${dur(r.Running)} · provisional results from the samples so far, refreshes every 20 s</div>` : ''}</div>` : '';
     const runs = '';
-    app.innerHTML = `<h1>Job #${j.ID} ${chip(j)}${d.Live ? '<span class="chip running">live</span>' : ''}</h1>
+    app.innerHTML = `<h1>Job #${j.ID} ${chip(j)}${d.Live ? '<span class="chip running">live</span>' : ''} <a class="agent" href="/job/${j.ID}.md" title="this page as text, for an agent">text</a></h1>
       ${live}
       <div class="cards">
         <div class="card"><h3>Head</h3><div class="mono">${commitLink(j.HeadSHA, j.Subject)} ${esc(j.HeadDesc).replace(/^[0-9a-f]{7} /, '')}</div><div class="sub mono">${esc(j.Branch)}${prLink(j)}</div></div>
@@ -925,7 +957,7 @@
     const again = () => viewCommit(subject, sha, params);
     const options = [`<option value="none" ${d.Base ? '' : 'selected'}>nothing: the values of this commit alone</option>`]
       .concat(d.Bases.map(b => `<option value="${b.SHA}" ${b.SHA === d.Base ? 'selected' : ''}>${esc(b.Label)} · ${shortRef(b.SHA)} · ${b.Runs ? b.Runs + ' job' + (b.Runs === 1 ? '' : 's') : 'not measured'}</option>`));
-    app.innerHTML = `<h1>Commit ${commitLink(d.SHA, d.Subject)} <span class="muted small">${repoLink(d.Subject)}</span></h1>
+    app.innerHTML = `<h1>Commit ${commitLink(d.SHA, d.Subject)} <span class="muted small">${repoLink(d.Subject)}</span> <a class="agent" href="/commit/${d.Subject}/${d.SHA}.md${d.Base ? '?base=' + d.Base : ''}" title="this page as text, for an agent">text</a></h1>
       <div class="cards">
         <div class="card"><h3>Commit</h3><div class="mono">${esc((d.Desc || '').replace(/^[0-9a-f]{7,12} /, ''))}</div><div class="sub">everything measured of this commit: ${d.Jobs.length} job${d.Jobs.length === 1 ? '' : 's'}, harness ${esc(d.Harness)}</div></div>
         <div class="card"><h3>Compared against</h3><select id="commitBase">${options.join('')}</select>
