@@ -73,6 +73,8 @@
     l2: { key: 'XL2', extra: 'l2-miss', label: 'L2 misses', unit: 'L2 data misses/op', fmt: fmtNum },
     retained: { key: 'XRetained', extra: 'retained', label: 'Kept alive', unit: 'B the result keeps alive', fmt: fmtBytes },
     stack: { key: 'XStack', extra: 'stack', label: 'Stack', unit: 'B of stack beyond 32 KiB', fmt: fmtBytes },
+    faults: { key: 'XFaults', extra: 'faults', label: 'Page faults', unit: 'page faults/op of the measured thread', fmt: fmtNum },
+    sysns: { key: 'XSysNs', extra: 'sys-ns', label: 'Kernel time', unit: 'kernel time per op of the measured thread', fmt: fmtNs },
   };
   // curMetric is the metric of the active tab; a page without the further
   // figures shows cycles while one of them is selected.
@@ -173,6 +175,8 @@
     'l2-miss': { name: 'L2 data misses', short: 'l2-miss' },
     retained: { name: 'kept alive by the result', bytes: true },
     stack: { name: 'stack one call needs beyond 32 KiB', bytes: true },
+    faults: { name: 'page faults', short: 'faults', kernel: true },
+    'sys-ns': { name: 'kernel time', short: 'sys', kernel: true, fmt: fmtNs },
   };
   const DIAG = { 'dec-uops': 'decoded uops', 'l1i-miss': 'L1i misses', 'dtlb-miss': 'dTLB misses', 'itlb-miss': 'iTLB misses' };
   // kindOf tells what a change of an operation is made of: 'code' when its
@@ -796,11 +800,11 @@
     const samples = d.Samples.filter(s => !(s.Extra && s.Extra.diag));
     const diag = d.Samples.filter(s => s.Extra && s.Extra.diag);
     const X = r.Extra || {};
-    const xfmt = k => EXTRAS[k].bytes ? fmtBytes : fmtNum;
+    const xfmt = k => EXTRAS[k].bytes ? fmtBytes : (EXTRAS[k].fmt || fmtNum);
     const xline = k => X[k] ? `<div class="sub mono">${EXTRAS[k].name}: ${r.Baseline || !X[k].Base ? xfmt(k)(X[k].Head) : `${xfmt(k)(X[k].Base)} → ${xfmt(k)(X[k].Head)}${X[k].Base > 0 ? ' ' + pct((X[k].Head - X[k].Base) / X[k].Base * 100, 1) : ''}`} <span class="muted">(${X[k].N} run${X[k].N === 1 ? '' : 's'} per side)</span></div>` : '';
     const counterCard = ['br-miss', 'l2-miss', 'fe-stall', 'l1d-miss'].some(k => X[k]) ? `<div class="card"><h3>More counters per op <span class="muted" style="text-transform:none">(median)</span></h3>${['br-miss', 'fe-stall', 'l1d-miss', 'l2-miss'].map(xline).join('')}${X.threads ? `<div class="sub">counted over all ${X.threads.Head} threads of the process</div>` : ''}</div>` : '';
-    const memCard = X.stack || X.retained ? `<div class="card"><h3>Memory beyond allocations</h3>${['retained', 'stack'].map(xline).join('')}</div>` : '';
-    const pairText = s => s.Extra ? Object.keys(EXTRAS).filter(k => !EXTRAS[k].bytes && s.Extra[k] !== undefined).map(k => `${EXTRAS[k].short} ${fmtNum(s.Extra[k])}`).join(' · ') : '';
+    const memCard = X.stack || X.retained || X.faults ? `<div class="card"><h3>Memory and kernel</h3>${['retained', 'stack', 'faults', 'sys-ns'].map(xline).join('')}</div>` : '';
+    const pairText = s => s.Extra ? Object.keys(EXTRAS).filter(k => !EXTRAS[k].bytes && !EXTRAS[k].kernel && s.Extra[k] !== undefined).map(k => `${EXTRAS[k].short} ${fmtNum(s.Extra[k])}`).join(' · ') : '';
     // offClock marks a run whose clock rate (cycles per ns) is more than
     // 1% off the median of all runs shown.
     const clocks = samples.filter(s => s.Cycles && s.Ns && !engine.endsWith('Async')).map(s => s.Cycles / s.Ns).sort((a, b) => a - b);

@@ -1315,6 +1315,7 @@ var extraUnits = map[string]string{
 	"br-miss/op": "br-miss", "l2-miss/op": "l2-miss", "fe-stall/op": "fe-stall", "l1d-miss/op": "l1d-miss",
 	"dec-uops/op": "dec-uops", "l1i-miss/op": "l1i-miss", "dtlb-miss/op": "dtlb-miss", "itlb-miss/op": "itlb-miss",
 	"threads": "threads", "thread-drift": "thread-drift", "retained-B/op": "retained", "stack-B/op": "stack",
+	"faults/op": "faults", "sys-ns/op": "sys-ns",
 }
 
 func parseBenchOutput(out []byte) []benchLine {

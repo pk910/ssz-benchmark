@@ -492,9 +492,9 @@ func TestBuildFacts(t *testing.T) {
 }
 
 func TestExtraFigures(t *testing.T) {
-	out := []byte("BenchmarkReal/Codegen/Block/Marshal \t 1\t 100 ns/op\t 400 cycles/op\t 900 instrs/op\t 12 br-miss/op\t 3 l2-miss/op\t 4096 stack-B/op\t 512 retained-B/op\t 10 iters\n")
+	out := []byte("BenchmarkReal/Codegen/Block/Marshal \t 1\t 100 ns/op\t 400 cycles/op\t 900 instrs/op\t 12 br-miss/op\t 3 l2-miss/op\t 4096 stack-B/op\t 512 retained-B/op\t 1.5 faults/op\t 2300 sys-ns/op\t 10 iters\n")
 	lines := parseBenchOutput(out)
-	if len(lines) != 1 || lines[0].extra["br-miss"] != 12 || lines[0].extra["l2-miss"] != 3 || lines[0].extra["stack"] != 4096 || lines[0].extra["retained"] != 512 {
+	if len(lines) != 1 || lines[0].extra["br-miss"] != 12 || lines[0].extra["l2-miss"] != 3 || lines[0].extra["stack"] != 4096 || lines[0].extra["retained"] != 512 || lines[0].extra["faults"] != 1.5 || lines[0].extra["sys-ns"] != 2300 {
 		t.Fatalf("parsed %+v", lines)
 	}
 	var samples []sample

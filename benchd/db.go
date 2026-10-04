@@ -94,7 +94,8 @@ type sample struct {
 	// Extra holds what only some runs measure, per operation: the counter
 	// pair of the pass ("br-miss", "l2-miss", "fe-stall", "l1d-miss"), the
 	// threads counted when all were ("threads"), the memory figures of the
-	// first pass ("retained", "stack"), and the counters of a diagnostic
+	// first pass ("retained", "stack"), the page faults and the kernel time
+	// of the measured thread ("faults", "sys-ns"), and the counters of a diagnostic
 	// run, which is marked "diag" and takes no part in the statistics.
 	Extra map[string]float64 `json:",omitempty"`
 }
