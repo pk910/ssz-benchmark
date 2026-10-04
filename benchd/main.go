@@ -43,6 +43,7 @@ type config struct {
 	ghInstallationID string
 	ghAppKey         string
 	baselineInterval time.Duration
+	counterPairs     bool    // count a rotating pair of further hardware counters in every run
 	outlierPct       float64 // re-measure a sample this far off the leaf's running median
 	target           time.Duration
 	poll             time.Duration
@@ -86,6 +87,7 @@ func main() {
 	flag.StringVar(&cfg.ghInstallationID, "gh-installation-id", os.Getenv("GH_INSTALLATION_ID"), "installation id of the App on the repository (env GH_INSTALLATION_ID)")
 	flag.StringVar(&cfg.ghAppKey, "gh-app-key", os.Getenv("GH_APP_KEY"), "path of the App's private key (env GH_APP_KEY)")
 	flag.IntVar(&cfg.minPasses, "min-passes", 0, "passes a job runs at least, regardless of the budget (0: one per layout seed)")
+	flag.BoolVar(&cfg.counterPairs, "counter-pairs", true, "count two further hardware counters in every run, alternating between two pairs by pass")
 	flag.Float64Var(&cfg.outlierPct, "outlier", 4, "a measurement whose cycles (or time without counters) deviate this many percent from the median of the leaf's earlier measurements on the same side is repeated once")
 	flag.DurationVar(&cfg.target, "target", 12*time.Minute, "measurement budget per job (passes are fitted to it)")
 	flag.DurationVar(&cfg.poll, "poll", 60*time.Second, "how often the mirror is fetched")

@@ -66,7 +66,11 @@
   // The counters see the measured thread only. An async engine does its
   // work on other threads, so its cycles and instructions say nothing; its
   // cells show wall time on those tabs.
-  const metricFor = (m, engine) => engine.endsWith('Async') && (m.key === 'Cycles' || m.key === 'Instrs') ? METRICS.ns : m;
+  // metricFor is the metric an engine is read by on a tab. The counters of
+  // an async engine cover one of its threads only, so the counter tabs
+  // show its time, unless the result says all its threads were counted.
+  const allThreads = r => !!(r && r.Extra && r.Extra.threads);
+  const metricFor = (m, engine, r) => engine.endsWith('Async') && (m.key === 'Cycles' || m.key === 'Instrs') && !allThreads(r) ? METRICS.ns : m;
   let repo = '';
   const charts = [];
 
@@ -130,6 +134,16 @@
     return (delta(m) < 0 ? 'better' : 'worse') + strong;
   }
   const badge = (m, key) => `<span class="badge ${cls(m, key)}" title="median of the per-pass deltas${m.PN > 0 ? ` (${m.PAgree} of ${m.PN} passes agree, single passes ${pct(m.DMin, 2)} to ${pct(m.DMax, 2)})` : ''} · band ±${bandOf(m, key).toFixed(2)}% (noise floor ${floorOf(key).toFixed(2)}%) · mean Δ ${pct(m.Delta)}">${pct(delta(m))}</span>`;
+  // The further figures a run can carry, by their key in Extra.
+  const EXTRAS = {
+    'br-miss': { name: 'branch misses', short: 'br-miss' },
+    'fe-stall': { name: 'frontend stall cycles', short: 'fe-stall' },
+    'l1d-miss': { name: 'L1 data misses', short: 'l1d-miss' },
+    'l2-miss': { name: 'L2 data misses', short: 'l2-miss' },
+    retained: { name: 'kept alive by the result', bytes: true },
+    stack: { name: 'stack one call needs beyond 32 KiB', bytes: true },
+  };
+  const DIAG = { 'dec-uops': 'decoded uops', 'l1i-miss': 'L1i misses', 'dtlb-miss': 'dTLB misses', 'itlb-miss': 'iTLB misses' };
   // kindOf tells what a change of an operation is made of: 'code' when its
   // instructions per op moved (it does different work), 'same' when they
   // did not (the same work executes differently), null without counters.
@@ -326,8 +340,10 @@
 
   const unmeasured = M => !M || (M.Base === 0 && M.Head === 0);
   function cellDelta(r, m, jobID, label) {
-    m = metricFor(m, r.Engine);
-    if (label && m.key === 'Ns') label += ' (time)';
+    const tab = m;
+    m = metricFor(m, r.Engine, r);
+    if (label && m !== tab) label += ' (time)';
+    else if (label && allThreads(r) && (m.key === 'Cycles' || m.key === 'Instrs')) label += ' (all threads)';
     const M = r[m.key];
     if (unmeasured(M)) return `<div class="d">${label ? `<span class="muted small">${label}</span>` : ''}<span class="muted">not measured</span></div>`;
     const link = jobID ? `#/job/${jobID}/leaf/${r.Engine}/${r.Object}/${r.Op}` : null;
@@ -349,7 +365,7 @@
       const ref = mx.cells[b + '/' + op];
       const isAsync = b.endsWith('Async');
       const mAll = m;
-      m = metricFor(mAll, b);
+      m = metricFor(mAll, b, ref);
       if (!ref || unmeasured(ref[m.key])) { m = mAll; return ''; }
       const ours = (isAsync ? mx.asyncEngines : mx.engines).map(e => {
         const r = mx.cells[e + '/' + op];
@@ -402,9 +418,10 @@
       rows.push({ label: op, op, async: false });
       const eng = mx.asyncEngines.filter(e => mx.cells[e + '/' + op]);
       if (!eng.length) return;
-      const other = metricFor(m, eng[0]) !== m;
+      const cell = mx.cells[eng[0] + '/' + op];
+      const other = metricFor(m, eng[0], cell) !== m;
       if (other && sameUnit) return;
-      rows.push({ label: op + (other ? ' (async, time)' : ' (async)'), op, async: true });
+      rows.push({ label: op + (other ? ' (async, time)' : allThreads(cell) && (m.key === 'Cycles' || m.key === 'Instrs') ? ' (async, all threads)' : ' (async)'), op, async: true });
     });
     return rows;
   }
@@ -413,7 +430,7 @@
   function rowCell(mx, m, e, row) {
     const engine = row.async ? e + 'Async' : e;
     if (row.async && !mx.asyncEngines.includes(engine)) return null;
-    const key = metricFor(m, engine).key, r = mx.cells[engine + '/' + row.op];
+    const r = mx.cells[engine + '/' + row.op], key = metricFor(m, engine, r).key;
     return r && !unmeasured(r[key]) ? { r, key, engine, op: row.op } : null;
   }
   // candleTip is the callout of a candle: the engine and row as the
@@ -691,7 +708,7 @@
       </div>
       ${j.Note ? `<p class="note">${esc(j.Note)}</p>` : ''}${d.BaselineJob ? `<p class="note">Other libraries: values from the reference job <a href="#/job/${d.BaselineJob}">#${d.BaselineJob}</a> on the same machine and payload. They cannot hash Gloas objects unless they implement progressive merkleization (PrysmSSZ does), and none but PrysmSSZ can express the Gloas state.</p>` : ''}${j.Error ? `<pre class="err">${esc(j.Error)}</pre>` : ''}
       <div class="toolbar">${metricTabs()}<div class="tabs" id="modeTabs"><button data-mode="rel" class="${chartMode === 'rel' ? 'active' : ''}" title="charts show head against base in percent">change in %</button><button data-mode="abs" class="${chartMode === 'abs' ? 'active' : ''}" title="charts show the measured values">measured values</button></div>${chartMode === 'abs' ? `<label class="check"><input type="checkbox" id="chartLibs" ${chartLibs ? 'checked' : ''}> with the other libraries</label>` : ''}<span class="muted">${m.label} ${m.unit}: base → head and Δ per engine and operation. Δ is the median over the passes. Green/red: a change (outside the band, most passes agree); bold: |Δ| ≥ 5%; grey: no change. Click a bar or cell for every sample.</span></div>
-      ${mxs.map((mx, i) => { const bars = chartMode === 'abs' ? absRowBars(mx, m) : mx.engines.length, rows = chartRows(mx, m, chartMode === 'abs').length; return `<h2>${objName(mx.obj)}</h2><div class="chart" style="height:${rows * Math.max(30, bars * 14 + 8) + 80}px"><canvas id="dc${i}"></canvas></div><p class="note">${chartMode === 'abs' ? `One bar per engine${chartLibs ? ' and reference library' : ''} per operation, in measured ${m.label.toLowerCase()}: the thick body is the middle half of the single runs' values and the thin line reaches to the lowest and the highest run, the white tick and the number are their mean, the grey tick on our own engines is the base's mean. The axis is logarithmic because the operations of one object span several orders of magnitude, so a bar is short when the runs agree.${chartLibs ? ' Paler bars are the other libraries, from the latest reference job.' : ''}` : `One candle per engine (colours in the legend) per operation. The thick body is the middle half of the per-pass ${m.label.toLowerCase()} deltas (each pass links head and base with another function layout and measures them minutes apart), the thin line reaches to the lowest and the highest pass, the white tick and the number are the median. A single pass far off shows as a long thin line and leaves the body and the scale alone; an arrow head means the line continues beyond the chart. The grey band behind each row is what does not count as a change there: the operation's noise floor on this machine, widened where the passes scatter. A result is a change when its median lies outside the band and at least three quarters of the passes agree. The async engines have a row of their own below the operation they run, in the colour of their engine; on the counter tabs that row shows time, because the counters see only one of their threads.`}</p>${matrixTable(mx, m, j.ID)}`; }).join('') || '<p class="muted">no results yet</p>'}
+      ${mxs.map((mx, i) => { const bars = chartMode === 'abs' ? absRowBars(mx, m) : mx.engines.length, rows = chartRows(mx, m, chartMode === 'abs').length; return `<h2>${objName(mx.obj)}</h2><div class="chart" style="height:${rows * Math.max(30, bars * 14 + 8) + 80}px"><canvas id="dc${i}"></canvas></div><p class="note">${chartMode === 'abs' ? `One bar per engine${chartLibs ? ' and reference library' : ''} per operation, in measured ${m.label.toLowerCase()}: the thick body is the middle half of the single runs' values and the thin line reaches to the lowest and the highest run, the white tick and the number are their mean, the grey tick on our own engines is the base's mean. The axis is logarithmic because the operations of one object span several orders of magnitude, so a bar is short when the runs agree.${chartLibs ? ' Paler bars are the other libraries, from the latest reference job.' : ''}` : `One candle per engine (colours in the legend) per operation. The thick body is the middle half of the per-pass ${m.label.toLowerCase()} deltas (each pass links head and base with another function layout and measures them minutes apart), the thin line reaches to the lowest and the highest pass, the white tick and the number are the median. A single pass far off shows as a long thin line and leaves the body and the scale alone; an arrow head means the line continues beyond the chart. The grey band behind each row is what does not count as a change there: the operation's noise floor on this machine, widened where the passes scatter. A result is a change when its median lies outside the band and at least three quarters of the passes agree. The async engines have a row of their own below the operation they run, in the colour of their engine. On the counter tabs that row shows the cycles and instructions of all their threads together (the total work, not the latency), or time for a job measured before all threads were counted.`}</p>${matrixTable(mx, m, j.ID)}`; }).join('') || '<p class="muted">no results yet</p>'}
       ${d.Noise && d.Noise.Jobs ? `<p class="note">Noise floor over ${d.Noise.Jobs} self-comparisons: median |Δ time| ${d.Noise.MedianAbs.toFixed(2)}%, p95 ${d.Noise.P95Abs.toFixed(2)}%.</p>` : ''}
       <details><summary>Raw files</summary><p class="mono">${(d.Files || []).map(f => `<a href="/raw/${j.ID}/${f}" target="_blank">${f}</a>`).join(' · ')}</p></details>`;
     bindMetricTabs(() => viewJob(id));
@@ -706,7 +723,14 @@
   async function viewLeaf(id, engine, object, op) {
     const d = await get(`/api/job/${id}/leaf/${engine}/${object}/${op}`);
     const r = d.Result, m = METRICS[metric];
-    const samples = d.Samples;
+    const samples = d.Samples.filter(s => !(s.Extra && s.Extra.diag));
+    const diag = d.Samples.filter(s => s.Extra && s.Extra.diag);
+    const X = r.Extra || {};
+    const xfmt = k => EXTRAS[k].bytes ? fmtBytes : fmtNum;
+    const xline = k => X[k] ? `<div class="sub mono">${EXTRAS[k].name}: ${r.Baseline || !X[k].Base ? xfmt(k)(X[k].Head) : `${xfmt(k)(X[k].Base)} → ${xfmt(k)(X[k].Head)}${X[k].Base > 0 ? ' ' + pct((X[k].Head - X[k].Base) / X[k].Base * 100, 1) : ''}`} <span class="muted">(${X[k].N} run${X[k].N === 1 ? '' : 's'} per side)</span></div>` : '';
+    const counterCard = ['br-miss', 'l2-miss', 'fe-stall', 'l1d-miss'].some(k => X[k]) ? `<div class="card"><h3>More counters per op <span class="muted" style="text-transform:none">(median)</span></h3>${['br-miss', 'fe-stall', 'l1d-miss', 'l2-miss'].map(xline).join('')}${X.threads ? `<div class="sub">counted over all ${X.threads.Head} threads of the process</div>` : ''}</div>` : '';
+    const memCard = X.stack || X.retained ? `<div class="card"><h3>Memory beyond allocations</h3>${['retained', 'stack'].map(xline).join('')}</div>` : '';
+    const pairText = s => s.Extra ? Object.keys(EXTRAS).filter(k => !EXTRAS[k].bytes && s.Extra[k] !== undefined).map(k => `${EXTRAS[k].short} ${fmtNum(s.Extra[k])}`).join(' · ') : '';
     // offClock marks a run whose clock rate (cycles per ns) is more than
     // 1% off the median of all runs shown.
     const clocks = samples.filter(s => s.Cycles && s.Ns && !engine.endsWith('Async')).map(s => s.Cycles / s.Ns).sort((a, b) => a - b);
@@ -720,15 +744,21 @@
         <div class="card"><h3>Time per op</h3>${stat(r.Ns, fmtNs)}</div>
         ${r.Cycles.Head ? `<div class="card"><h3>Cycles per op</h3>${stat(r.Cycles, fmtNum)}</div><div class="card"><h3>Instructions per op</h3>${stat(r.Instrs, fmtNum)}</div>` : ''}
         ${cpi(r, 'Head') > 0 ? `<div class="card"><h3>Cycles per instruction</h3><div class="big">${r.Baseline ? cpi(r, 'Head').toFixed(3) : `${cpi(r, 'Base').toFixed(3)} → ${cpi(r, 'Head').toFixed(3)}`}</div><div class="sub">${r.Baseline || !kindOf(r) ? 'how fast the work executes' : kindText(r)}</div></div>` : ''}
+        ${counterCard}
         <div class="card"><h3>Memory per op</h3>${stat(r.Bytes, fmtBytes)}</div>
         <div class="card"><h3>Allocations per op</h3>${stat(r.Allocs, fmtNum)}</div>
+        ${memCard}
         <div class="card"><h3>Measurement</h3><div class="big">${r.N} × ${r.Iters}</div><div class="sub">measurements per side × iterations each${r.Steal ? ` · ${r.Steal} steal ticks (wake-ups)` : ''}</div></div>
       </div>
       <div class="toolbar">${metricTabs()}<span class="muted">every sample, in measurement order (pass, seed, side); dashed lines are the side means</span></div>
       <div class="chart h300"><canvas id="sc"></canvas></div>
-      <table><thead><tr><th>Run</th><th>Side</th><th class="num">Pass</th><th>Seed</th><th class="num">Iterations</th><th class="num">Time</th><th class="num">Cycles</th><th class="num">Instrs</th><th class="num" title="cycles per instruction">Cyc/instr</th><th class="num" title="cycles per nanosecond: the clock rate the run saw. A run far from the others was throttled or disturbed.">GHz</th><th class="num">Memory</th><th class="num">Allocs</th><th class="num">Steal</th></tr></thead><tbody>
-      ${samples.map(s => `<tr><td><a href="#/job/${s.JobID}">#${s.JobID}</a></td><td>${s.Side}</td><td class="num">${s.Pass + 1}</td><td class="mono">${s.Seed}</td><td class="num">${s.Iters}</td><td class="num">${fmtNs(s.Ns)}</td><td class="num">${s.Cycles ? fmtNum(s.Cycles) : '-'}</td><td class="num">${s.Instrs ? fmtNum(s.Instrs) : '-'}</td><td class="num">${s.Instrs && s.Cycles ? (s.Cycles / s.Instrs).toFixed(3) : '-'}</td><td class="num${offClock(s) ? ' warn' : ''}">${s.Cycles && s.Ns ? (s.Cycles / s.Ns).toFixed(3) : '-'}</td><td class="num">${fmtBytes(s.Bytes)}</td><td class="num">${fmtNum(s.Allocs)}</td><td class="num">${s.Steal}</td></tr>`).join('')}
+      <table><thead><tr><th>Run</th><th>Side</th><th class="num">Pass</th><th>Seed</th><th class="num">Iterations</th><th class="num">Time</th><th class="num">Cycles</th><th class="num">Instrs</th><th class="num" title="cycles per instruction">Cyc/instr</th><th class="num" title="cycles per nanosecond: the clock rate the run saw. A run far from the others was throttled or disturbed.">GHz</th><th class="num">Memory</th><th class="num">Allocs</th><th class="num">Steal</th><th title="the two further counters of this pass, per op">Counters of the pass</th></tr></thead><tbody>
+      ${samples.map(s => `<tr><td><a href="#/job/${s.JobID}">#${s.JobID}</a></td><td>${s.Side}</td><td class="num">${s.Pass + 1}</td><td class="mono">${s.Seed}</td><td class="num">${s.Iters}</td><td class="num">${fmtNs(s.Ns)}</td><td class="num">${s.Cycles ? fmtNum(s.Cycles) : '-'}</td><td class="num">${s.Instrs ? fmtNum(s.Instrs) : '-'}</td><td class="num">${s.Instrs && s.Cycles ? (s.Cycles / s.Instrs).toFixed(3) : '-'}</td><td class="num${offClock(s) ? ' warn' : ''}">${s.Cycles && s.Ns ? (s.Cycles / s.Ns).toFixed(3) : '-'}</td><td class="num">${fmtBytes(s.Bytes)}</td><td class="num">${fmtNum(s.Allocs)}</td><td class="num">${s.Steal}</td><td class="small mono">${pairText(s)}</td></tr>`).join('')}
       </tbody></table>
+      ${diag.length ? `<h2>Diagnostic runs</h2><p class="note">Under one layout the two sides executed the same instructions in clearly different cycles. Each side was run again, untimed, with the counters outside the rotation, to show where the cycles went: uops that had to be decoded (not served from the op cache), instruction cache and TLB misses.</p>
+      <table><thead><tr><th>Side</th><th>Seed</th><th class="num">Cycles</th><th class="num">Instrs</th><th class="num">Cyc/instr</th><th>Counters per op</th></tr></thead><tbody>
+      ${diag.map(s => `<tr><td>${s.Side}</td><td class="mono">${s.Seed}</td><td class="num">${fmtNum(s.Cycles)}</td><td class="num">${fmtNum(s.Instrs)}</td><td class="num">${s.Instrs ? (s.Cycles / s.Instrs).toFixed(3) : '-'}</td><td class="small mono">${Object.keys(DIAG).filter(k => s.Extra[k] !== undefined).map(k => `${DIAG[k]} ${fmtNum(s.Extra[k])}`).join(' · ')}</td></tr>`).join('')}
+      </tbody></table>` : ''}
       <p class="muted"><a href="#/op/${object}/${op}">history of this operation</a></p>`;
     bindMetricTabs(() => viewLeaf(id, engine, object, op));
     destroyCharts();

@@ -288,19 +288,30 @@ func summarize(samples []sample) []result {
 		l                                        leaf
 		nsB, nsH, bB, bH, aB, aH, cB, cH, iB, iH []float64
 		iters, steal                             int
+		extraB, extraH                           map[string][]float64
 	}
 	groups := map[string]*group{}
 	for _, sm := range samples {
+		if sm.isDiag() {
+			continue
+		}
 		k := sm.Engine + "/" + sm.Object + "/" + sm.Op
 		g, ok := groups[k]
 		if !ok {
-			g = &group{l: leaf{Engine: sm.Engine, Object: sm.Object, Op: sm.Op}, iters: sm.Iters}
+			g = &group{l: leaf{Engine: sm.Engine, Object: sm.Object, Op: sm.Op}, iters: sm.Iters, extraB: map[string][]float64{}, extraH: map[string][]float64{}}
 			groups[k] = g
 		}
 		if sm.Iters > 0 && (g.iters == 0 || sm.Iters < g.iters) {
 			g.iters = sm.Iters
 		}
 		g.steal += sm.Steal
+		for k, v := range sm.Extra {
+			if sm.Side == "head" {
+				g.extraH[k] = append(g.extraH[k], v)
+			} else {
+				g.extraB[k] = append(g.extraB[k], v)
+			}
+		}
 		if sm.Side == "head" {
 			g.nsH = append(g.nsH, sm.Ns)
 			g.bH = append(g.bH, sm.Bytes)
@@ -323,6 +334,16 @@ func summarize(samples []sample) []result {
 		r := result{Engine: g.l.Engine, Object: g.l.Object, Op: g.l.Op, Baseline: len(g.nsB) == 0, Iters: g.iters, Steal: g.steal,
 			N: len(g.nsH), Ns: compareMetric(g.nsB, g.nsH), Bytes: compareMetric(g.bB, g.bH), Allocs: compareMetric(g.aB, g.aH),
 			Cycles: compareMetric(g.cB, g.cH), Instrs: compareMetric(g.iB, g.iH)}
+		for k, hs := range g.extraH {
+			if r.Extra == nil {
+				r.Extra = map[string]extraStat{}
+			}
+			st := extraStat{Head: median(hs), N: len(hs)}
+			if bs := g.extraB[k]; len(bs) > 0 {
+				st.Base = median(bs)
+			}
+			r.Extra[k] = st
+		}
 		if !r.Baseline {
 			r.N = min(len(g.nsB), len(g.nsH))
 		}

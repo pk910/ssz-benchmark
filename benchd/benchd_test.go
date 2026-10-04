@@ -476,3 +476,44 @@ func TestBuildFacts(t *testing.T) {
 		t.Fatalf("stored %+v, %v", got, err)
 	}
 }
+
+func TestExtraFigures(t *testing.T) {
+	out := []byte("BenchmarkReal/Codegen/Block/Marshal \t 1\t 100 ns/op\t 400 cycles/op\t 900 instrs/op\t 12 br-miss/op\t 3 l2-miss/op\t 4096 stack-B/op\t 512 retained-B/op\t 10 iters\n")
+	lines := parseBenchOutput(out)
+	if len(lines) != 1 || lines[0].extra["br-miss"] != 12 || lines[0].extra["l2-miss"] != 3 || lines[0].extra["stack"] != 4096 || lines[0].extra["retained"] != 512 {
+		t.Fatalf("parsed %+v", lines)
+	}
+	var samples []sample
+	for pass := 0; pass < 4; pass++ {
+		for _, side := range []string{"base", "head"} {
+			sm := sample{Side: side, Engine: "Codegen", Object: "Block", Op: "Marshal", Seed: fmt.Sprint(101 + pass), Pass: pass, Iters: 10, Ns: 100, Cycles: 400, Instrs: 900}
+			if pass%2 == 0 {
+				sm.Extra = map[string]float64{"br-miss": 10 + float64(pass)}
+			} else {
+				sm.Extra = map[string]float64{"fe-stall": 50}
+			}
+			samples = append(samples, sm)
+		}
+	}
+	// A diagnostic run takes no part in the statistics.
+	samples = append(samples, sample{Side: "head", Engine: "Codegen", Object: "Block", Op: "Marshal", Seed: "101", Ns: 9999, Cycles: 9999, Instrs: 900, Extra: map[string]float64{"diag": 1, "dec-uops": 7}})
+	rs := summarize(samples)
+	if len(rs) != 1 || rs[0].N != 4 || rs[0].Ns.Head != 100 {
+		t.Fatalf("results %+v", rs)
+	}
+	if st := rs[0].Extra["br-miss"]; st.N != 2 || st.Head != 11 || st.Base != 11 {
+		t.Fatalf("br-miss %+v", st)
+	}
+	if _, ok := rs[0].Extra["dec-uops"]; ok {
+		t.Fatal("a diagnostic counter entered the statistics")
+	}
+	r := &runner{cfg: &config{counterPairs: true}}
+	pair := func(pass int, seed string) string { return r.passEnv("Codegen", pass, seed)[0] }
+	if pair(0, "101") == pair(1, "202") || pair(0, "101") != pair(2, "303") || pair(0, "101") == pair(0, "1101") {
+		t.Fatalf("pairs %s %s %s %s", pair(0, "101"), pair(1, "202"), pair(2, "303"), pair(0, "1101"))
+	}
+	env := strings.Join(r.passEnv("CodegenAsync", 0, "101"), " ")
+	if !strings.Contains(env, "BENCH_ALL_THREADS=1") || !strings.Contains(env, "BENCH_MEMORY=1") {
+		t.Fatalf("env %s", env)
+	}
+}

@@ -39,6 +39,11 @@ type runner struct {
 	started         time.Time
 	progress        progress
 	goVersionCached string
+
+	// What the passes of the running job measured, for the diagnostic runs.
+	jobSamples []sample
+	jobIters   map[string]int
+	jobLeaves  map[string]leaf
 }
 
 // progress is where the running job stands.
@@ -316,6 +321,7 @@ func (r *runner) runJob(ctx context.Context, j *job) bool {
 	if err != nil {
 		return fail(fmt.Errorf("measure: %w", err))
 	}
+	r.diagnose(ctx, j, head, base, jobDir, logw)
 	logw("measured %d passes in %s", passes, time.Since(start).Round(time.Second))
 	if err := r.store.finish(j.ID, passes, "", time.Since(start).Seconds()); err != nil {
 		logw("finish: %v", err)
@@ -784,6 +790,10 @@ func (r *runner) measure(ctx context.Context, j *job, head, base *side, jobDir s
 		}
 		return max(minPasses, passes+int((budget-measured)/lastPass))
 	}
+	r.jobSamples, r.jobIters, r.jobLeaves = nil, iters, map[string]leaf{}
+	for _, l := range leaves {
+		r.jobLeaves[l.key()] = l
+	}
 	seen := map[string][]float64{} // leaf+side+seed -> cycles (or ns) of the kept measurements
 	for round := 0; ; round++ {
 		for i, seed := range r.seeds {
@@ -820,6 +830,7 @@ func (r *runner) measure(ctx context.Context, j *job, head, base *side, jobDir s
 					if err := r.store.addSamples(bySide[s]); err != nil {
 						return passes, err
 					}
+					r.jobSamples = append(r.jobSamples, bySide[s]...)
 				}
 				done += len(g.leaves)
 				if ctx.Err() != nil {
@@ -855,16 +866,28 @@ func (r *runner) measureGroup(ctx context.Context, j *job, s *side, seed, pkg, e
 	logName := fmt.Sprintf("%s-p%d-%s-%s.txt", s.name, pass, seed, pkg)
 	pattern := benchRegex("BenchmarkReal/" + engine + "/" + object)
 	var got map[string]sample
-	for attempt := 0; attempt < 2; attempt++ {
+	// A run is repeated once when the hypervisor took too much of it, and
+	// up to three times when a thread started during an all-thread count.
+	repeatedSteal := false
+	for attempt := 0; ; attempt++ {
 		t0 := time.Now()
-		out, steal, err := r.runBinary(ctx, s, pkg, seed, pattern, "1x", itersSpec(leaves, iters), filepath.Join(jobDir, logName))
+		out, steal, err := r.runBinary(ctx, s, pkg, seed, pattern, "1x", itersSpec(leaves, iters), filepath.Join(jobDir, logName), r.passEnv(engine, pass, seed)...)
 		if err != nil {
 			return nil, err
 		}
 		got = parseSamples(j, s, seed, pass, leaves, out, steal)
-		if stolen := time.Duration(steal) * stealTick; float64(stolen) <= stealShare*float64(time.Since(t0)) {
+		drift := false
+		for _, sm := range got {
+			drift = drift || sm.Extra["thread-drift"] > 0
+		}
+		if drift && attempt < 3 {
+			logw("%s %s/%s seed %s: a thread started during the count, repeating", s.name, engine, object, seed)
+			continue
+		}
+		if stolen := time.Duration(steal) * stealTick; float64(stolen) <= stealShare*float64(time.Since(t0)) || repeatedSteal {
 			break
 		}
+		repeatedSteal = true
 		logw("%s %s/%s seed %s: %d steal ticks during the run, repeating", s.name, engine, object, seed, steal)
 	}
 	var samples []sample
@@ -900,10 +923,112 @@ const (
 	stealShare = 0.01
 )
 
+// Diagnostic runs: an operation whose two sides executed the same
+// instructions in clearly different cycles under one layout is run once
+// more per side with the counters outside the rotation, to show where the
+// cycles went. The runs are untimed extras, marked "diag", and take no
+// part in the statistics.
+const (
+	diagCycles = 5.0 // percent the cycles of the sides differ by at least
+	diagMax    = 6   // operations diagnosed per job at most
+)
+
+var diagSets = []string{"D1", "D2"}
+
+func (r *runner) diagnose(ctx context.Context, j *job, head, base *side, jobDir string, logw func(string, ...any)) {
+	if !r.cfg.counterPairs || base == nil {
+		return
+	}
+	type cand struct {
+		l     leaf
+		seed  string
+		pass  int
+		delta float64
+	}
+	bases := map[string]sample{}
+	for _, sm := range r.jobSamples {
+		if sm.Side == "base" {
+			bases[sm.Engine+"/"+sm.Object+"/"+sm.Op+"|"+sm.Seed] = sm
+		}
+	}
+	best := map[string]cand{}
+	for _, h := range r.jobSamples {
+		key := h.Engine + "/" + h.Object + "/" + h.Op
+		b, ok := bases[key+"|"+h.Seed]
+		if h.Side != "head" || !ok || strings.HasSuffix(h.Engine, "Async") || b.Cycles <= 0 || h.Cycles <= 0 || b.Instrs <= 0 || h.Instrs <= 0 {
+			continue
+		}
+		dc := math.Abs(h.Cycles/b.Cycles-1) * 100
+		di := math.Abs(h.Instrs/b.Instrs-1) * 100
+		if dc < diagCycles || di >= instrMoved || dc <= best[key].delta {
+			continue
+		}
+		best[key] = cand{l: r.jobLeaves[key], seed: h.Seed, pass: h.Pass, delta: dc}
+	}
+	cands := make([]cand, 0, len(best))
+	for _, c := range best {
+		cands = append(cands, c)
+	}
+	sort.Slice(cands, func(a, b int) bool { return cands[a].delta > cands[b].delta })
+	if len(cands) > diagMax {
+		cands = cands[:diagMax]
+	}
+	for i, c := range cands {
+		r.setPhase(j, fmt.Sprintf("diagnostic run %d/%d: %s seed %s", i+1, len(cands), c.l.key(), c.seed))
+		logw("%s seed %s: same instructions, cycles differ by %.1f%%: diagnostic runs", c.l.key(), c.seed, c.delta)
+		for _, set := range diagSets {
+			for _, s := range []*side{base, head} {
+				out, steal, err := r.runBinary(ctx, s, c.l.Pkg, c.seed, benchRegex(c.l.name()), "1x", itersSpec([]leaf{c.l}, r.jobIters),
+					filepath.Join(jobDir, fmt.Sprintf("%s-diag-%s-%s.txt", s.name, c.seed, c.l.Pkg)), "BENCH_COUNTERS="+set)
+				if err != nil {
+					logw("diagnostic run: %v", err)
+					return
+				}
+				sm, ok := parseSamples(j, s, c.seed, c.pass, []leaf{c.l}, out, steal)[c.l.name()]
+				if !ok {
+					continue
+				}
+				if sm.Extra == nil {
+					sm.Extra = map[string]float64{}
+				}
+				sm.Extra["diag"] = 1
+				if err := r.store.addSamples([]sample{sm}); err != nil {
+					logw("diagnostic run: %v", err)
+					return
+				}
+			}
+		}
+	}
+}
+
+// counterPairs are the names of the two pairs of further counters the
+// passes alternate between.
+var counterPairs = []string{"A", "B"}
+
+// passEnv is the environment of a measurement of the pass: the counter
+// pair (alternating by pass, and starting with the other pair in a rerun,
+// whose seeds are a thousand higher, so that a pair is not tied to the
+// same layouts), all threads counted for an async engine, and the memory
+// figures in the first pass.
+func (r *runner) passEnv(engine string, pass int, seed string) []string {
+	var env []string
+	if r.cfg.counterPairs {
+		n, _ := strconv.Atoi(seed)
+		env = append(env, "BENCH_COUNTERS="+counterPairs[(pass+n/1000)%len(counterPairs)])
+	}
+	if strings.HasSuffix(engine, "Async") {
+		env = append(env, "BENCH_ALL_THREADS=1")
+	}
+	if pass == 0 {
+		env = append(env, "BENCH_MEMORY=1")
+	}
+	return env
+}
+
 // measureLeaf runs one operation alone on one side and returns its sample.
 func (r *runner) measureLeaf(ctx context.Context, j *job, s *side, seed string, l leaf, iters map[string]int, pass int, jobDir string) (sample, error) {
 	logName := fmt.Sprintf("%s-p%d-%s-%s.txt", s.name, pass, seed, l.Pkg)
-	out, steal, err := r.runBinary(ctx, s, l.Pkg, seed, benchRegex(l.name()), "1x", itersSpec([]leaf{l}, iters), filepath.Join(jobDir, logName))
+	out, steal, err := r.runBinary(ctx, s, l.Pkg, seed, benchRegex(l.name()), "1x", itersSpec([]leaf{l}, iters), filepath.Join(jobDir, logName), r.passEnv(l.Engine, pass, seed)...)
 	if err != nil {
 		return sample{}, err
 	}
@@ -930,7 +1055,7 @@ func parseSamples(j *job, s *side, seed string, pass int, leaves []leaf, out []b
 			continue
 		}
 		sm := sample{JobID: j.ID, Side: s.name, Engine: l.Engine, Object: l.Object, Op: l.Op, Seed: seed, Pass: pass,
-			Iters: bl.iters, Ns: bl.ns, Bytes: bl.bytes, Allocs: bl.allocs, Cycles: bl.cycles, Instrs: bl.instrs, Steal: steal}
+			Iters: bl.iters, Ns: bl.ns, Bytes: bl.bytes, Allocs: bl.allocs, Cycles: bl.cycles, Instrs: bl.instrs, Steal: steal, Extra: bl.extra}
 		if strings.HasSuffix(l.Engine, "Async") {
 			sm.Bytes, sm.Allocs = 0, 0
 		}
@@ -1031,7 +1156,7 @@ func (r *runner) mutatorCPU() string {
 // address space randomization, one scheduler thread for the synchronous
 // engines, output appended to the log file. It returns the output and the
 // steal ticks seen meanwhile.
-func (r *runner) runBinary(ctx context.Context, s *side, pkg, seed, pattern, benchTime, itersEnv, logPath string) ([]byte, int, error) {
+func (r *runner) runBinary(ctx context.Context, s *side, pkg, seed, pattern, benchTime, itersEnv, logPath string, env ...string) ([]byte, int, error) {
 	bin := s.bin(pkg, seed)
 	if bin == "" {
 		return nil, 0, fmt.Errorf("no %s binary for seed %s", pkg, seed)
@@ -1056,6 +1181,7 @@ func (r *runner) runBinary(ctx context.Context, s *side, pkg, seed, pattern, ben
 	if itersEnv != "" {
 		cmd.Env = append(cmd.Env, "BENCH_ITERS="+itersEnv)
 	}
+	cmd.Env = append(cmd.Env, env...)
 	var out, errb bytes.Buffer
 	cmd.Stdout, cmd.Stderr = &out, &errb
 	before := r.cpuSteal()
@@ -1082,6 +1208,15 @@ type benchLine struct {
 	allocs float64
 	cycles float64
 	instrs float64
+	extra  map[string]float64
+}
+
+// extraUnits maps the units of the harness's further figures to the keys
+// they are stored under.
+var extraUnits = map[string]string{
+	"br-miss/op": "br-miss", "l2-miss/op": "l2-miss", "fe-stall/op": "fe-stall", "l1d-miss/op": "l1d-miss",
+	"dec-uops/op": "dec-uops", "l1i-miss/op": "l1i-miss", "dtlb-miss/op": "dtlb-miss", "itlb-miss/op": "itlb-miss",
+	"threads": "threads", "thread-drift": "thread-drift", "retained-B/op": "retained", "stack-B/op": "stack",
 }
 
 func parseBenchOutput(out []byte) []benchLine {
@@ -1125,6 +1260,13 @@ func parseBenchOutput(out []byte) []benchLine {
 				bl.instrs = v
 			case "iters":
 				bl.iters = int(v)
+			default:
+				if key, known := extraUnits[f[k+1]]; known {
+					if bl.extra == nil {
+						bl.extra = map[string]float64{}
+					}
+					bl.extra[key] = v
+				}
 			}
 		}
 		if ok {

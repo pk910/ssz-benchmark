@@ -191,7 +191,7 @@ func iterate(b *testing.B, f func()) {
 	}
 	perf.stop()
 	b.StopTimer()
-	perf.report(b)
+	perf.report(b, b.N)
 	b.StartTimer()
 }
 
@@ -225,6 +225,12 @@ func iterateFixed(b *testing.B, n int, f func()) {
 	if warm1, _ := readAllocs(); warm1 != warm0 {
 		f()
 		runtime.GC()
+	}
+	if os.Getenv("BENCH_ALL_THREADS") != "" {
+		// The warm-up calls made the runtime start the threads the
+		// operation works on; all of them are counted from here.
+		perf.close()
+		perf = openCounters(true)
 	}
 	var elapsed time.Duration
 	every := 1
@@ -299,12 +305,50 @@ func iterateFixed(b *testing.B, n int, f func()) {
 	b.ReportMetric(float64(n), "iters")
 	b.ReportMetric(float64(faults)/float64(n), "faults/op")
 	b.ReportMetric(float64(sysNs)/float64(n), "sys-ns/op")
-	if perf.ok() {
-		cycles, instrs := perf.read()
-		b.ReportMetric(float64(cycles)/float64(n), "cycles/op")
-		b.ReportMetric(float64(instrs)/float64(n), "instrs/op")
+	perf.report(b, n)
+	if os.Getenv("BENCH_MEMORY") != "" {
+		reportMemory(b, f)
 	}
 	b.StartTimer()
+}
+
+var memSamples = []metrics.Sample{
+	{Name: "/memory/classes/heap/objects:bytes"},
+	{Name: "/memory/classes/heap/stacks:bytes"},
+}
+
+// readMemory returns the bytes of live and not yet swept heap objects and
+// the bytes of goroutine stacks.
+func readMemory() (objects, stacks uint64) {
+	metrics.Read(memSamples)
+	return memSamples[0].Value.Uint64(), memSamples[1].Value.Uint64()
+}
+
+// reportMemory adds two untimed figures of the operation: the heap its
+// result keeps alive (what is live after a collection beyond what was live
+// before the loop), and the stack one call needs (the growth of the stack
+// memory while a fresh goroutine, which starts with the smallest stack,
+// runs it). Stacks below 32 KiB come from memory the runtime keeps reserved
+// for stacks and read as zero.
+func reportMemory(b *testing.B, f func()) {
+	runtime.GC()
+	objects, stacks := readMemory()
+	retained := int64(objects) - int64(heapBase)
+	if retained < 0 {
+		retained = 0
+	}
+	b.ReportMetric(float64(retained), "retained-B/op")
+	done := make(chan uint64)
+	go func() {
+		f()
+		_, after := readMemory()
+		done <- after
+	}()
+	grown := int64(<-done) - int64(stacks)
+	if grown < 0 {
+		grown = 0
+	}
+	b.ReportMetric(float64(grown), "stack-B/op")
 }
 
 // perIterStatsMax is the loop length up to which allocations are read
@@ -324,10 +368,11 @@ func readAllocs() (bytes, objects uint64) {
 	return allocSamples[0].Value.Uint64(), allocSamples[1].Value.Uint64() + allocSamples[2].Value.Uint64()
 }
 
-// baseAlloc is the allocation counter at the start of a measured loop;
-// perf holds the hardware counters of the measured thread.
+// baseAlloc is the allocation counter at the start of a measured loop,
+// heapBase the live heap at that point; perf holds the hardware counters.
 var (
 	baseAlloc uint64
+	heapBase  uint64
 	perf      *counters
 )
 
@@ -340,8 +385,9 @@ func startLoop(b *testing.B) {
 	var ms runtime.MemStats
 	runtime.ReadMemStats(&ms)
 	baseAlloc = ms.TotalAlloc
+	heapBase, _ = readMemory()
 	perf.close()
-	perf = openCounters()
+	perf = openCounters(false)
 	perf.reset()
 	b.ResetTimer()
 	perf.start()

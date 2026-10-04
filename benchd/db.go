@@ -88,6 +88,22 @@ type sample struct {
 	Cycles float64 // cpu cycles/op of the measured thread (0 without a PMU)
 	Instrs float64 // retired instructions/op (0 without a PMU)
 	Steal  int     // steal ticks on the benchmark cpu during the measurement
+	// Extra holds what only some runs measure, per operation: the counter
+	// pair of the pass ("br-miss", "l2-miss", "fe-stall", "l1d-miss"), the
+	// threads counted when all were ("threads"), the memory figures of the
+	// first pass ("retained", "stack"), and the counters of a diagnostic
+	// run, which is marked "diag" and takes no part in the statistics.
+	Extra map[string]float64 `json:",omitempty"`
+}
+
+// isDiag reports whether the sample is a diagnostic run.
+func (sm sample) isDiag() bool { return sm.Extra["diag"] > 0 }
+
+// extraStat is the median of an extra value on each side over the runs
+// that measured it.
+type extraStat struct {
+	Base, Head float64
+	N          int // runs per side
 }
 
 // metric is one measured quantity of a leaf compared between the sides.
@@ -127,6 +143,8 @@ type result struct {
 	Cycles   metric
 	Instrs   metric
 	Steal    int // steal ticks seen over all measurements of the leaf
+	// Extra is computed from the samples for the job page and not stored.
+	Extra map[string]extraStat `json:",omitempty"`
 }
 
 // runnerInfo is a benchmark machine known to the controller.
@@ -277,6 +295,7 @@ func openDB(path string) (*store, error) {
 		`ALTER TABLE jobs ADD COLUMN runner TEXT NOT NULL DEFAULT ''`,
 		`ALTER TABLE samples ADD COLUMN cycles REAL NOT NULL DEFAULT 0`,
 		`ALTER TABLE samples ADD COLUMN instrs REAL NOT NULL DEFAULT 0`,
+		`ALTER TABLE samples ADD COLUMN extra TEXT NOT NULL DEFAULT ''`,
 	}
 	for _, stmt := range migrations {
 		_, _ = db.Exec(stmt) // fails when the column exists
@@ -751,13 +770,18 @@ func (s *store) insertSamples(samples []sample) error {
 	if err != nil {
 		return err
 	}
-	stmt, err := tx.Prepare(`INSERT INTO samples(job_id, side, engine, object, op, seed, pass, iters, ns, bytes, allocs, steal, cycles, instrs) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+	stmt, err := tx.Prepare(`INSERT INTO samples(job_id, side, engine, object, op, seed, pass, iters, ns, bytes, allocs, steal, cycles, instrs, extra) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
 	if err != nil {
 		tx.Rollback()
 		return err
 	}
 	for _, sm := range samples {
-		if _, err := stmt.Exec(sm.JobID, sm.Side, sm.Engine, sm.Object, sm.Op, sm.Seed, sm.Pass, sm.Iters, sm.Ns, sm.Bytes, sm.Allocs, sm.Steal, sm.Cycles, sm.Instrs); err != nil {
+		extra := ""
+		if len(sm.Extra) > 0 {
+			data, _ := json.Marshal(sm.Extra)
+			extra = string(data)
+		}
+		if _, err := stmt.Exec(sm.JobID, sm.Side, sm.Engine, sm.Object, sm.Op, sm.Seed, sm.Pass, sm.Iters, sm.Ns, sm.Bytes, sm.Allocs, sm.Steal, sm.Cycles, sm.Instrs, extra); err != nil {
 			tx.Rollback()
 			return err
 		}
@@ -781,7 +805,7 @@ func (s *store) samplesFor(jobID int64) ([]sample, error) {
 }
 
 func (s *store) sampleRows(jobID int64) ([]sample, error) {
-	rows, err := s.db.Query(`SELECT job_id, side, engine, object, op, seed, pass, iters, ns, bytes, allocs, steal, cycles, instrs FROM samples WHERE job_id = ? ORDER BY object, op, engine, pass, seed, side`, jobID)
+	rows, err := s.db.Query(`SELECT job_id, side, engine, object, op, seed, pass, iters, ns, bytes, allocs, steal, cycles, instrs, extra FROM samples WHERE job_id = ? ORDER BY object, op, engine, pass, seed, side`, jobID)
 	if err != nil {
 		return nil, err
 	}
@@ -789,8 +813,12 @@ func (s *store) sampleRows(jobID int64) ([]sample, error) {
 	var out []sample
 	for rows.Next() {
 		var sm sample
-		if err := rows.Scan(&sm.JobID, &sm.Side, &sm.Engine, &sm.Object, &sm.Op, &sm.Seed, &sm.Pass, &sm.Iters, &sm.Ns, &sm.Bytes, &sm.Allocs, &sm.Steal, &sm.Cycles, &sm.Instrs); err != nil {
+		var extra string
+		if err := rows.Scan(&sm.JobID, &sm.Side, &sm.Engine, &sm.Object, &sm.Op, &sm.Seed, &sm.Pass, &sm.Iters, &sm.Ns, &sm.Bytes, &sm.Allocs, &sm.Steal, &sm.Cycles, &sm.Instrs, &extra); err != nil {
 			return nil, err
+		}
+		if extra != "" {
+			_ = json.Unmarshal([]byte(extra), &sm.Extra)
 		}
 		out = append(out, sm)
 	}

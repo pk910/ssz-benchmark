@@ -181,6 +181,33 @@ Gloas type features) is measured on the packages it builds.
   instructions per op are identical to five digits. Cycles are therefore
   the headline metric in the UI; time stays a tab away.
 
+### Further figures per run
+
+- **Kind of a change.** A marked change is labelled `code` when the
+  instructions per operation moved by 0.5% or more (the code does
+  different work) and `same work` when only its cycles did (layout, cache
+  or branch behaviour).
+- **Counter pairs.** The machine runs four hardware counters at once.
+  Next to cycles and instructions every run counts one of two pairs,
+  alternating by pass: branch misses and L2 data misses, or frontend
+  stall cycles and L1 data misses. A rerun of a pair of commits starts
+  with the other pair. `-counter-pairs=false` turns this off.
+- **Async engines** are counted over all threads of the process (one
+  counter per thread, opened after the warm-up calls; a run during which
+  a thread started is repeated). Their cycles and instructions are the
+  total work, not the latency.
+- **Memory beyond allocations**, in the first pass: the heap the result
+  keeps alive, and the stack one call needs (growth of the stack memory
+  while a fresh goroutine runs it; a stack below 32 KiB reads as zero).
+- **Diagnostic runs.** When the two sides of an operation executed the
+  same instructions in cycles that differ by 5% or more under one layout,
+  each side is run again after the passes, untimed, with the counters
+  outside the rotation (decoded uops, instruction cache and TLB misses).
+  At most six operations per job; the runs take no part in the
+  statistics and show on the operation's page of the job.
+- **Build facts** per job side and harness package: size of the binary,
+  of its code and of the generated source, and the build time.
+
 ## Scheduling
 
 - Mirror fetched every minute. First run: the last 10 first-parent commits
