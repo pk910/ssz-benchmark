@@ -220,7 +220,7 @@ targets point to (`benchd/subjects.go`):
 | fastssz-v1 | `v1.0.0` | | |
 | fastssz | | latest `v2.x.y` tag | `main` |
 | karalabe-ssz | | latest tag | `main` |
-| methodical-ssz | | the version the latest Prysm release pins | `progression` (what Prysm ships from) |
+| methodical-ssz | | the version the latest Prysm release pins | `main` or `progression`, whichever has the newer head (Prysm ships from `progression`, which is ahead of `main` today) |
 
 - Every 15 minutes (`-lib-poll`) the daemon resolves the targets with
   `git ls-remote` (and Prysm's go.mod); a commit that has no job with the

@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"log"
@@ -11,6 +12,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -31,10 +33,11 @@ const (
 type target struct {
 	Name string
 	// Exactly one rule resolves the target to a commit:
-	Branch    string // the head of this branch
-	Tag       string // this tag
-	TagMatch  string // the highest version among the tags matching this pattern
-	PinRepo   string // the version PinModule has in the go.mod of this repository's latest release
+	Branch    string   // the head of this branch
+	Newest    []string // the head of whichever of these branches has the newest commit
+	Tag       string   // this tag
+	TagMatch  string   // the highest version among the tags matching this pattern
+	PinRepo   string   // the version PinModule has in the go.mod of this repository's latest release
 	PinModule string
 }
 
@@ -55,10 +58,12 @@ var librarySubjects = []subject{
 		Targets: []target{{Name: targetRelease, TagMatch: `^v2\.\d+\.\d+$`}, {Name: targetMaster, Branch: "main"}}},
 	{Name: "karalabe-ssz", Repo: "https://github.com/karalabe/ssz", Adapter: "karalabessz",
 		Targets: []target{{Name: targetRelease, TagMatch: semverTag}, {Name: targetMaster, Branch: "main"}}},
-	// Prysm ships methodical-ssz from the branch "progression"; its main
-	// branch is older and lacks what the adapter uses.
+	// Prysm ships methodical-ssz from the branch "progression", which is
+	// ahead of main (and has what the adapter uses). The master target
+	// follows whichever of the two has the newer head, so it returns to
+	// main once the work is merged there.
 	{Name: "methodical-ssz", Repo: "https://github.com/OffchainLabs/methodical-ssz", Adapter: "prysmssz",
-		Targets: []target{{Name: targetRelease, PinRepo: "https://github.com/OffchainLabs/prysm", PinModule: "github.com/OffchainLabs/methodical-ssz"}, {Name: targetMaster, Branch: "progression"}}},
+		Targets: []target{{Name: targetRelease, PinRepo: "https://github.com/OffchainLabs/prysm", PinModule: "github.com/OffchainLabs/methodical-ssz"}, {Name: targetMaster, Newest: []string{"main", "progression"}}}},
 }
 
 func subjectByName(name string) *subject {
@@ -211,6 +216,43 @@ func pinnedVersion(ctx context.Context, repo, ref, module string) (string, error
 	return "", fmt.Errorf("%s does not require %s at %s", repo, module, ref)
 }
 
+// commitTimes remembers the commit times looked up; a commit's time does
+// not change.
+var commitTimes sync.Map
+
+// commitTime returns when a commit of a GitHub repository was committed.
+func commitTime(ctx context.Context, repo, sha string) (time.Time, error) {
+	if v, ok := commitTimes.Load(sha); ok {
+		return v.(time.Time), nil
+	}
+	api := strings.Replace(strings.TrimSuffix(repo, ".git"), "https://github.com/", "https://api.github.com/repos/", 1) + "/commits/" + sha
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, api, nil)
+	if err != nil {
+		return time.Time{}, err
+	}
+	req.Header.Set("Accept", "application/vnd.github+json")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return time.Time{}, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return time.Time{}, fmt.Errorf("%s: %s", api, resp.Status)
+	}
+	var out struct {
+		Commit struct {
+			Committer struct {
+				Date time.Time `json:"date"`
+			} `json:"committer"`
+		} `json:"commit"`
+	}
+	if err := json.NewDecoder(io.LimitReader(resp.Body, 1<<20)).Decode(&out); err != nil {
+		return time.Time{}, err
+	}
+	commitTimes.Store(sha, out.Commit.Committer.Date)
+	return out.Commit.Committer.Date, nil
+}
+
 // resolveTargets finds the commit of every target of a library.
 func resolveTargets(ctx context.Context, sub *subject) ([]targetState, error) {
 	branches, tags, err := remoteRefs(ctx, sub.Repo)
@@ -223,6 +265,21 @@ func resolveTargets(ctx context.Context, sub *subject) ([]targetState, error) {
 		switch {
 		case t.Branch != "":
 			st.SHA, st.Label = branches[t.Branch], t.Branch
+		case len(t.Newest) > 0:
+			var newest time.Time
+			for _, b := range t.Newest {
+				sha, ok := branches[b]
+				if !ok {
+					continue
+				}
+				when, err := commitTime(ctx, sub.Repo, sha)
+				if err != nil {
+					return nil, err
+				}
+				if st.SHA == "" || when.After(newest) {
+					st.SHA, st.Label, newest = sha, b, when
+				}
+			}
 		case t.Tag != "":
 			st.SHA, st.Label = tags[t.Tag], t.Tag
 		case t.TagMatch != "":
