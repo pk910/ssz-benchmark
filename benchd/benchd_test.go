@@ -709,3 +709,64 @@ func TestCPUCount(t *testing.T) {
 		}
 	}
 }
+
+func TestIdleWeights(t *testing.T) {
+	db, err := openDB(filepath.Join(t.TempDir(), "t.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg := &config{harnessDir: t.TempDir(), mainBranch: "master"}
+	s := &scheduler{cfg: cfg, db: db, prs: newPRCache("o/r", "")}
+	own, lib := subjectByName(subjectDynSSZ), subjectByName("fastssz")
+	ownHash, _ := subjectHash(cfg.harnessDir, own)
+	libHash, _ := subjectHash(cfg.harnessDir, lib)
+	now := time.Now()
+	done := func(j *job, harness string, ago time.Duration) {
+		if err := db.insertJob(j); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := db.db.Exec(`UPDATE jobs SET state = ?, harness = ?, finished = ? WHERE id = ?`, stateDone, harness, now.Add(-ago).Unix(), j.ID); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// An open pull request with two measured heads, and a library with a
+	// release and a main head.
+	s.prs.byHead["feature"] = pullRequest{Number: 7, HeadRef: "feature", HeadSHA: "p2", BaseRef: "master"}
+	done(&job{Kind: kindCommit, Branch: "feature", HeadSHA: "p1", BaseSHA: "m", PR: 7}, ownHash, 3*time.Hour)
+	done(&job{Kind: kindCommit, Branch: "feature", HeadSHA: "p2", BaseSHA: "m", PR: 7}, ownHash, 2*time.Hour)
+	done(targetJob(lib, "rel", []string{targetRelease}, []string{"v2.0.0"}, "", ""), libHash, 5*time.Hour)
+	done(targetJob(lib, "main", []string{targetMaster}, []string{"main"}, "", ""), libHash, 4*time.Hour)
+	_ = db.setTarget(targetState{Subject: lib.Name, Name: targetRelease, SHA: "rel", Label: "v2.0.0"})
+	_ = db.setTarget(targetState{Subject: lib.Name, Name: targetMaster, SHA: "main", Label: "main"})
+	// A target whose first job has not finished is no candidate.
+	_ = db.setTarget(targetState{Subject: "karalabe-ssz", Name: targetMaster, SHA: "k", Label: "main"})
+
+	// Every candidate has one run in the window: runs per weight are
+	// 1/8 (head p2), 1/6 (release), 1/4 (earlier head p1 and main).
+	var picked []string
+	for i := 0; i < 5; i++ {
+		j, err := s.idleJob()
+		if err != nil || j == nil {
+			t.Fatalf("idle job %d: %v, %v", i, j, err)
+		}
+		if !j.Refinement || j.Note != "refinement run" {
+			t.Fatalf("not marked as a refinement: %+v", j)
+		}
+		picked = append(picked, j.HeadSHA)
+		harness := libHash
+		if j.Subject == own.Name {
+			harness = ownHash
+		}
+		done(j, harness, time.Duration(5-i)*time.Minute)
+	}
+	// p2 (1/8), rel (1/6), then p2 at 2/8 ties with p1 and main at 1/4:
+	// the library that ran longest ago goes first, and of it the commit
+	// that ran longest ago.
+	want := []string{"p2", "rel", "p1", "main", "p2"}
+	if fmt.Sprint(picked) != fmt.Sprint(want) {
+		t.Fatalf("picked %v, want %v", picked, want)
+	}
+	if j, _ := s.idleJob(); j == nil || j.HeadSHA == "k" {
+		t.Fatalf("an unmeasured target was picked: %+v", j)
+	}
+}

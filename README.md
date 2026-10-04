@@ -243,10 +243,27 @@ measures its head, and its base when it has one.
   default versions. Its output is checked in.
 - Adding a library: an adapter directory with its types, benchmark file
   and `generate.sh`, and an entry in `subjects`.
-- Idle time is shared about half and half between the mirrored library
-  and the others: two refinement runs of the others (the least measured
-  target commit first) follow every idle job of the mirrored one, whose
-  own targets are refined in the same way.
+- Idle time refines what was measured before (`benchd/idle.go`). Every
+  commit worth another run is a candidate with a weight: the head of an
+  open pull request 8, each of its earlier heads half of the one above
+  (4, 2, 1, then none); a library's latest release 6 and the head of its
+  main branch 4, with the commits below that head of the mirrored library
+  halving in the same way; times the library's own weight (`Weight` in
+  its definition, 1 for all today). The scheduler takes the candidate with
+  the fewest runs in the last 48 hours per unit of weight; among equals
+  the library that ran longest ago, and of it the commit that ran longest
+  ago. A commit without a finished job of the current harness version is
+  no candidate (its first job is still to come, or it does not build).
+- A refinement run measures one pass per layout seed, with the next seed
+  set of that commit or pair; its runs are pooled with the earlier ones.
+- One-sided jobs (`-one-sided`): a job with a base measures its head and
+  takes each base run from an earlier run of the base commit with the same
+  seed (same harness and Go version, machine and boot, at most three days
+  old, not on a pathological layout) when the head run lies within
+  `-base-threshold` (1%) of it; otherwise the base is measured in the job
+  and checked against the head. A base that is not measured more often
+  than the head is always measured by the job, so the base never falls
+  behind.
 - Pooled values: when a job finishes, the values of the commits it
   measured are recomputed over every job of the same harness version that
   had the commit on either side (`commit_values`). The Operations page

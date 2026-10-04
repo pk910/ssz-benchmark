@@ -842,7 +842,9 @@ func (r *runner) measure(ctx context.Context, j *job, head, base *side, jobDir s
 	seen := map[string][]float64{} // leaf+side+seed -> cycles (or ns) of the kept measurements
 	for round := 0; ; round++ {
 		for i, seed := range r.seeds {
-			if passes >= minPasses && measured+lastPass > budget {
+			// A refinement run adds one pass per seed; any other job
+			// fills its budget.
+			if passes >= minPasses && (j.Refinement || measured+lastPass > budget) {
 				return passes, nil
 			}
 			passStart := time.Now()

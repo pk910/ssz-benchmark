@@ -62,6 +62,16 @@ func (s *store) storedBaseRuns(j *job, seeds []string) (map[string]sample, error
 		jobs = append(jobs, x)
 	}
 	rows.Close()
+	// A base that is not measured more often than the head is measured by
+	// the job itself, so that the base never falls behind the head.
+	var baseRuns, headRuns int
+	if err := s.db.QueryRow(`SELECT coalesce(sum((head_sha = ? OR (base_sha = ? AND note NOT LIKE '%one-sided:%'))), 0), coalesce(sum(head_sha = ?), 0) FROM jobs
+		WHERE state = ? AND id != ? AND subject = ? AND harness = ?`, j.BaseSHA, j.BaseSHA, j.HeadSHA, stateDone, j.ID, j.Subject, j.Harness).Scan(&baseRuns, &headRuns); err != nil {
+		return nil, err
+	}
+	if baseRuns <= headRuns {
+		return out, nil
+	}
 	want := map[string]bool{}
 	for _, seed := range seeds {
 		want[seed] = true

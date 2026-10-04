@@ -51,6 +51,9 @@ type subject struct {
 	// against a checkout from the mirror.
 	Adapter string
 	Targets []target
+	// Weight scales how much of the idle time the library's commits get
+	// next to the others' (0 counts as 1).
+	Weight float64
 }
 
 const semverTag = `^v\d+\.\d+\.\d+$`
@@ -92,6 +95,24 @@ func configureSubjects(cfg *config) {
 			sub.Targets[i].Branch = cfg.mainBranch
 		}
 	}
+}
+
+func (sub *subject) weight() float64 {
+	if sub.Weight <= 0 {
+		return 1
+	}
+	return sub.Weight
+}
+
+// splitTrim splits a list and drops empty parts.
+func splitTrim(s, sep string) []string {
+	var out []string
+	for _, part := range strings.Split(s, sep) {
+		if part = strings.TrimSpace(part); part != "" {
+			out = append(out, part)
+		}
+	}
+	return out
 }
 
 // mirrored reports whether the daemon keeps a mirror of the subject's
@@ -458,57 +479,6 @@ func (s *scheduler) describe(sub *subject, sha string) string {
 		return s.git.describe(sha)
 	}
 	return ""
-}
-
-// idleTargetJob is a rerun of the least measured commit among the current
-// targets of the libraries pick accepts; nil when none can be measured.
-func (s *scheduler) idleTargetJob(pick func(*subject) bool) (*job, error) {
-	targets, err := s.db.targets()
-	if err != nil {
-		return nil, err
-	}
-	type cand struct {
-		sub    *subject
-		sha    string
-		names  []string
-		labels []string
-		runs   int
-	}
-	var cands []*cand
-	seen := map[string]*cand{}
-	for _, t := range targets {
-		sub := subjectByName(t.Subject)
-		if sub == nil || !pick(sub) {
-			continue
-		}
-		key := t.Subject + "|" + t.SHA
-		c := seen[key]
-		if c == nil {
-			hash, err := subjectHash(s.cfg.harnessDir, sub)
-			if err != nil {
-				return nil, err
-			}
-			var done, failed int
-			if err := s.db.db.QueryRow(`SELECT coalesce(sum(state = ?), 0), coalesce(sum(state = ?), 0) FROM jobs WHERE subject = ? AND head_sha = ? AND harness = ?`,
-				stateDone, stateFailed, t.Subject, t.SHA, hash).Scan(&done, &failed); err != nil {
-				return nil, err
-			}
-			if failed > 0 || done == 0 {
-				// Does not build, or its first job is still to come.
-				continue
-			}
-			c = &cand{sub: sub, sha: t.SHA, runs: done}
-			seen[key] = c
-			cands = append(cands, c)
-		}
-		c.names, c.labels = append(c.names, t.Name), append(c.labels, t.Label)
-	}
-	if len(cands) == 0 {
-		return nil, nil
-	}
-	sort.SliceStable(cands, func(a, b int) bool { return cands[a].runs < cands[b].runs })
-	c := cands[0]
-	return targetJob(c.sub, c.sha, c.names, c.labels, s.describe(c.sub, c.sha), "refinement run"), nil
 }
 
 // migrateJobKinds brings jobs queued before every library had the same

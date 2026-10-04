@@ -409,12 +409,10 @@ func (c *prCache) forBranch(branch string) (pullRequest, bool) {
 
 // scheduler turns new commits into jobs and keeps the queue non-empty.
 type scheduler struct {
-	cfg       *config
-	db        *store
-	git       *gitRepo
-	prs       *prCache
-	idleCount int
-	idleTurn  int
+	cfg *config
+	db  *store
+	git *gitRepo
+	prs *prCache
 	// lastTargetPoll is when the libraries' upstream repositories were
 	// last checked.
 	lastTargetPoll time.Time
@@ -771,40 +769,6 @@ func (g *gitRepo) branches2(name string) (string, bool) {
 // comparison in between.
 // The machine never idles; every rerun pools with the earlier runs of its
 // pair and tightens that comparison.
-// otherIdleRuns is how many refinement runs of the other libraries follow
-// one idle job of the mirrored one. A job of theirs fills the same
-// measurement budget with one side of one engine and takes about half as
-// long (18 against 40 minutes), so two of them share the idle time about
-// half and half.
-const otherIdleRuns = 2
-
-func (s *scheduler) idleJob() (*job, error) {
-	s.idleTurn++
-	if s.idleTurn%(otherIdleRuns+1) != 1 {
-		if j, err := s.idleTargetJob(func(sub *subject) bool { return !sub.mirrored() }); err != nil || j != nil {
-			return j, err
-		}
-	}
-	s.idleCount++
-	switch s.idleCount % 8 {
-	case 0:
-		return s.idleJobOfKind(kindNoise)
-	case 2, 6:
-		if j, err := s.idleTargetJob((*subject).mirrored); err != nil || j != nil {
-			return j, err
-		}
-	}
-	prev, err := s.db.leastRefinedPair()
-	if err != nil {
-		return nil, err
-	}
-	if prev == nil {
-		return s.idleJobOfKind(kindNoise)
-	}
-	return &job{Kind: kindCommit, Branch: prev.Branch, HeadSHA: prev.HeadSHA, HeadDesc: prev.HeadDesc,
-		BaseSHA: prev.BaseSHA, BaseRef: prev.BaseRef, BaseDesc: prev.BaseDesc, PR: prev.PR, Note: "refinement run"}, nil
-}
-
 func (s *scheduler) idleJobOfKind(kind string) (*job, error) {
 	mainSHA, ok := s.git.branches2(s.cfg.mainBranch)
 	if !ok {

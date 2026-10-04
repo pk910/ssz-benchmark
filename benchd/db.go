@@ -35,29 +35,30 @@ const (
 )
 
 type job struct {
-	ID        int64
-	Created   time.Time
-	Started   *time.Time
-	Finished  *time.Time
-	State     string
-	Kind      string
-	Subject   string // the library the job measures
-	Targets   string // the targets of the library the head stood for when queued ("master", "release+master")
-	Branch    string
-	HeadSHA   string
-	HeadDesc  string
-	BaseSHA   string
-	BaseDesc  string
-	BaseRef   string
-	PR        int
-	Passes    int
-	Error     string
-	Note      string
-	Seconds   float64
-	GoVersion string
-	Priority  int
-	Harness   string // hash of the harness source the job ran
-	Runner    string // machine that ran (or is to run) the job
+	ID         int64
+	Created    time.Time
+	Started    *time.Time
+	Finished   *time.Time
+	State      string
+	Kind       string
+	Subject    string // the library the job measures
+	Refinement bool   // an idle rerun of commits measured before: one pass per seed
+	Targets    string // the targets of the library the head stood for when queued ("master", "release+master")
+	Branch     string
+	HeadSHA    string
+	HeadDesc   string
+	BaseSHA    string
+	BaseDesc   string
+	BaseRef    string
+	PR         int
+	Passes     int
+	Error      string
+	Note       string
+	Seconds    float64
+	GoVersion  string
+	Priority   int
+	Harness    string // hash of the harness source the job ran
+	Runner     string // machine that ran (or is to run) the job
 	// Seeds are the layout seeds this run measures under, set when the job
 	// is handed out; empty means the runner's configured seeds.
 	Seeds []string
@@ -341,6 +342,7 @@ func openDB(path string) (*store, error) {
 		`ALTER TABLE jobs ADD COLUMN subject TEXT NOT NULL DEFAULT '` + subjectDynSSZ + `'`,
 		`ALTER TABLE jobs ADD COLUMN boot_id TEXT NOT NULL DEFAULT ''`,
 		`ALTER TABLE jobs ADD COLUMN targets TEXT NOT NULL DEFAULT ''`,
+		`ALTER TABLE jobs ADD COLUMN refinement INTEGER NOT NULL DEFAULT 0`,
 		`ALTER TABLE results ADD COLUMN threads INTEGER NOT NULL DEFAULT 0`,
 		`ALTER TABLE commit_values ADD COLUMN threads INTEGER NOT NULL DEFAULT 0`,
 	}
@@ -437,9 +439,9 @@ func (s *store) insertJob(j *job) error {
 	if j.Subject == "" {
 		j.Subject = subjectDynSSZ
 	}
-	res, err := s.db.Exec(`INSERT INTO jobs(created, state, kind, branch, head_sha, head_desc, base_sha, base_desc, base_ref, pr, note, priority, runner, subject, targets)
-		VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		time.Now().Unix(), stateQueued, j.Kind, j.Branch, j.HeadSHA, j.HeadDesc, j.BaseSHA, j.BaseDesc, j.BaseRef, j.PR, j.Note, j.Priority, j.Runner, j.Subject, j.Targets)
+	res, err := s.db.Exec(`INSERT INTO jobs(created, state, kind, branch, head_sha, head_desc, base_sha, base_desc, base_ref, pr, note, priority, runner, subject, targets, refinement)
+		VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		time.Now().Unix(), stateQueued, j.Kind, j.Branch, j.HeadSHA, j.HeadDesc, j.BaseSHA, j.BaseDesc, j.BaseRef, j.PR, j.Note, j.Priority, j.Runner, j.Subject, j.Targets, j.Refinement)
 	if err != nil {
 		return err
 	}
@@ -447,13 +449,13 @@ func (s *store) insertJob(j *job) error {
 	return nil
 }
 
-const jobColumns = `id, created, started, finished, state, kind, branch, head_sha, head_desc, base_sha, base_desc, base_ref, pr, passes, error, note, seconds, go_version, priority, harness, runner, subject, targets`
+const jobColumns = `id, created, started, finished, state, kind, branch, head_sha, head_desc, base_sha, base_desc, base_ref, pr, passes, error, note, seconds, go_version, priority, harness, runner, subject, targets, refinement`
 
 func scanJob(row interface{ Scan(...any) error }) (*job, error) {
 	j := &job{}
 	var created int64
 	var started, finished sql.NullInt64
-	if err := row.Scan(&j.ID, &created, &started, &finished, &j.State, &j.Kind, &j.Branch, &j.HeadSHA, &j.HeadDesc, &j.BaseSHA, &j.BaseDesc, &j.BaseRef, &j.PR, &j.Passes, &j.Error, &j.Note, &j.Seconds, &j.GoVersion, &j.Priority, &j.Harness, &j.Runner, &j.Subject, &j.Targets); err != nil {
+	if err := row.Scan(&j.ID, &created, &started, &finished, &j.State, &j.Kind, &j.Branch, &j.HeadSHA, &j.HeadDesc, &j.BaseSHA, &j.BaseDesc, &j.BaseRef, &j.PR, &j.Passes, &j.Error, &j.Note, &j.Seconds, &j.GoVersion, &j.Priority, &j.Harness, &j.Runner, &j.Subject, &j.Targets, &j.Refinement); err != nil {
 		return nil, err
 	}
 	j.Created = time.Unix(created, 0)
@@ -778,17 +780,6 @@ func (s *store) setJobPR(id int64, pr int) error {
 func (s *store) setJobNote(id int64, note string) error {
 	_, err := s.db.Exec(`UPDATE jobs SET note = ? WHERE id = ?`, note, id)
 	return err
-}
-
-// leastRefinedPair returns the finished commit comparison with the fewest
-// runs (newest among equals) as a template for a refinement run.
-func (s *store) leastRefinedPair() (*job, error) {
-	j, err := scanJob(s.db.QueryRow(`SELECT `+jobColumns+` FROM jobs WHERE id = (
-		SELECT MAX(id) FROM jobs WHERE state = ? AND kind = ? AND base_sha != '' GROUP BY head_sha, base_sha, runner ORDER BY COUNT(*) ASC, MAX(id) DESC LIMIT 1)`, stateDone, kindCommit))
-	if err == sql.ErrNoRows {
-		return nil, nil
-	}
-	return j, err
 }
 
 // lastJobOfKind returns the newest job of a kind in any state.
