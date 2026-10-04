@@ -52,7 +52,6 @@ type config struct {
 	poll             time.Duration
 	mainBranch       string
 	baselines        []string
-	noiseInterval    time.Duration
 	backfill         int
 	goBin            string
 	token            string
@@ -99,7 +98,6 @@ func main() {
 	flag.DurationVar(&cfg.poll, "poll", 60*time.Second, "how often the mirror is fetched")
 	flag.StringVar(&cfg.mainBranch, "main", "master", "main branch")
 	flag.StringVar(&baselines, "baselines", "FastSSZ", "harness engines that are library references (measured on the head binary only)")
-	flag.DurationVar(&cfg.noiseInterval, "noise-interval", 6*time.Hour, "a self-comparison of the main branch is queued ahead of the queue this often")
 	flag.IntVar(&cfg.backfill, "backfill", 10, "main-branch commits queued on the first run, and the most that one push to it queues")
 	flag.StringVar(&cfg.goBin, "go", "/usr/local/go/bin/go", "go binary")
 	flag.BoolVar(&cfg.web, "web", false, "serve the web UI and API from the database only (no fetching, no jobs)")

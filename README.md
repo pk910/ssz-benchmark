@@ -254,6 +254,11 @@ measures its head, and its base when it has one.
   the library that ran longest ago, and of it the commit that ran longest
   ago. A commit without a finished job of the current harness version is
   no candidate (its first job is still to come, or it does not build).
+- The noise floor comes from self-comparisons (`benchd/noise.go`): two
+  runs of one commit under the same layout seeds in different jobs of the
+  same harness version, machine and boot, which idle refinement produces
+  when a seed set comes round again, and jobs that measured one commit on
+  both sides. The newest 40 count. No job is scheduled for it.
 - A refinement run measures one pass per layout seed, with the next seed
   set of that commit or pair; its runs are pooled with the earlier ones.
 - One-sided jobs (`-one-sided`): a job with a base measures its head and
@@ -287,9 +292,6 @@ measures its head, and its base when it has one.
   job and the pair's results are recomputed from all runs pooled (the
   fixed iteration counts make the samples compatible), so every rerun
   tightens the intervals of that comparison and spreads it over time.
-  Independently, a master-vs-master noise job is queued with priority every
-  6 hours so the noise floor is tracked at a steady cadence while commits
-  wait.
 - Other libraries: see "Libraries and targets". What each can express:
 
   | library | Fulu state | Fulu block(s) | Gloas block(s), envelope | Gloas state |

@@ -460,9 +460,6 @@ func (s *scheduler) tick(ctx context.Context) {
 		log.Printf("branches: %v", err)
 		return
 	}
-	// The periodic noise job goes in first so its number matches its place
-	// in the queue on the first run.
-	s.scheduleNoise()
 	if n, err := s.db.seenCount(); err == nil && n == 0 {
 		s.bootstrap(branches)
 	}
@@ -699,32 +696,6 @@ func (s *scheduler) enqueueBranchTip(ref, sha string) error {
 	}
 	log.Printf("queue %s %s against %s (%s)", ref, sha[:12], baseSHA[:12], baseRef)
 	return s.db.insertJob(j)
-}
-
-// scheduleNoise queues a self-comparison of the main branch ahead of the
-// queue when the last one is older than the noise interval, so the noise
-// floor is tracked at a steady cadence even while commits wait.
-func (s *scheduler) scheduleNoise() {
-	if s.cfg.noiseInterval <= 0 {
-		return
-	}
-	last, err := s.db.lastJobOfKind(kindNoise)
-	if err != nil {
-		return
-	}
-	if last != nil && (last.State == stateQueued || last.State == stateRunning || time.Since(last.Created) < s.cfg.noiseInterval) {
-		return
-	}
-	j, err := s.idleJobOfKind(kindNoise)
-	if err != nil {
-		log.Printf("noise job: %v", err)
-		return
-	}
-	j.Priority = 1
-	j.Note = "scheduled noise floor: the same commit on both sides"
-	if err := s.db.insertJob(j); err != nil {
-		log.Printf("noise job: %v", err)
-	}
 }
 
 // resolvePRs fills the pull request of main-branch commit jobs that have

@@ -921,7 +921,7 @@ func (w *webServer) noiseFloor() noiseFloor { return w.db.noiseFloor(w.cfg.name)
 // local names the controller machine, whose jobs feed the overall figures.
 func noiseFloorOf(db *store, local string) noiseFloor {
 	nf := noiseFloor{PerLeaf: map[string]float64{}, Rows: []noiseRow{}, JobIDs: []int64{}, PerRunner: map[string]noiseStat{}}
-	jobs, err := db.listJobs(100, kindNoise)
+	sets, err := noiseSets(db)
 	if err != nil {
 		return nf
 	}
@@ -933,14 +933,10 @@ func noiseFloorOf(db *store, local string) noiseFloor {
 		steal                                    int
 	}
 	per := map[string]*acc{}
-	for _, j := range jobs {
-		if j.State != stateDone {
-			continue
-		}
+	for _, j := range sets {
 		nf.Jobs++
 		nf.JobIDs = append(nf.JobIDs, j.ID)
-		results, _ := db.resultsFor(j.ID)
-		for _, r := range results {
+		for _, r := range j.results {
 			if r.Baseline {
 				continue
 			}

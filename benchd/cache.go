@@ -33,12 +33,10 @@ func (c *pageCache) get(stamp, key string, build func() any) any {
 	return v
 }
 
-// noiseFloor returns the noise floor, computed anew only after a noise job
+// noiseFloor returns the noise floor, computed anew only after a job
 // finished.
 func (s *store) noiseFloor(local string) noiseFloor {
-	var n, last int64
-	_ = s.db.QueryRow(`SELECT count(*), coalesce(max(id), 0) FROM jobs WHERE kind = ? AND state = ?`, kindNoise, stateDone).Scan(&n, &last)
-	key := fmt.Sprintf("%s/%d/%d", local, n, last)
+	key := local + "/" + s.doneStamp()
 	s.nfMu.Lock()
 	defer s.nfMu.Unlock()
 	if s.nfKey != key {

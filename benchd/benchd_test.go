@@ -770,3 +770,43 @@ func TestIdleWeights(t *testing.T) {
 		t.Fatalf("an unmeasured target was picked: %+v", j)
 	}
 }
+
+func TestNoiseFromRepeatedRuns(t *testing.T) {
+	db, err := openDB(filepath.Join(t.TempDir(), "t.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	run := func(sha string, seeds []string, ns float64) int64 {
+		j := &job{Kind: kindCommit, Branch: "master", HeadSHA: sha, Runner: "box"}
+		if err := db.insertJob(j); err != nil {
+			t.Fatal(err)
+		}
+		var samples []sample
+		for i, seed := range seeds {
+			samples = append(samples, sample{JobID: j.ID, Side: "head", Engine: "Codegen", Object: "Block", Op: "Marshal", Seed: seed, Pass: i, Iters: 1, Ns: ns, Cycles: ns * 3, Instrs: 900})
+		}
+		if err := db.insertSamples(samples); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := db.db.Exec(`UPDATE jobs SET state = ?, harness = 'h', boot_id = 'b', finished = 1 WHERE id = ?`, stateDone, j.ID); err != nil {
+			t.Fatal(err)
+		}
+		return j.ID
+	}
+	set0, set1 := []string{"101", "202", "303", "404"}, []string{"1101", "1202", "1303", "1404"}
+	run("m", set0, 100)
+	run("m", set1, 500) // another seed set: no pair with the first
+	run("x", set0, 100) // another commit
+	later := run("m", set0, 102)
+	sets, err := noiseSets(db)
+	if err != nil || len(sets) != 1 || sets[0].ID != later {
+		t.Fatalf("sets %+v, %v", sets, err)
+	}
+	if rs := sets[0].results; len(rs) != 1 || rs[0].N != 4 || math.Abs(rs[0].Ns.Delta-2) > 1e-9 {
+		t.Fatalf("results %+v", sets[0].results)
+	}
+	nf := noiseFloorOf(db, "box")
+	if nf.Jobs != 1 || math.Abs(nf.PerLeaf["Codegen/Block/Marshal"]-2) > 1e-9 {
+		t.Fatalf("noise floor %+v", nf)
+	}
+}

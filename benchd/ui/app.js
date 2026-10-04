@@ -1063,8 +1063,8 @@
     const draw = () => {
       app.innerHTML = `<h1>Noise floor</h1>
         <div class="cards">
-          <div class="card"><h3>Self-comparison jobs</h3><div class="big">${d.Jobs}</div><div class="sub">master vs master, every 6 hours and in the idle rotation</div></div>
-          ${Object.entries(d.PerRunner || {}).map(([name, st]) => `<div class="card"><h3>|Δ time| on ${esc(name)}</h3><div class="big">${st.MedianAbs.toFixed(2)}% <span class="muted">median</span> · ${st.P95Abs.toFixed(2)}% <span class="muted">p95</span></div><div class="sub">over all operations and noise jobs of this machine</div></div>`).join('')}
+          <div class="card"><h3>Self-comparisons</h3><div class="big">${d.Jobs}</div><div class="sub">the newest pairs of runs of one commit under the same layout seeds in different jobs (idle refinement repeats them), and jobs that measured one commit on both sides</div></div>
+          ${Object.entries(d.PerRunner || {}).map(([name, st]) => `<div class="card"><h3>|Δ time| on ${esc(name)}</h3><div class="big">${st.MedianAbs.toFixed(2)}% <span class="muted">median</span> · ${st.P95Abs.toFixed(2)}% <span class="muted">p95</span></div><div class="sub">over all operations and self-comparisons of this machine</div></div>`).join('')}
           <div class="card"><h3>Steal ticks kept</h3><div class="big">${d.Steal}</div><div class="sub">hypervisor steal during kept runs (runs with steal are repeated once)</div></div>
         </div>
         <div class="toolbar">${metricTabs()}<span class="muted">per operation: |Δ| between the two sides of identical binaries; green p95 below 1%, red above 3%</span></div>
