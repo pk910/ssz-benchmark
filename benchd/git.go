@@ -769,10 +769,11 @@ func (g *gitRepo) branches2(name string) (string, bool) {
 // The machine never idles; every rerun pools with the earlier runs of its
 // pair and tightens that comparison.
 // otherIdleRuns is how many refinement runs of the other libraries follow
-// one idle job of the mirrored one: a job of theirs measures one side of
-// one engine and takes about a seventh of the time, so this shares the
-// idle time about half and half.
-const otherIdleRuns = 6
+// one idle job of the mirrored one. A job of theirs fills the same
+// measurement budget with one side of one engine and takes about half as
+// long (18 against 40 minutes), so two of them share the idle time about
+// half and half.
+const otherIdleRuns = 2
 
 func (s *scheduler) idleJob() (*job, error) {
 	s.idleTurn++

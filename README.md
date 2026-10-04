@@ -244,7 +244,7 @@ measures its head, and its base when it has one.
 - Adding a library: an adapter directory with its types, benchmark file
   and `generate.sh`, and an entry in `subjects`.
 - Idle time is shared about half and half between the mirrored library
-  and the others: six refinement runs of the others (the least measured
+  and the others: two refinement runs of the others (the least measured
   target commit first) follow every idle job of the mirrored one, whose
   own targets are refined in the same way.
 - Pooled values: when a job finishes, the values of the commits it
