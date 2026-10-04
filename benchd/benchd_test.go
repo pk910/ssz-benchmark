@@ -904,18 +904,4 @@ func TestBranchHistory(t *testing.T) {
 		t.Fatalf("history %v, tags %v", titles, commits[2].Tags)
 	}
 
-	db, err := openDB(filepath.Join(t.TempDir(), "t.db"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := db.setBranchCommits("lib", commits); err != nil {
-		t.Fatal(err)
-	}
-	got, err := db.branchCommits("lib")
-	if err != nil || len(got) != 3 || got[0].Title != "last" || fmt.Sprint(got[2].Tags) != "[v1.0.0]" {
-		t.Fatalf("stored %v %v", got, err)
-	}
-	if db.historyHead("lib") != historyID(commits) {
-		t.Fatalf("head %q against %q", db.historyHead("lib"), historyID(commits))
-	}
 }

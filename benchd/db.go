@@ -276,15 +276,7 @@ func openDB(path string) (*store, error) {
 			job_id INTEGER PRIMARY KEY,
 			data BLOB NOT NULL
 		)`,
-		`CREATE TABLE IF NOT EXISTS branch_commits (
-			subject TEXT NOT NULL,
-			sha TEXT NOT NULL,
-			pos INTEGER NOT NULL,
-			committed INTEGER NOT NULL,
-			title TEXT NOT NULL,
-			tags TEXT NOT NULL,
-			PRIMARY KEY (subject, sha)
-		)`,
+		`DROP TABLE IF EXISTS branch_commits`,
 		resultsSchema("results"),
 		`CREATE INDEX IF NOT EXISTS results_leaf ON results(object, op, engine, job_id)`,
 		`CREATE TABLE IF NOT EXISTS job_checks (

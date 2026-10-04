@@ -14,7 +14,8 @@ import (
 
 // The history of a library's main branch, as its repository has it: the
 // commits on the branch itself, a merge as one commit without the commits
-// it brought in. The repository pages list it, measured or not.
+// it brought in. The repository pages read it from a local repository
+// when they are built, and list it, measured or not.
 
 type branchCommit struct {
 	SHA       string
@@ -68,88 +69,25 @@ func fetchHistory(ctx context.Context, gitDir, repo, branch string) error {
 	return nil
 }
 
-// historyHead identifies the stored history of a library: the newest
-// commit and the tags, so that a new tag on an old commit renews it too.
-func (s *store) historyHead(subject string) string {
-	var head string
-	_ = s.db.QueryRow(`SELECT sha || ' ' || (SELECT coalesce(group_concat(tags, ','), '') FROM (SELECT tags FROM branch_commits WHERE subject = ?1 ORDER BY pos)) FROM branch_commits WHERE subject = ?1 AND pos = 0`, subject).Scan(&head)
-	return head
+// historyDir is the local repository that has the history of a library's
+// main branch: the mirror, or the repository kept for the commits of
+// another library's branch.
+func historyDir(dataDir string, sub *subject) string {
+	if sub.mirrored() {
+		return filepath.Join(dataDir, "repo.git")
+	}
+	return filepath.Join(dataDir, "work", "history", sub.Name+".git")
 }
 
-func historyID(commits []branchCommit) string {
-	var tags []string
-	for _, c := range commits {
-		tags = append(tags, strings.Join(c.Tags, " "))
-	}
-	return commits[0].SHA + " " + strings.Join(tags, ",")
-}
-
-func (s *store) setBranchCommits(subject string, commits []branchCommit) error {
-	tx, err := s.db.Begin()
-	if err != nil {
-		return err
-	}
-	defer func() { _ = tx.Rollback() }()
-	if _, err := tx.Exec(`DELETE FROM branch_commits WHERE subject = ?`, subject); err != nil {
-		return err
-	}
-	for i, c := range commits {
-		if _, err := tx.Exec(`INSERT INTO branch_commits(subject, sha, pos, committed, title, tags) VALUES(?, ?, ?, ?, ?, ?)`,
-			subject, c.SHA, i, c.Committed, c.Title, strings.Join(c.Tags, " ")); err != nil {
-			return err
-		}
-	}
-	return tx.Commit()
-}
-
-// branchCommits returns the stored history of a library's main branch,
-// newest first.
-func (s *store) branchCommits(subject string) ([]branchCommit, error) {
-	rows, err := s.db.Query(`SELECT sha, committed, title, tags FROM branch_commits WHERE subject = ? ORDER BY pos`, subject)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	var out []branchCommit
-	for rows.Next() {
-		var c branchCommit
-		var tags string
-		if err := rows.Scan(&c.SHA, &c.Committed, &c.Title, &tags); err != nil {
-			return nil, err
-		}
-		c.Tags = strings.Fields(tags)
-		out = append(out, c)
-	}
-	return out, rows.Err()
-}
-
-// updateHistory renews the stored history of a library's main branch: from
-// the mirror for the mirrored library, from a fetch of the branch for the
-// others (only when remote is set).
-func (s *scheduler) updateHistory(ctx context.Context, sub *subject, branch string, remote bool) {
-	gitDir := s.git.dir
-	if !sub.mirrored() {
-		if !remote {
-			return
-		}
-		gitDir = filepath.Join(s.cfg.dataDir, "work", "history", sub.Name+".git")
-		fctx, cancel := context.WithTimeout(ctx, 2*time.Minute)
-		err := fetchHistory(fctx, gitDir, sub.Repo, branch)
-		cancel()
-		if err != nil {
-			log.Printf("history of %s: %v", sub.Name, err)
-			return
-		}
-	}
-	commits, err := branchLog(ctx, gitDir, "refs/heads/"+branch)
-	if err != nil || len(commits) == 0 {
-		log.Printf("history of %s: %v (%d commits)", sub.Name, err, len(commits))
+// updateHistory fetches the commits of another library's main branch. The
+// mirrored library's are in the mirror.
+func (s *scheduler) updateHistory(ctx context.Context, sub *subject, branch string) {
+	if sub.mirrored() {
 		return
 	}
-	if historyID(commits) == s.db.historyHead(sub.Name) {
-		return
-	}
-	if err := s.db.setBranchCommits(sub.Name, commits); err != nil {
+	fctx, cancel := context.WithTimeout(ctx, 2*time.Minute)
+	defer cancel()
+	if err := fetchHistory(fctx, historyDir(s.cfg.dataDir, sub), sub.Repo, branch); err != nil {
 		log.Printf("history of %s: %v", sub.Name, err)
 	}
 }

@@ -1,12 +1,15 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"math"
 	"net/http"
+	"os/exec"
 	"sort"
 	"strconv"
 	"strings"
+	"time"
 )
 
 // The repository pages list the libraries with the commits of their main
@@ -126,9 +129,11 @@ func (w *webServer) repoView(sub *subject, offset, limit int, steps bool) (*repo
 	// The list is the history of the branch, newest first, with what was
 	// measured of each commit. Without a stored history it is the measured
 	// commits in the order they were found.
-	history, err := w.db.branchCommits(sub.Name)
-	if err != nil {
-		return nil, err
+	var history []branchCommit
+	if v.Branch != "" {
+		ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+		history, _ = branchLog(ctx, historyDir(w.cfg.dataDir, sub), "refs/heads/"+v.Branch)
+		cancel()
 	}
 	var commits []repoCommit
 	for _, h := range history {
@@ -294,7 +299,8 @@ func (w *webServer) repoView(sub *subject, offset, limit int, steps bool) (*repo
 }
 
 func (w *webServer) apiRepos(rw http.ResponseWriter, req *http.Request) {
-	stamp := w.db.doneStamp() + "|" + strconv.Itoa(w.queueStamp())
+	// The pages change with the jobs and with the histories.
+	stamp := w.db.doneStamp() + "|" + strconv.Itoa(w.queueStamp()) + "|" + w.historyStamp()
 	name := strings.TrimPrefix(strings.TrimPrefix(req.URL.Path, "/api/repos"), "/api/repo/")
 	if name == "" {
 		w.writeJSON(rw, w.pages.get(stamp, "repos", func() any {
@@ -322,4 +328,17 @@ func (w *webServer) apiRepos(rw http.ResponseWriter, req *http.Request) {
 		}
 		return v
 	}))
+}
+
+// historyStamp identifies the state of the histories the repository pages
+// read: the head of every library's main branch, as the target poller
+// stored it, and the tags of the local repositories.
+func (w *webServer) historyStamp() string {
+	var heads string
+	_ = w.db.db.QueryRow(`SELECT coalesce(group_concat(sha, ','), '') FROM (SELECT sha FROM targets ORDER BY subject, name)`).Scan(&heads)
+	for i := range subjects {
+		out, _ := exec.Command("git", "-C", historyDir(w.cfg.dataDir, &subjects[i]), "for-each-ref", "--count=1", "--sort=-creatordate", "--format=%(refname)", "refs/tags").Output()
+		heads += "|" + strings.TrimSpace(string(out))
+	}
+	return heads
 }

@@ -342,11 +342,11 @@ routes:
   against the measured commit before it (from the pooled values of both,
   within one harness version), and a chart with one line per operation:
   its change since the oldest measured commit of the page, a dot per measured
-  commit. The list is the history of the branch as the repository has it
-  (`branch_commits`, in full): the commits on the branch itself, a
-  merge as one commit. The target poller renews it, from the mirror or,
-  for the other libraries, from a fetch of the branch's commits without
-  their files into `work/history/<library>.git`. Commits without a
+  commit. The list is the history of the branch as the repository has it:
+  the commits on the branch itself, a merge as one commit. It is read from
+  a local repository when the page is built: the mirror, or, for another
+  library, `work/history/<library>.git`, into which the target poller
+  fetches the commits of the branch without their files. Commits without a
   measurement are listed as such.
 - `#/job/<id>`: per object a delta chart (bars = 95% intervals, ticks =
   means) and a matrix operations × engines, each cell base → head with the
