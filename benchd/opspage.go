@@ -15,7 +15,8 @@ type subjectValues struct {
 	// Wanted is the commit the target points to when the values are of an
 	// older one: the newer commit is not measured yet or does not build.
 	Wanted string
-	JobID  int64
+	Jobs   int // finished jobs that measured the commit
+	Runs   int // single runs pooled per operation (the most any has)
 	Repo   string
 	values []commitValue
 }
@@ -48,8 +49,12 @@ func (w *webServer) valuesOf(name, mode string, targets []targetState) *subjectV
 		sv.Wanted, sv.SHA = pick.SHA, sha
 		sv.values, _ = w.db.commitValues(name, sha)
 	}
-	for _, v := range sv.values {
-		sv.JobID = max(sv.JobID, v.JobID)
+	if len(sv.values) > 0 {
+		for _, v := range sv.values {
+			sv.Runs = max(sv.Runs, v.N)
+		}
+		_ = w.db.db.QueryRow(`SELECT count(*) FROM jobs WHERE state = ? AND subject = ? AND harness = ? AND (head_sha = ? OR base_sha = ?)`,
+			stateDone, name, sv.values[0].Harness, sv.SHA, sv.SHA).Scan(&sv.Jobs)
 	}
 	return sv
 }

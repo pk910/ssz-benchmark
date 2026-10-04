@@ -329,13 +329,13 @@
   async function viewJobs(kind) {
     const all = await get('/api/jobs?limit=500');
     const params = new URLSearchParams(location.hash.split('?')[1] || '');
-    const repoSel = params.get('repo') || '';
+    const repoSel = params.get('repo') || '', sha = params.get('sha') || '';
     const link = (k, r) => `#/jobs${k || r ? '?' + [k ? 'kind=' + k : '', r ? 'repo=' + encodeURIComponent(r) : ''].filter(Boolean).join('&') : ''}`;
     const kinds = ['', 'commit', 'release', 'noise'].map(k => `<a href="${link(k, repoSel)}" class="chip ${k === (kind || '') ? 'commit' : ''}">${k || 'all kinds'}</a>`).join(' ');
     const subjects = [...new Set(all.map(j => j.Subject))].sort((a, b) => (a !== 'dynamic-ssz') - (b !== 'dynamic-ssz') || a.localeCompare(b));
     const repos = ['', ...subjects].map(r => `<a href="${link(kind, r)}" class="chip ${r === repoSel ? 'commit' : ''}">${r ? esc((subjectRepos[r] || r).replace('https://github.com/', '')) : 'all repositories'}</a>`).join(' ');
-    const jobs = all.filter(j => (!kind || kindsOf(j).includes(kind)) && (!repoSel || j.Subject === repoSel));
-    app.innerHTML = `<h1>Jobs</h1><div class="toolbar">${kinds}</div><div class="toolbar">${repos}</div>${jobRows(jobs)}`;
+    const jobs = all.filter(j => (!kind || kindsOf(j).includes(kind)) && (!repoSel || j.Subject === repoSel) && (!sha || j.HeadSHA === sha || j.BaseSHA === sha));
+    app.innerHTML = `<h1>Jobs</h1><div class="toolbar">${kinds}</div><div class="toolbar">${repos}</div>${sha ? `<p class="note">Jobs that measured commit <span class="mono">${esc(sha.slice(0, 12))}</span> as head or base. <a href="#/jobs">all jobs</a></p>` : ''}${jobRows(jobs)}`;
   }
 
   /* job page: metric switch, delta charts, matrices */
@@ -835,19 +835,19 @@
       if (!(v > 0) && em.key !== 'Bytes' && em.key !== 'Allocs') return '<td class="grp muted">-</td>';
       const rel = c.Rel && c.Rel[em.key] !== undefined ? c.Rel[em.key] : null;
       const cv = em.key === 'Ns' ? c.CVNs : em.key === 'Cycles' ? c.CVCycles : 0;
-      return `<td class="grp"><a href="#/job/${c.JobID}/leaf/${e}/${r.Object}/${r.Op}" title="${c.N} runs pooled${cv ? `, spread ${cv.toFixed(1)}%` : ''}"><b>${em.fmt(v)}</b></a>${rel !== null ? ` <span class="ci ${Math.abs(rel) < 1 ? '' : rel < 0 ? 'better' : 'worse'}" title="master against the latest release of the same library">${pct(rel, 1)} vs release</span>` : ''}</td>`;
+      return `<td class="grp"><b title="median of ${c.N} runs of this commit${cv ? `, spread ${cv.toFixed(1)}%` : ''}">${em.fmt(v)}</b>${rel !== null ? ` <span class="ci ${Math.abs(rel) < 1 ? '' : rel < 0 ? 'better' : 'worse'}" title="master against the latest release of the same library">${pct(rel, 1)} vs release</span>` : ''}</td>`;
     };
     const asyncRow = r => Object.keys(r.Cells).some(e => e.endsWith('Async'))
       ? `<tr><td><span class="muted">${r.Object}</span></td><td class="mono muted">${r.Op} (async${metricFor(m, 'Async') !== m ? ', time' : ''})</td>${engines.map(e => cell(r, e + 'Async')).join('')}</tr>` : '';
     const subjectChip = s => {
       const link = /^[0-9a-f]{12,40}$/.test(s.SHA) ? `<a href="${s.Repo}/commit/${s.SHA}" target="_blank" rel="noopener" class="mono">${shortRef(s.SHA)}</a>` : `<span class="mono">${esc(s.SHA)}</span>`;
-      const state = !s.JobID ? ' · <span class="muted">not measured</span>' : ` · <a href="#/job/${s.JobID}">job #${s.JobID}</a>`;
+      const state = !s.Jobs ? ' · <span class="muted">not measured</span>' : ` · <a href="#/jobs?sha=${s.SHA}" title="the jobs that measured this commit">${s.Jobs} job${s.Jobs === 1 ? '' : 's'}</a>, ${s.Runs} runs`;
       const wanted = s.Wanted ? ` · <span class="worse" title="the target points to ${esc(s.Wanted)}, which is not measured yet or does not build; an older commit is shown">stale</span>` : '';
       return `<div class="card"><h3>${esc(s.Name)}${s.Target === 'fixed' ? ' <span class="muted" style="text-transform:none">(fixed version)</span>' : ''}</h3><div class="sub">${esc(s.Label)} · ${link}${state}${wanted}</div></div>`;
     };
     app.innerHTML = `<h1>Operations</h1>
       <div class="toolbar">${metricTabs()}<div class="tabs" id="opsMode"><button data-mode="master" class="${opsMode === 'master' ? 'active' : ''}" title="every library at the head of its main branch">master</button><button data-mode="release" class="${opsMode === 'release' ? 'active' : ''}" title="every library at its latest release">release</button></div>
-        <span class="muted">${opsMode === 'master' ? 'every library at the head of its main branch, with the change against its latest release' : 'every library at its latest release'}; values pooled over all runs of that commit and refined in idle time</span></div>
+        <span class="muted">${opsMode === 'master' ? 'every library at the head of its main branch, with the change against its latest release' : 'every library at its latest release'}; a value is the median over all runs of that commit in every job that measured it, and idle time adds runs</span></div>
       <div class="cards">${d.Subjects.map(subjectChip).join('')}</div>
       <div class="toolbar chips" id="engsel">${all.map(e => `<a href="#" data-e="${e}" class="chip ${opsHidden.has(e) ? '' : 'commit'}" title="show or hide this column">${e}</a>`).join(' ')}<a href="#" data-e="*" class="chip">all</a><a href="#" data-e="-" class="chip">ours only</a></div>
       <div style="overflow-x:auto"><table><thead><tr><th>Object</th><th>Operation</th>${engines.map(e => `<th class="grp">${e}</th>`).join('')}</tr></thead><tbody>
