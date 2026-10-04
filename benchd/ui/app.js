@@ -216,7 +216,10 @@
   // a commit of its main branch, a release, or both when they coincide.
   const kindsOf = j => j.Kind !== 'lib' && !(j.Targets || '').includes('+') ? [j.Kind] : [...new Set((j.Targets || j.Branch || '').split('+').map(t => t === 'master' ? 'commit' : 'release'))];
   const kindChips = j => kindsOf(j).map(k => `<span class="chip ${k}">${k}</span>`).join(' ');
-  const chip = j => `<span class="chip ${j.State}">${j.State}</span> ${kindChips(j)}`;
+  // An idle rerun of a commit or pair that was measured before is marked:
+  // it is no new work, its runs are pooled with the earlier ones.
+  const isRefinement = j => /refinement run/.test(j.Note || '');
+  const chip = j => `<span class="chip ${j.State}">${j.State}</span> ${kindChips(j)}${isRefinement(j) ? ' <span class="chip refine" title="idle time: the same commits measured again under other layouts; the runs are pooled with the earlier ones">refinement</span>' : ''}`;
   // repoLink names the repository of a job's library, linked.
   const repoLink = subject => { const url = subjectRepos[subject] || repo; return url ? `<a href="${url}" target="_blank" rel="noopener">${esc(url.replace('https://github.com/', ''))}</a>` : esc(subject || ''); };
   // refLabel is the branch or tag a job's commit was found under.

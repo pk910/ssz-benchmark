@@ -153,3 +153,4 @@ table.facts th { color: var(--muted); font-weight: 500; text-transform: none; le
 table.facts td.num, table.facts th.num { text-align: right; }
 table.facts tbody tr:hover td { background: none; }
 #metricTabsMore button { font-size: 11px; }
+.chip.refine { background: none; border: 1px dashed var(--muted); color: var(--muted); }
