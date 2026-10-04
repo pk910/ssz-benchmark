@@ -256,6 +256,25 @@ func (m metric) changed(floor float64) bool {
 	return m.PN == 0 || m.PAgree >= math.Ceil(0.75*m.PN)
 }
 
+// instrMoved is the change of the instructions per op from which an
+// operation counts as doing different work.
+const instrMoved = 0.5
+
+// workChanged reports whether the instructions per op of a result moved:
+// the code does different work. When they did not, a change of its cycles
+// comes from how the same work executes (layout, cache, branches). ok is
+// false without counters.
+func (r result) workChanged() (changed, ok bool) {
+	if r.Instrs.Base <= 0 || r.Instrs.Head <= 0 {
+		return false, false
+	}
+	d := r.Instrs.PMed
+	if r.Instrs.PN == 0 {
+		d = r.Instrs.Delta
+	}
+	return math.Abs(d) >= instrMoved, true
+}
+
 func cv(xs []float64, m float64) float64 {
 	if m == 0 {
 		return 0

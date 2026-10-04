@@ -130,6 +130,20 @@
     return (delta(m) < 0 ? 'better' : 'worse') + strong;
   }
   const badge = (m, key) => `<span class="badge ${cls(m, key)}" title="median of the per-pass deltas${m.PN > 0 ? ` (${m.PAgree} of ${m.PN} passes agree, single passes ${pct(m.DMin, 2)} to ${pct(m.DMax, 2)})` : ''} · band ±${bandOf(m, key).toFixed(2)}% (noise floor ${floorOf(key).toFixed(2)}%) · mean Δ ${pct(m.Delta)}">${pct(delta(m))}</span>`;
+  // kindOf tells what a change of an operation is made of: 'code' when its
+  // instructions per op moved (it does different work), 'same' when they
+  // did not (the same work executes differently), null without counters.
+  const INSTR_MOVED = 0.5;
+  function kindOf(r) {
+    if (!r || !r.Instrs || !(r.Instrs.Base > 0) || !(r.Instrs.Head > 0) || r.Engine.endsWith('Async')) return null;
+    return Math.abs(delta(r.Instrs)) >= INSTR_MOVED ? 'code' : 'same';
+  }
+  const kindText = r => kindOf(r) === 'code'
+    ? `instructions per op ${pct(delta(r.Instrs))}: the code does different work`
+    : `instructions per op unchanged (${pct(delta(r.Instrs))}): the same work executes differently (code layout, cache or branch behaviour)`;
+  const kindChip = r => kindOf(r) ? `<span class="kind ${kindOf(r)}" title="${kindText(r)}">${kindOf(r) === 'code' ? 'code' : 'same work'}</span>` : '';
+  // cpi is cycles per instruction of one side of a result.
+  const cpi = (r, side) => r.Instrs && r.Instrs[side] > 0 && r.Cycles[side] > 0 ? r.Cycles[side] / r.Instrs[side] : 0;
   const ciText = m => `<span class="ci">[${pct(m.Lo, 1)}, ${pct(m.Hi, 1)}]</span>`;
   const chip = j => `<span class="chip ${j.State}">${j.State}</span> <span class="chip ${j.Kind}">${j.Kind}</span>`;
   const commitLink = sha => sha === 'baselines' ? '<span class="muted">reference libraries</span>' : `<a class="mono" href="${repo}/commit/${sha}" target="_blank" rel="noopener">${short(sha)}</a>`;
@@ -303,7 +317,7 @@
     const M = r[m.key];
     if (unmeasured(M)) return `<div class="d">${label ? `<span class="muted small">${label}</span>` : ''}<span class="muted">not measured</span></div>`;
     const link = jobID ? `#/job/${jobID}/leaf/${r.Engine}/${r.Object}/${r.Op}` : null;
-    const body = `<div class="d">${label ? `<span class="muted small">${label}</span>` : ''}<span class="v">${m.fmt(M.Base)}<span class="arrow">→</span><b>${m.fmt(M.Head)}</b></span>${badge(M, r.Engine + '/' + r.Object + '/' + r.Op)}</div>`;
+    const body = `<div class="d">${label ? `<span class="muted small">${label}</span>` : ''}<span class="v">${m.fmt(M.Base)}<span class="arrow">→</span><b>${m.fmt(M.Head)}</b></span>${(m.key === 'Ns' || m.key === 'Cycles') && sig(M, r.Engine + '/' + r.Object + '/' + r.Op) ? kindChip(r) : ''}${badge(M, r.Engine + '/' + r.Object + '/' + r.Op)}</div>`;
     return link ? `<a href="${link}" title="every sample of this leaf">${body}</a>` : body;
   }
   function cellAbs(r, m) {
@@ -522,6 +536,8 @@
               M.PN > 0 && ['passes', `${M.PN}, ${M.PAgree} in the same direction`],
               ['band', `±${band.toFixed(2)}%  →  ${ch ? (delta(M) < 0 ? 'faster' : 'slower') : 'no change'}`],
               ['base → head', `${cm.fmt(M.Base)} → ${cm.fmt(M.Head)} ${cm.unit || ''}`],
+              cpi(c.r, 'Head') > 0 && ['cycles/instr', `${cpi(c.r, 'Base').toFixed(3)} → ${cpi(c.r, 'Head').toFixed(3)}`],
+              ch && kindOf(c.r) && ['kind', kindOf(c.r) === 'code' ? `code: instructions ${pct(delta(c.r.Instrs))}` : `same work: instructions ${pct(delta(c.r.Instrs))}`],
             ];
           }),
         },
@@ -676,6 +692,11 @@
     const d = await get(`/api/job/${id}/leaf/${engine}/${object}/${op}`);
     const r = d.Result, m = METRICS[metric];
     const samples = d.Samples;
+    // offClock marks a run whose clock rate (cycles per ns) is more than
+    // 1% off the median of all runs shown.
+    const clocks = samples.filter(s => s.Cycles && s.Ns && !engine.endsWith('Async')).map(s => s.Cycles / s.Ns).sort((a, b) => a - b);
+    const clockMed = clocks.length ? clocks[Math.floor(clocks.length / 2)] : 0;
+    const offClock = s => clockMed > 0 && s.Cycles && s.Ns && Math.abs(s.Cycles / s.Ns / clockMed - 1) > 0.01;
     const stat = (M, f) => r.Baseline
       ? `<div class="big">${f(M.Head)}</div><div class="sub">cv ${M.CVHead.toFixed(2)}%</div>`
       : `<div class="big">${badge(M)}</div><div class="sub">${f(M.Base)} → ${f(M.Head)} · 95% [${pct(M.Lo, 1)}, ${pct(M.Hi, 1)}] · p ${M.P.toFixed(3)} · median Δ ${pct(M.MedDelta)} · cv ${M.CVBase.toFixed(2)}% / ${M.CVHead.toFixed(2)}%</div>`;
@@ -683,14 +704,15 @@
       <div class="cards">
         <div class="card"><h3>Time per op</h3>${stat(r.Ns, fmtNs)}</div>
         ${r.Cycles.Head ? `<div class="card"><h3>Cycles per op</h3>${stat(r.Cycles, fmtNum)}</div><div class="card"><h3>Instructions per op</h3>${stat(r.Instrs, fmtNum)}</div>` : ''}
+        ${cpi(r, 'Head') > 0 ? `<div class="card"><h3>Cycles per instruction</h3><div class="big">${r.Baseline ? cpi(r, 'Head').toFixed(3) : `${cpi(r, 'Base').toFixed(3)} → ${cpi(r, 'Head').toFixed(3)}`}</div><div class="sub">${r.Baseline || !kindOf(r) ? 'how fast the work executes' : kindText(r)}</div></div>` : ''}
         <div class="card"><h3>Memory per op</h3>${stat(r.Bytes, fmtBytes)}</div>
         <div class="card"><h3>Allocations per op</h3>${stat(r.Allocs, fmtNum)}</div>
         <div class="card"><h3>Measurement</h3><div class="big">${r.N} × ${r.Iters}</div><div class="sub">measurements per side × iterations each${r.Steal ? ` · ${r.Steal} steal ticks (wake-ups)` : ''}</div></div>
       </div>
       <div class="toolbar">${metricTabs()}<span class="muted">every sample, in measurement order (pass, seed, side); dashed lines are the side means</span></div>
       <div class="chart h300"><canvas id="sc"></canvas></div>
-      <table><thead><tr><th>Run</th><th>Side</th><th class="num">Pass</th><th>Seed</th><th class="num">Iterations</th><th class="num">Time</th><th class="num">Cycles</th><th class="num">Instrs</th><th class="num">Memory</th><th class="num">Allocs</th><th class="num">Steal</th></tr></thead><tbody>
-      ${samples.map(s => `<tr><td><a href="#/job/${s.JobID}">#${s.JobID}</a></td><td>${s.Side}</td><td class="num">${s.Pass + 1}</td><td class="mono">${s.Seed}</td><td class="num">${s.Iters}</td><td class="num">${fmtNs(s.Ns)}</td><td class="num">${s.Cycles ? fmtNum(s.Cycles) : '-'}</td><td class="num">${s.Instrs ? fmtNum(s.Instrs) : '-'}</td><td class="num">${fmtBytes(s.Bytes)}</td><td class="num">${fmtNum(s.Allocs)}</td><td class="num">${s.Steal}</td></tr>`).join('')}
+      <table><thead><tr><th>Run</th><th>Side</th><th class="num">Pass</th><th>Seed</th><th class="num">Iterations</th><th class="num">Time</th><th class="num">Cycles</th><th class="num">Instrs</th><th class="num" title="cycles per instruction">Cyc/instr</th><th class="num" title="cycles per nanosecond: the clock rate the run saw. A run far from the others was throttled or disturbed.">GHz</th><th class="num">Memory</th><th class="num">Allocs</th><th class="num">Steal</th></tr></thead><tbody>
+      ${samples.map(s => `<tr><td><a href="#/job/${s.JobID}">#${s.JobID}</a></td><td>${s.Side}</td><td class="num">${s.Pass + 1}</td><td class="mono">${s.Seed}</td><td class="num">${s.Iters}</td><td class="num">${fmtNs(s.Ns)}</td><td class="num">${s.Cycles ? fmtNum(s.Cycles) : '-'}</td><td class="num">${s.Instrs ? fmtNum(s.Instrs) : '-'}</td><td class="num">${s.Instrs && s.Cycles ? (s.Cycles / s.Instrs).toFixed(3) : '-'}</td><td class="num${offClock(s) ? ' warn' : ''}">${s.Cycles && s.Ns ? (s.Cycles / s.Ns).toFixed(3) : '-'}</td><td class="num">${fmtBytes(s.Bytes)}</td><td class="num">${fmtNum(s.Allocs)}</td><td class="num">${s.Steal}</td></tr>`).join('')}
       </tbody></table>
       <p class="muted"><a href="#/op/${object}/${op}">history of this operation</a></p>`;
     bindMetricTabs(() => viewLeaf(id, engine, object, op));

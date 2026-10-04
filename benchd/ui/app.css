@@ -139,3 +139,7 @@ td.cell .d > .muted.small { min-width: 78px; }
 label.check { display: inline-flex; align-items: center; gap: 5px; font-size: 12px; color: var(--muted); cursor: pointer; }
 tr.unmeasured td { opacity: .62; }
 select { padding: 4px 8px; border: 1px solid var(--line); border-radius: 6px; background: var(--card); color: var(--fg); font: inherit; }
+
+.kind { display: inline-block; margin-right: 6px; padding: 0 5px; border-radius: 4px; font-size: 10px; text-transform: uppercase; letter-spacing: .03em; border: 1px solid var(--line2, var(--line)); color: var(--muted); }
+.kind.code { color: var(--acc); border-color: var(--acc); }
+td.warn { color: var(--warn); font-weight: 600; }

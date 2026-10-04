@@ -449,6 +449,7 @@ func renderCheck(j *job, results []result, nf noiseFloor, link, state string) (s
 	sb.WriteString("**Bold** marks a change: the median lies beyond the operation's noise floor and beyond what the layouts alone did to this pair, and at least three quarters of the passes agree. \"slower\" and \"faster\" count those.\n")
 
 	// Per object: one row per operation, one column pair per engine.
+	kinds := false
 	byObject := map[string][]result{}
 	var objects []string
 	for _, r := range own {
@@ -495,12 +496,23 @@ func renderCheck(j *job, results []result, nf noiseFloor, link, state string) (s
 				delta := pct(m.PMed)
 				if beyond(r) {
 					delta = "**" + delta + "**"
+					if work, ok := r.workChanged(); ok && !strings.HasSuffix(r.Engine, "Async") {
+						if work {
+							delta += " ¹"
+						} else {
+							delta += " ²"
+						}
+						kinds = true
+					}
 				}
 				fmt.Fprintf(&sb, " %s → %s | %s |", f(m.Base), f(m.Head), delta)
 			}
 			sb.WriteString("\n")
 		}
 		sb.WriteString("\n</details>\n")
+	}
+	if kinds {
+		fmt.Fprintf(&sb, "\n¹ the instructions per operation changed by %.1f%% or more: the code does different work. ² same instructions: the same work executes differently (code layout, cache or branch behaviour).\n", instrMoved)
 	}
 	if link != "" {
 		fmt.Fprintf(&sb, "\n[Charts, every sample and the other SSZ libraries](%s)", link)
