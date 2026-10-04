@@ -397,12 +397,25 @@
   /* ---------- repositories ---------- */
   // stepChips: how a commit changed each engine against the commit before
   // it on the branch.
-  const stepChips = (c, first) => !c.Compared
-    ? `<span class="muted">${c.State !== 'done' ? esc(c.State) : first ? 'first measured commit' : 'no values comparable with the commit before'}</span>`
-    : `<div class="chips">${c.Engines.map(e => `<span class="chip ${Math.abs(e.Geomean) < 0.5 ? '' : e.Geomean < 0 ? 'better' : 'worse'}" title="against the commit before: geomean over ${e.N} operations (cycles, else time); ${e.Faster} faster and ${e.Slower} slower by 1% or more">${esc(engName(e.Engine).replace(/^dynamic-ssz /, ''))} <b>${pct(e.Geomean, 1)}</b>${e.Faster || e.Slower ? ` <span class="moved">${e.Faster ? `<span class="better">▼${e.Faster}</span>` : ''}${e.Slower ? `<span class="worse">▲${e.Slower}</span>` : ''}</span>` : ''}</span>`).join('')}</div>`;
-  const repoCommits = (v, commits) => !commits.length ? `<p class="muted">${v.Branch ? 'no commit of the main branch measured yet' : 'a fixed version: no branch is followed'}</p>`
-    : `<table class="commits"><thead><tr><th>Commit</th><th>Description</th><th>Change against the commit before <span class="muted" style="text-transform:none">(per engine)</span></th><th class="num">Runs</th><th>Measured</th></tr></thead><tbody>${commits.map((c, i) =>
-      `<tr><td>${commitLink(c.SHA, v.Name)}</td><td><span class="muted desc" style="display:inline-block;vertical-align:bottom">${esc(c.Desc).replace(/^[0-9a-f]{7,12} /, '')}</span></td><td>${stepChips(c, i === commits.length - 1 && commits.length === v.Total)}</td><td class="num">${c.Runs || ''}</td><td class="muted">${c.Measured ? when(c.Measured * 1000) : esc(c.State)} · <a href="#/jobs?repo=${encodeURIComponent(v.Name)}&sha=${c.SHA}">${c.Jobs} job${c.Jobs === 1 ? '' : 's'}</a></td></tr>`).join('')}</tbody></table>`;
+  const stepChips = (c, v) => {
+    if (!c.State) return '<span class="muted">not measured</span>';
+    if (c.State !== 'done') return `<span class="muted">${esc(c.State)}</span>`;
+    if (!c.Compared) return `<span class="muted">${c.Against ? 'no values comparable with the measured commit before' : 'first measured commit'}</span>`;
+    const skipped = c.Skipped ? ` <span class="muted small" title="the ${c.Skipped} commit${c.Skipped === 1 ? '' : 's'} before it ${c.Skipped === 1 ? 'was' : 'were'} not measured: compared with the measured commit before those">against ${short(c.Against).slice(0, 8)}, ${c.Skipped} unmeasured between</span>` : '';
+    return `<div class="chips">${c.Engines.map(e => `<span class="chip ${Math.abs(e.Geomean) < 0.5 ? '' : e.Geomean < 0 ? 'better' : 'worse'}" title="against the measured commit before: geomean over ${e.N} operations (cycles, else time); ${e.Faster} faster and ${e.Slower} slower by 1% or more">${esc(engName(e.Engine).replace(/^dynamic-ssz /, ''))} <b>${pct(e.Geomean, 1)}</b>${e.Faster || e.Slower ? ` <span class="moved">${e.Faster ? `<span class="better">▼${e.Faster}</span>` : ''}${e.Slower ? `<span class="worse">▲${e.Slower}</span>` : ''}</span>` : ''}</span>`).join('')}${skipped}</div>`;
+  };
+  // commitAge: when a commit was made, relative while it is younger than
+  // 30 days, as a date after that.
+  const commitAge = t => {
+    if (!t) return '';
+    const d = new Date(t * 1000), days = (Date.now() - d) / 86400000;
+    const text = days < 30 ? ago(d) : `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+    return `<span title="committed ${when(d)}">${text}</span>`;
+  };
+  const tagBadges = c => (c.Tags || []).map(t => ` <span class="chip tag">${esc(t)}</span>`).join('');
+  const repoCommits = (v, commits) => !commits.length ? `<p class="muted">${v.Branch ? 'no commit of the main branch known yet' : 'a fixed version: no branch is followed'}</p>`
+    : `<table class="commits"><thead><tr><th>Commit</th><th>Date</th><th>Description</th><th>Change against the measured commit before <span class="muted" style="text-transform:none">(per engine)</span></th><th class="num">Runs</th><th>Measured</th></tr></thead><tbody>${commits.map(c =>
+      `<tr class="${c.State ? '' : 'unmeasured'}"><td class="nowrap">${commitLink(c.SHA, v.Name)}${tagBadges(c)}</td><td class="muted nowrap">${commitAge(c.Committed)}</td><td><span class="muted desc" style="display:inline-block;vertical-align:bottom">${esc(c.Desc).replace(/^[0-9a-f]{7,12} /, '')}</span></td><td>${stepChips(c, v)}</td><td class="num">${c.Runs || ''}</td><td class="muted">${c.Jobs ? `${c.Measured ? when(c.Measured * 1000) : esc(c.State)} · <a href="#/jobs?repo=${encodeURIComponent(v.Name)}&sha=${c.SHA}">${c.Jobs} job${c.Jobs === 1 ? '' : 's'}</a>` : ''}</td></tr>`).join('')}</tbody></table>`;
   const repoTargets = v => (v.Targets || []).map(t => `<span class="chip">${esc(t.Name)} <b>${esc(t.Label)}</b></span> ${commitLink(t.SHA, v.Name)}`).join(' &nbsp; ');
   const repoTitle = v => `${esc(v.Name)} <span class="muted small">${repoLink(v.Name)}</span>`;
 
@@ -411,7 +424,7 @@
     app.innerHTML = `<h1>Repositories</h1><p class="note">Every measured library with the newest commits of its main branch. A row compares a commit with the one before it, over everything measured of both.</p>` +
       repos.map(v => `<section class="repo"><h2><a href="#/repo/${encodeURIComponent(v.Name)}">${esc(v.Name)}</a> <span class="muted small">${repoLink(v.Name)}</span></h2>
         <div class="toolbar">${repoTargets(v)}</div>${repoCommits(v, v.Commits)}
-        <p class="note"><a href="#/repo/${encodeURIComponent(v.Name)}">${v.Total > v.Commits.length ? `view all ${v.Total} commits` : 'repository page'} →</a></p></section>`).join('');
+        <p class="note"><a href="#/repo/${encodeURIComponent(v.Name)}">${v.Total > v.Commits.length ? 'view all commits' : 'repository page'} →</a></p></section>`).join('');
   }
 
   async function viewRepo(name) {
@@ -419,15 +432,15 @@
     if (v.Error) throw new Error(v.Error);
     // Oldest first for the chart; a line is the running product of an
     // operation's changes, starting at the oldest commit shown.
-    const chain = v.Commits.slice().reverse();
+    const chain = v.Commits.filter(c => c.Runs > 0).reverse();
     const engines = sortEngines([...new Set((v.Leaves || []).map(l => l.Engine))]);
     let engine = localStorage.getItem('repoEngine');
     if (!engines.includes(engine)) engine = engines[0];
     const useNs = localStorage.getItem('repoMetric') === 'ns';
     const tabs = (id, items, cur) => `<div class="tabs" id="${id}">${items.map(([k, label]) => `<button data-k="${k}" class="${k === cur ? 'active' : ''}">${esc(label)}</button>`).join('')}</div>`;
     app.innerHTML = `<h1>${repoTitle(v)}</h1>
-      <div class="toolbar">${repoTargets(v)}<span class="muted">${v.Total} measured commit${v.Total === 1 ? '' : 's'} of ${esc(v.Branch || 'the main branch')}</span></div>
-      ${engines.length && chain.length > 1 ? `<div class="toolbar">${tabs('repoEngine', engines.map(e => [e, engName(e)]), engine)}${tabs('repoMetric', [['cycles', 'Cycles'], ['ns', 'Time']], useNs ? 'ns' : 'cycles')}<span class="muted">one line per operation: change since the oldest commit shown, a dot per commit; colour by object</span></div>
+      <div class="toolbar">${repoTargets(v)}<span class="muted">${v.Commits.length < v.Total ? `the newest ${v.Commits.length} of ` : ''}${v.Total} commit${v.Total === 1 ? '' : 's'} of ${esc(v.Branch || 'the main branch')}, ${v.Measured} measured</span></div>
+      ${engines.length && chain.length > 1 ? `<div class="toolbar">${tabs('repoEngine', engines.map(e => [e, engName(e)]), engine)}${tabs('repoMetric', [['cycles', 'Cycles'], ['ns', 'Time']], useNs ? 'ns' : 'cycles')}<span class="muted">one line per operation: change since the oldest commit shown, a dot per measured commit; colour by object</span></div>
       <div class="chart" style="height:420px"><canvas id="rc"></canvas></div>` : ''}
       <h2>Commits <span class="muted small">newest first</span></h2>${repoCommits(v, v.Commits)}`;
     const bind = (id, key) => document.querySelectorAll(`#${id} button`).forEach(b => b.onclick = () => { localStorage.setItem(key, b.dataset.k); viewRepo(name); });

@@ -450,6 +450,9 @@ func (s *scheduler) pollTargets(ctx context.Context, remote bool) {
 			if err := s.db.setTarget(st); err != nil {
 				log.Printf("targets of %s: %v", sub.Name, err)
 			}
+			if st.Name == targetMaster {
+				s.updateHistory(ctx, sub, st.Label, remote)
+			}
 			if _, ok := bySHA[st.SHA]; !ok {
 				order = append(order, st.SHA)
 			}

@@ -10,6 +10,7 @@ import (
 	"math/rand/v2"
 	"net/http/httptest"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -864,5 +865,57 @@ func TestFailedOps(t *testing.T) {
 	var as opsFailed
 	if !errors.As(fmt.Errorf("head: %w", failed), &as) || len(failedOps([]byte("panic: boom\nFAIL\n"))) != 0 {
 		t.Fatal("not recognised")
+	}
+}
+
+func TestBranchHistory(t *testing.T) {
+	src := t.TempDir()
+	git := func(dir string, args ...string) {
+		t.Helper()
+		cmd := exec.Command("git", append([]string{"-C", dir, "-c", "user.name=t", "-c", "user.email=t@t", "-c", "commit.gpgsign=false"}, args...)...)
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("git %v: %v: %s", args, err, out)
+		}
+	}
+	git(src, "init", "-q", "-b", "main")
+	git(src, "commit", "-q", "--allow-empty", "-m", "first")
+	git(src, "tag", "v1.0.0")
+	git(src, "checkout", "-q", "-b", "feature")
+	git(src, "commit", "-q", "--allow-empty", "-m", "on the feature branch")
+	git(src, "commit", "-q", "--allow-empty", "-m", "more on the feature branch")
+	git(src, "checkout", "-q", "main")
+	git(src, "merge", "-q", "--no-ff", "-m", "merge the feature", "feature")
+	git(src, "commit", "-q", "--allow-empty", "-m", "last")
+
+	// From another repository: the commits on the branch, a merge as one.
+	dir := filepath.Join(t.TempDir(), "history", "lib.git")
+	if err := fetchHistory(context.Background(), dir, src, "main"); err != nil {
+		t.Fatal(err)
+	}
+	commits, err := branchLog(context.Background(), dir, "refs/heads/main")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var titles []string
+	for _, c := range commits {
+		titles = append(titles, c.Title)
+	}
+	if fmt.Sprint(titles) != "[last merge the feature first]" || fmt.Sprint(commits[2].Tags) != "[v1.0.0]" || commits[0].Committed == 0 {
+		t.Fatalf("history %v, tags %v", titles, commits[2].Tags)
+	}
+
+	db, err := openDB(filepath.Join(t.TempDir(), "t.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := db.setBranchCommits("lib", commits); err != nil {
+		t.Fatal(err)
+	}
+	got, err := db.branchCommits("lib")
+	if err != nil || len(got) != 3 || got[0].Title != "last" || fmt.Sprint(got[2].Tags) != "[v1.0.0]" {
+		t.Fatalf("stored %v %v", got, err)
+	}
+	if db.historyHead("lib") != historyID(commits) {
+		t.Fatalf("head %q against %q", db.historyHead("lib"), historyID(commits))
 	}
 }

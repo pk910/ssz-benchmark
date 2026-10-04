@@ -166,3 +166,6 @@ table.commits .chip .moved span + span { margin-left: 3px; }
 .chip.worse { background: var(--bad-soft); color: var(--bad); }
 .chip .moved .better { color: var(--ok); }
 .chip .moved .worse { color: var(--bad); }
+.chip.tag { background: transparent; border: 1px solid var(--line); color: var(--fg); font-weight: 600; }
+td.nowrap { white-space: nowrap; }
+tr.unmeasured td { opacity: .55; }

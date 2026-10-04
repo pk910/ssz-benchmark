@@ -1,15 +1,11 @@
 package main
 
 import (
-	"context"
 	"math"
 	"net/http"
-	"os/exec"
-	"path/filepath"
 	"sort"
 	"strconv"
 	"strings"
-	"time"
 )
 
 // The repository pages list the libraries with the commits of their main
@@ -34,13 +30,18 @@ type repoEngine struct {
 
 type repoCommit struct {
 	SHA, Desc string
-	Jobs      int   // jobs that measured it as the head of the main branch
-	Runs      int   // runs pooled into its values
-	Measured  int64 // when its newest job finished
-	State     string
-	// Against the commit before it (the next in the list). Compared is
-	// false when the two have no values of one harness version.
+	Committed int64    // when the commit was made; zero when the history does not have it
+	Tags      []string // tags at the commit
+	Jobs      int      // jobs that measured it as the head of the main branch
+	Runs      int      // runs pooled into its values
+	Measured  int64    // when its newest job finished
+	State     string   // of its jobs; empty for a commit that has none
+	// Against the measured commit before it. Compared is false when there
+	// is none, or the two have no values of one harness version. Skipped
+	// counts the unmeasured commits between the two.
 	Compared bool
+	Against  string
+	Skipped  int
 	Engines  []repoEngine
 	// Steps holds per leaf of the page the ratio to the commit before it,
 	// of time and of cycles; zero where one of the two has no value.
@@ -53,21 +54,10 @@ type repoView struct {
 	Name, Repo string
 	Branch     string // of the master target; empty without one
 	Targets    []repoTarget
-	Total      int // measured commits of the main branch
+	Total      int // commits listed of the main branch
+	Measured   int // of them measured
 	Commits    []repoCommit
 	Leaves     []leaf `json:",omitempty"`
-}
-
-// mainOrder returns the commits of the mirrored library's main branch,
-// newest first.
-func mainOrder(dataDir, branch string) []string {
-	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
-	defer cancel()
-	out, err := exec.CommandContext(ctx, "git", "-C", filepath.Join(dataDir, "repo.git"), "rev-list", "--first-parent", "-n", "2000", branch).Output()
-	if err != nil {
-		return nil
-	}
-	return strings.Fields(string(out))
 }
 
 func (w *webServer) repoView(sub *subject, limit int, steps bool) (*repoView, error) {
@@ -103,7 +93,8 @@ func (w *webServer) repoView(sub *subject, limit int, steps bool) (*repoView, er
 		return nil, err
 	}
 	first := map[string]int64{}
-	var commits []repoCommit
+	measured := map[string]repoCommit{}
+	var found []repoCommit
 	for rows.Next() {
 		var c repoCommit
 		var newest, oldest int64
@@ -121,24 +112,27 @@ func (w *webServer) repoView(sub *subject, limit int, steps bool) (*repoView, er
 			c.State = stateQueued
 		}
 		first[c.SHA] = oldest
-		commits = append(commits, c)
+		measured[c.SHA] = c
+		found = append(found, c)
 	}
 	rows.Close()
-	// Newest first: in the order of the branch where the mirror has it,
-	// else in the order the commits were found.
-	pos := map[string]int{}
-	if sub.mirrored() && branch != "" {
-		for i, sha := range mainOrder(w.cfg.dataDir, branch) {
-			pos[sha] = i + 1
-		}
+	// The list is the history of the branch, newest first, with what was
+	// measured of each commit. Without a stored history it is the measured
+	// commits in the order they were found.
+	history, err := w.db.branchCommits(sub.Name)
+	if err != nil {
+		return nil, err
 	}
-	sort.Slice(commits, func(a, b int) bool {
-		pa, pb := pos[commits[a].SHA], pos[commits[b].SHA]
-		if pa != pb && pa > 0 && pb > 0 {
-			return pa < pb
-		}
-		return first[commits[a].SHA] > first[commits[b].SHA]
-	})
+	var commits []repoCommit
+	for _, h := range history {
+		c := measured[h.SHA]
+		c.SHA, c.Desc, c.Committed, c.Tags = h.SHA, h.Title, h.Committed, h.Tags
+		commits = append(commits, c)
+	}
+	if len(history) == 0 {
+		sort.Slice(found, func(a, b int) bool { return first[found[a].SHA] > first[found[b].SHA] })
+		commits = found
+	}
 	v.Total = len(commits)
 
 	// The pooled values of every commit, per harness version.
@@ -171,9 +165,6 @@ func (w *webServer) repoView(sub *subject, limit int, steps bool) (*repoView, er
 	}
 	rows.Close()
 
-	if limit > 0 && len(commits) > limit+1 {
-		commits = commits[:limit+1] // one more: the last shown is compared with it
-	}
 	seen := map[leaf]bool{}
 	type step struct{ ns, cycles float64 }
 	perCommit := make([]map[leaf]step, len(commits))
@@ -193,10 +184,26 @@ func (w *webServer) repoView(sub *subject, limit int, steps bool) (*repoView, er
 				c.Runs = max(c.Runs, cv.N)
 			}
 		}
-		if i+1 >= len(commits) {
+		if own == nil {
 			continue
 		}
-		prev := values[commits[i+1].SHA]
+		v.Measured++
+		// Measured as something else than the head of the branch (a
+		// release on it, the base of a job) counts as well.
+		c.State = stateDone
+		// The measured commit before it.
+		before := -1
+		for k := i + 1; k < len(commits); k++ {
+			if len(values[commits[k].SHA]) > 0 {
+				before = k
+				break
+			}
+		}
+		if before < 0 {
+			continue
+		}
+		c.Against, c.Skipped = commits[before].SHA, before-i-1
+		prev := values[commits[before].SHA]
 		var a, b *hv
 		for harness, h := range cur {
 			if p := prev[harness]; p != nil && (a == nil || h.job > a.job) {
