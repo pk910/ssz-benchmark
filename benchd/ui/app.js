@@ -789,27 +789,31 @@
   async function viewOps() {
     const rows = await get('/api/ops');
     const m = METRICS[metric];
-    const all = sortEngines([...new Set(rows.flatMap(r => r.Engines))]);
+    // One column per engine or library; its async variant has a row of
+    // its own below the operation it runs.
+    const all = sortEngines([...new Set(rows.flatMap(r => r.Engines).map(e => e.replace(/Async$/, '')))]);
     const engines = all.filter(e => !opsHidden.has(e));
     const cell = (r, e) => {
       const l = r.Latest[e], t = r.Trends[e];
       if (!l) return '<td class="grp muted">-</td>';
       const em = metricFor(m, e);
       if (unmeasured(l[em.key])) return '<td class="grp muted">-</td>';
-      return `<td class="grp"><b>${em.fmt(l[em.key].Head)}</b>${em !== m ? ' <span class="ci">time</span>' : ''}${t && t.N >= 3 ? ` <span class="ci">trend ${pct(t.SlopePct30d, 1)}/30d</span>` : ''}</td>`;
+      return `<td class="grp"><b>${em.fmt(l[em.key].Head)}</b>${t && t.N >= 3 ? ` <span class="ci">trend ${pct(t.SlopePct30d, 1)}/30d</span>` : ''}</td>`;
     };
+    const asyncRow = r => r.Engines.some(e => e.endsWith('Async'))
+      ? `<tr><td></td><td class="mono muted">${r.Op} (async${metricFor(m, 'Async') !== m ? ', time' : ''})</td>${engines.map(e => cell(r, e + 'Async')).join('')}</tr>` : '';
     app.innerHTML = `<h1>Operations</h1>
       <div class="toolbar">${metricTabs()}<span class="muted">latest head value per engine and library; master trend over 30 days once three master points exist</span></div>
       <div class="toolbar chips" id="engsel">${all.map(e => `<a href="#" data-e="${e}" class="chip ${opsHidden.has(e) ? '' : 'commit'}" title="show or hide this column">${e}</a>`).join(' ')}<a href="#" data-e="*" class="chip">all</a><a href="#" data-e="-" class="chip">ours only</a></div>
       <div style="overflow-x:auto"><table><thead><tr><th>Object</th><th>Operation</th>${engines.map(e => `<th class="grp">${e}</th>`).join('')}</tr></thead><tbody>
-      ${rows.map((r, i) => `<tr><td>${i > 0 && rows[i - 1].Object === r.Object ? `<span class="muted">${r.Object}</span>` : objName(r.Object)}</td><td class="mono"><a href="#/op/${r.Object}/${r.Op}">${r.Op}</a></td>${engines.map(e => cell(r, e)).join('')}</tr>`).join('')}
+      ${rows.map((r, i) => `<tr><td>${i > 0 && rows[i - 1].Object === r.Object ? `<span class="muted">${r.Object}</span>` : objName(r.Object)}</td><td class="mono"><a href="#/op/${r.Object}/${r.Op}">${r.Op}</a></td>${engines.map(e => cell(r, e)).join('')}</tr>${asyncRow(r)}`).join('')}
       </tbody></table></div>`;
     bindMetricTabs(viewOps);
     document.querySelectorAll('#engsel a').forEach(a => a.onclick = (ev => {
       ev.preventDefault();
       const e = a.dataset.e;
       if (e === '*') opsHidden = new Set();
-      else if (e === '-') opsHidden = new Set(all.filter(x => !['Codegen', 'Reflection', 'CodegenAsync', 'ReflectionAsync'].includes(x)));
+      else if (e === '-') opsHidden = new Set(all.filter(x => !['Codegen', 'Reflection'].includes(x)));
       else if (opsHidden.has(e)) opsHidden.delete(e); else opsHidden.add(e);
       localStorage.setItem('opsHidden', JSON.stringify([...opsHidden]));
       viewOps();
