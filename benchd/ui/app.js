@@ -801,7 +801,7 @@
       return `<td class="grp"><b>${em.fmt(l[em.key].Head)}</b>${t && t.N >= 3 ? ` <span class="ci">trend ${pct(t.SlopePct30d, 1)}/30d</span>` : ''}</td>`;
     };
     const asyncRow = r => r.Engines.some(e => e.endsWith('Async'))
-      ? `<tr><td></td><td class="mono muted">${r.Op} (async${metricFor(m, 'Async') !== m ? ', time' : ''})</td>${engines.map(e => cell(r, e + 'Async')).join('')}</tr>` : '';
+      ? `<tr><td><span class="muted">${r.Object}</span></td><td class="mono muted">${r.Op} (async${metricFor(m, 'Async') !== m ? ', time' : ''})</td>${engines.map(e => cell(r, e + 'Async')).join('')}</tr>` : '';
     app.innerHTML = `<h1>Operations</h1>
       <div class="toolbar">${metricTabs()}<span class="muted">latest head value per engine and library; master trend over 30 days once three master points exist</span></div>
       <div class="toolbar chips" id="engsel">${all.map(e => `<a href="#" data-e="${e}" class="chip ${opsHidden.has(e) ? '' : 'commit'}" title="show or hide this column">${e}</a>`).join(' ')}<a href="#" data-e="*" class="chip">all</a><a href="#" data-e="-" class="chip">ours only</a></div>
