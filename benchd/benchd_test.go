@@ -832,3 +832,22 @@ func TestCompareCommits(t *testing.T) {
 		t.Fatalf("alone %+v", alone)
 	}
 }
+
+func TestCheckoutTags(t *testing.T) {
+	dir := t.TempDir()
+	write := func(name, src string) {
+		if err := os.WriteFile(filepath.Join(dir, name), []byte(src), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	write("options.go", "package ssz\nfunc WithNoFastSsz() {}\n")
+	write("options_test.go", "package ssz\nfunc WithAsyncHashing(n int) {}\n") // a test file does not count
+	s := &side{tags: checkoutTags(dir)}
+	if fmt.Sprint(s.tags) != "[noasync nodelegation]" || !s.lacks("CodegenAsync") || !s.lacks("Reflection") || s.lacks("Codegen") {
+		t.Fatalf("tags %v", s.tags)
+	}
+	write("async.go", "package ssz\nfunc WithAsyncHashing(workers int) {}\nfunc WithNoDelegation() {}\n")
+	if s := (&side{tags: checkoutTags(dir)}); len(s.tags) != 0 || s.lacks("ReflectionAsync") || s.tagArgs() != nil {
+		t.Fatalf("tags %v", s.tags)
+	}
+}

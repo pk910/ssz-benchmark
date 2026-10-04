@@ -10,6 +10,7 @@ import (
 	ssz "github.com/pk910/dynamic-ssz"
 
 	bench "benchkit"
+	"realbench/feat"
 	"realbench/types/fulu"
 )
 
@@ -54,9 +55,10 @@ func dynEngine(name string, opts ...ssz.DynSszOption) engine {
 }
 
 // asyncEngine measures the hash tree root with background subtree
-// reduction on the cores the benchmark cpuset provides.
+// reduction on the cores the benchmark cpuset provides; opts include the
+// library's option for it.
 func asyncEngine(name string, opts ...ssz.DynSszOption) engine {
-	e := dynEngine(name, append(opts, ssz.WithAsyncHashing(3))...)
+	e := dynEngine(name, opts...)
 	state, block := e.state, e.block
 	only := map[string]bool{"HashTreeRoot": true}
 	e.state = func(specs map[string]any) bench.Codec { c := state(specs); c.Only = only; return c }
@@ -64,13 +66,22 @@ func asyncEngine(name string, opts ...ssz.DynSszOption) engine {
 	return e
 }
 
+// engines lists the engines the library version under test has (package
+// feat).
 func engines() []engine {
-	return []engine{
-		dynEngine("Codegen"),
-		dynEngine("Reflection", ssz.WithNoFastSsz(), ssz.WithNoDelegation()),
-		asyncEngine("CodegenAsync"),
-		asyncEngine("ReflectionAsync", ssz.WithNoFastSsz(), ssz.WithNoDelegation()),
+	es := []engine{dynEngine("Codegen")}
+	reflection, hasReflection := feat.Reflection()
+	async, hasAsync := feat.Async(3)
+	if hasReflection {
+		es = append(es, dynEngine("Reflection", reflection...))
 	}
+	if hasAsync {
+		es = append(es, asyncEngine("CodegenAsync", async...))
+	}
+	if hasAsync && hasReflection {
+		es = append(es, asyncEngine("ReflectionAsync", append(append([]ssz.DynSszOption{}, reflection...), async...)...))
+	}
+	return es
 }
 
 // BenchmarkReal/<Engine>/<Object>/<Op>. Each object closure loads only its

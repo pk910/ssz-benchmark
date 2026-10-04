@@ -211,6 +211,61 @@ type side struct {
 	dir  string                       // worktree
 	hdir string                       // harness build directory
 	bins map[string]map[string]string // package -> seed -> test binary
+	// tags are the build tags of the harness for this checkout: one per
+	// option of the library the checkout lacks (package feat of the
+	// harness), which leaves the engines that need it out.
+	tags []string
+}
+
+// libraryOptions are the options of the library that not every version
+// has, with the build tag that builds the harness without them and the
+// engines that go with them.
+var libraryOptions = []struct {
+	fn, tag string
+	lacks   func(engine string) bool
+}{
+	{"func WithAsyncHashing(", "noasync", func(e string) bool { return strings.HasSuffix(e, "Async") }},
+	{"func WithNoDelegation(", "nodelegation", func(e string) bool { return strings.HasPrefix(e, "Reflection") }},
+}
+
+// checkoutTags finds the options a checkout of the library lacks.
+func checkoutTags(dir string) []string {
+	var src []byte
+	files, _ := filepath.Glob(filepath.Join(dir, "*.go"))
+	for _, f := range files {
+		if strings.HasSuffix(f, "_test.go") {
+			continue
+		}
+		data, _ := os.ReadFile(f)
+		src = append(src, data...)
+	}
+	var tags []string
+	for _, o := range libraryOptions {
+		if !bytes.Contains(src, []byte(o.fn)) {
+			tags = append(tags, o.tag)
+		}
+	}
+	return tags
+}
+
+// lacks reports whether the side's build has no such engine.
+func (s *side) lacks(engine string) bool {
+	for _, o := range libraryOptions {
+		for _, t := range s.tags {
+			if t == o.tag && o.lacks(engine) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// tagArgs are the build arguments for the side's tags.
+func (s *side) tagArgs() []string {
+	if len(s.tags) == 0 {
+		return nil
+	}
+	return []string{"-tags", strings.Join(s.tags, ",")}
 }
 
 func (s *side) bin(pkg, seed string) string {
@@ -422,6 +477,9 @@ func runLogged(cmd *exec.Cmd) error {
 // at all is an error. The result is cached per harness and commit.
 func (r *runner) buildHarness(ctx context.Context, s *side, logw func(string, ...any)) error {
 	s.bins = map[string]map[string]string{}
+	if s.tags = checkoutTags(s.dir); len(s.tags) > 0 {
+		logw("%s: %s lacks options of the library, the harness is built with %s (engines that need them are left out)", s.name, s.sha[:12], strings.Join(s.tags, ", "))
+	}
 	if data, err := os.ReadFile(filepath.Join(s.hdir, "ok")); err == nil {
 		for _, pkg := range strings.Fields(string(data)) {
 			s.bins[pkg] = map[string]string{}
@@ -588,7 +646,8 @@ func (r *runner) compile(ctx context.Context, s *side, pkg, seed, out string) er
 			dir, target = filepath.Join(s.hdir, "baselines", lib), "./"+fork
 		}
 	}
-	return runLogged(r.goCmd(ctx, dir, "test", "-c", "-o", out, "-ldflags", "-funcalign=64 -randlayout="+seed, target))
+	args := append([]string{"test", "-c", "-o", out, "-ldflags", "-funcalign=64 -randlayout=" + seed}, s.tagArgs()...)
+	return runLogged(r.goCmd(ctx, dir, append(args, target)...))
 }
 
 // buildPackage generates types/<pkg> and compiles <pkg> for every seed.
@@ -613,7 +672,7 @@ func (r *runner) buildPackage(ctx context.Context, s *side, pkg, gen string) err
 	bins := map[string]string{}
 	for _, seed := range r.seeds {
 		out := filepath.Join(s.hdir, "seed-"+seed+"-"+pkg+".test")
-		if err := runLogged(r.goCmd(ctx, s.hdir, "test", "-c", "-o", out, "-ldflags", "-funcalign=64 -randlayout="+seed, "./"+pkg)); err != nil {
+		if err := r.compile(ctx, s, pkg, seed, out); err != nil {
 			return fmt.Errorf("seed %s: %w", seed, err)
 		}
 		bins[seed] = out
@@ -739,8 +798,12 @@ func (r *runner) measure(ctx context.Context, j *job, head, base *side, jobDir s
 		if len(leaves) == 0 {
 			return 0, fmt.Errorf("no benchmarks found")
 		}
-		if err := r.store.setHarnessLeaves(j.Harness, leaves); err != nil {
-			return 0, err
+		// A build without some engines does not define the harness's
+		// leaves for the others.
+		if len(head.tags) == 0 {
+			if err := r.store.setHarnessLeaves(j.Harness, leaves); err != nil {
+				return 0, err
+			}
 		}
 	}
 	sortLeafList(leaves)
@@ -751,12 +814,20 @@ func (r *runner) measure(ctx context.Context, j *job, head, base *side, jobDir s
 	}
 	var measurable []leaf
 	skipped := map[string]bool{}
+	unbuilt := map[string]bool{}
 	for _, l := range leaves {
+		if head.lacks(l.Engine) || (!l.Baseline && base.lacks(l.Engine)) {
+			unbuilt[l.Engine] = true
+			continue
+		}
 		if head.bin(l.Pkg, seed0) == "" || (!l.Baseline && base.bin(l.Pkg, seed0) == "") {
 			skipped[l.Pkg] = true
 			continue
 		}
 		measurable = append(measurable, l)
+	}
+	for engine := range unbuilt {
+		logw("engine %s is not available in every build of this job, its benchmarks are left out", engine)
 	}
 	for pkg := range skipped {
 		logw("package %s is not built on both sides, its benchmarks are left out", pkg)

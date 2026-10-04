@@ -12,6 +12,7 @@ import (
 	ssz "github.com/pk910/dynamic-ssz"
 
 	bench "benchkit"
+	"realbench/feat"
 	"realbench/types/gloas"
 )
 
@@ -43,13 +44,22 @@ type engine struct {
 
 var htrOnly = map[string]bool{"HashTreeRoot": true}
 
+// engines lists the engines the library version under test has (package
+// feat).
 func engines() []engine {
-	return []engine{
-		{name: "Codegen"},
-		{name: "Reflection", opts: []ssz.DynSszOption{ssz.WithNoFastSsz(), ssz.WithNoDelegation()}},
-		{name: "CodegenAsync", opts: []ssz.DynSszOption{ssz.WithAsyncHashing(3)}, only: htrOnly},
-		{name: "ReflectionAsync", opts: []ssz.DynSszOption{ssz.WithNoFastSsz(), ssz.WithNoDelegation(), ssz.WithAsyncHashing(3)}, only: htrOnly},
+	es := []engine{{name: "Codegen"}}
+	reflection, hasReflection := feat.Reflection()
+	async, hasAsync := feat.Async(3)
+	if hasReflection {
+		es = append(es, engine{name: "Reflection", opts: reflection})
 	}
+	if hasAsync {
+		es = append(es, engine{name: "CodegenAsync", opts: async, only: htrOnly})
+	}
+	if hasAsync && hasReflection {
+		es = append(es, engine{name: "ReflectionAsync", opts: append(append([]ssz.DynSszOption{}, reflection...), async...), only: htrOnly})
+	}
+	return es
 }
 
 func (e engine) codec(ds *ssz.DynSsz, newObj func() any, hashTarget func(any) any) bench.Codec {
