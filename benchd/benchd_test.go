@@ -563,8 +563,8 @@ func TestLibraryTargetsAndPooledValues(t *testing.T) {
 	}
 	// A library: its release has a value, its master commit none yet, so
 	// the page shows the release value under both modes' fallbacks.
-	lib := &librarySubjects[1]
-	run(libJob(lib, "r1", []string{targetRelease}, []string{"v2.0.0"}, ""), "head", 50, 52)
+	lib := subjectByName("fastssz")
+	run(targetJob(lib, "r1", []string{targetRelease}, []string{"v2.0.0"}, "", ""), "head", 50, 52)
 	if err := db.setTarget(targetState{Subject: lib.Name, Name: targetRelease, SHA: "r1", Label: "v2.0.0"}); err != nil {
 		t.Fatal(err)
 	}
@@ -579,15 +579,15 @@ func TestLibraryTargetsAndPooledValues(t *testing.T) {
 	if sv := w.valuesOf(lib.Name, targetMaster, targets); sv == nil || len(sv.values) != 0 {
 		t.Fatalf("master has values without a job: %+v", sv)
 	}
-	if rs := w.libraryResults(); len(rs) != 1 || !rs[0].Baseline || rs[0].Ns.Head != 51 {
+	if rs := w.otherResults(subjectDynSSZ); len(rs) != 1 || !rs[0].Other || rs[0].Ns.Head != 51 {
 		t.Fatalf("library results %+v", rs)
 	}
 	// The same commit is not queued twice for one adapter version; a new
 	// adapter version measures it again.
-	if ok, _ := db.libJobExists(lib.Name, "r1", "h"); !ok {
+	if ok, _ := db.targetJobExists(lib.Name, "r1", "h"); !ok {
 		t.Fatal("the finished job of r1 is not seen")
 	}
-	if ok, _ := db.libJobExists(lib.Name, "r1", "h2"); ok {
+	if ok, _ := db.targetJobExists(lib.Name, "r1", "h2"); ok {
 		t.Fatal("a job of another adapter version counts")
 	}
 }
@@ -596,9 +596,12 @@ func TestResolveTargetsLive(t *testing.T) {
 	if os.Getenv("BENCH_LIVE") == "" {
 		t.Skip("needs the network")
 	}
-	for i := range librarySubjects {
-		states, err := resolveTargets(context.Background(), &librarySubjects[i])
-		t.Logf("%s: %+v %v", librarySubjects[i].Name, states, err)
+	for i := range subjects {
+		if subjects[i].mirrored() {
+			continue
+		}
+		states, err := resolveTargets(context.Background(), &subjects[i])
+		t.Logf("%s: %+v %v", subjects[i].Name, states, err)
 		if err != nil {
 			t.Fail()
 		}

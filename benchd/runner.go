@@ -230,15 +230,12 @@ func (r *runner) runJob(ctx context.Context, j *job) bool {
 	if len(j.Seeds) > 0 {
 		r.seeds = j.Seeds
 	}
-	hash, err := harnessHash(r.cfg.harnessDir)
 	lib := subjectByName(j.Subject)
-	if j.Kind == kindLib {
-		if lib == nil {
-			err = fmt.Errorf("unknown library %q", j.Subject)
-		} else {
-			hash, err = libHash(r.cfg.harnessDir, lib.Adapter)
-		}
+	if lib == nil {
+		log.Printf("job %d: unknown library %q", j.ID, j.Subject)
+		return false
 	}
+	hash, err := subjectHash(r.cfg.harnessDir, lib)
 	if err != nil {
 		log.Printf("job %d: harness: %v", j.ID, err)
 		return false
@@ -273,47 +270,44 @@ func (r *runner) runJob(ctx context.Context, j *job) bool {
 	}
 	head := &side{name: "head", sha: j.HeadSHA}
 	base := &side{name: "base", sha: j.BaseSHA}
-	if j.Kind == kindLib {
-		// A library commit is measured on its own: no checkout (the module
-		// is fetched at that commit), one side, every leaf a baseline.
-		short := j.HeadSHA
-		if len(short) > 12 {
-			short = short[:12]
+	if lib.mirrored() {
+		if err := r.git.fetch(); err != nil {
+			logw("fetch before checkout: %v", err)
 		}
-		head.hdir = filepath.Join(r.cfg.dataDir, "hb", hash+"-"+lib.Name+"-"+short)
-		r.setPhase(j, "building "+lib.Name)
-		if err := r.buildLibrary(ctx, head, lib, logw); err != nil {
-			return fail(fmt.Errorf("build %s: %w", lib.Name, err))
-		}
-		used(head.hdir)
-		passes, err := r.measure(ctx, j, head, base, jobDir, logw)
-		if err != nil {
-			return fail(fmt.Errorf("measure: %w", err))
-		}
-		logw("measured %d passes in %s", passes, time.Since(start).Round(time.Second))
-		if err := r.store.finish(j.ID, passes, "", time.Since(start).Seconds()); err != nil {
-			logw("finish: %v", err)
-		}
-		r.setPhase(nil, "")
-		return true
 	}
-	if err := r.git.fetch(); err != nil {
-		logw("fetch before checkout: %v", err)
+	// A job measures its head, and its base when it has one.
+	built := []*side{head}
+	if base.sha != "" {
+		built = append(built, base)
 	}
-	for _, s := range []*side{head, base} {
-		s.dir = filepath.Join(r.cfg.dataDir, "wt", s.sha)
-		s.hdir = filepath.Join(r.cfg.dataDir, "hb", hash+"-"+s.sha)
-		if err := r.git.worktree(s.dir, s.sha); err != nil {
-			return fail(fmt.Errorf("checkout %s: %w", s.name, err))
-		}
-		if err := r.own(s.dir); err != nil {
-			return fail(fmt.Errorf("checkout %s: %w", s.name, err))
-		}
+	for _, s := range built {
 		r.setPhase(j, "building "+s.name)
-		if err := r.buildHarness(ctx, s, logw); err != nil {
-			return fail(fmt.Errorf("build %s: %w", s.name, err))
+		if lib.mirrored() {
+			// The harness packages against a checkout from the mirror.
+			s.dir = filepath.Join(r.cfg.dataDir, "wt", s.sha)
+			s.hdir = filepath.Join(r.cfg.dataDir, "hb", hash+"-"+s.sha)
+			if err := r.git.worktree(s.dir, s.sha); err != nil {
+				return fail(fmt.Errorf("checkout %s: %w", s.name, err))
+			}
+			if err := r.own(s.dir); err != nil {
+				return fail(fmt.Errorf("checkout %s: %w", s.name, err))
+			}
+			if err := r.buildHarness(ctx, s, logw); err != nil {
+				return fail(fmt.Errorf("build %s: %w", s.name, err))
+			}
+			used(s.dir)
+		} else {
+			// The library's adapter; its recipe fetches the module at the
+			// commit, so there is no checkout.
+			short := s.sha
+			if len(short) > 12 {
+				short = short[:12]
+			}
+			s.hdir = filepath.Join(r.cfg.dataDir, "hb", hash+"-"+lib.Name+"-"+short)
+			if err := r.buildAdapter(ctx, s, lib, logw); err != nil {
+				return fail(fmt.Errorf("build %s: %w", s.name, err))
+			}
 		}
-		used(s.dir)
 		used(s.hdir)
 		if err := r.store.addBuilds(buildFacts(j.ID, s)); err != nil {
 			logw("%s: build facts: %v", s.name, err)
@@ -468,11 +462,11 @@ func (r *runner) buildHarness(ctx context.Context, s *side, logw func(string, ..
 	return nil
 }
 
-// buildLibrary builds the adapter of a library against the commit of the
+// buildAdapter builds the adapter of a library against the commit of the
 // side: a copy of the harness in which the adapter's recipe fetches the
 // library at that commit and generates its code with that commit's
 // generator, then one test binary per fork and layout seed.
-func (r *runner) buildLibrary(ctx context.Context, s *side, lib *subject, logw func(string, ...any)) error {
+func (r *runner) buildAdapter(ctx context.Context, s *side, lib *subject, logw func(string, ...any)) error {
 	s.bins = map[string]map[string]string{}
 	if data, err := os.ReadFile(filepath.Join(s.hdir, "ok")); err == nil {
 		for _, pkg := range strings.Fields(string(data)) {
@@ -707,17 +701,16 @@ func (r *runner) measure(ctx context.Context, j *job, head, base *side, jobDir s
 		if len(leaves) == 0 {
 			return 0, fmt.Errorf("no benchmarks found")
 		}
-		if j.Kind == kindLib {
-			for i := range leaves {
-				leaves[i].Baseline = true
-			}
-		}
 		if err := r.store.setHarnessLeaves(j.Harness, leaves); err != nil {
 			return 0, err
 		}
 	}
 	sortLeafList(leaves)
 	// Leaves of a package one side could not build are left out of the job.
+	// A job without a base measures its head only.
+	for i := range leaves {
+		leaves[i].Baseline = base.sha == ""
+	}
 	var measurable []leaf
 	skipped := map[string]bool{}
 	for _, l := range leaves {
@@ -797,7 +790,7 @@ func (r *runner) measure(ctx context.Context, j *job, head, base *side, jobDir s
 	}
 	// The earlier runs of the base commit a one-sided job may use.
 	var stored map[string]sample
-	if r.cfg.oneSided && base != nil && base.sha != "" && j.Kind != kindLib {
+	if r.cfg.oneSided && base.sha != "" {
 		j.GoVersion = r.goVersionCached
 		if stored, err = r.store.baseRuns(j, r.seeds); err != nil {
 			return 0, err
@@ -963,7 +956,7 @@ const (
 var diagSets = []string{"D1", "D2"}
 
 func (r *runner) diagnose(ctx context.Context, j *job, head, base *side, jobDir string, logw func(string, ...any)) {
-	if !r.cfg.counterPairs || base == nil {
+	if !r.cfg.counterPairs || base.sha == "" {
 		return
 	}
 	type cand struct {
@@ -1311,11 +1304,8 @@ func parseBenchOutput(out []byte) []benchLine {
 func (r *runner) prune() {
 	const keep = 16
 	current := map[string]bool{}
-	if h, err := harnessHash(r.cfg.harnessDir); err == nil {
-		current[h] = true
-	}
-	for i := range librarySubjects {
-		if h, err := libHash(r.cfg.harnessDir, librarySubjects[i].Adapter); err == nil {
+	for i := range subjects {
+		if h, err := subjectHash(r.cfg.harnessDir, &subjects[i]); err == nil {
 			current[h] = true
 		}
 	}

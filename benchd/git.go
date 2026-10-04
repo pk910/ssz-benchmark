@@ -415,16 +415,16 @@ type scheduler struct {
 	prs       *prCache
 	idleCount int
 	idleTurn  int
-	// lastLibPoll is when the other libraries' repositories were last
-	// checked.
-	lastLibPoll time.Time
-	runner      *runner        // publishes the fetch status with its own
-	checks      *checkReporter // nil without a GitHub App
-	ready       chan struct{}  // closed after the first fetch
-	readyOnce   sync.Once
-	mu          sync.Mutex
-	lastFetch   time.Time
-	lastErr     string
+	// lastTargetPoll is when the libraries' upstream repositories were
+	// last checked.
+	lastTargetPoll time.Time
+	runner         *runner        // publishes the fetch status with its own
+	checks         *checkReporter // nil without a GitHub App
+	ready          chan struct{}  // closed after the first fetch
+	readyOnce      sync.Once
+	mu             sync.Mutex
+	lastFetch      time.Time
+	lastErr        string
 }
 
 func (s *scheduler) loop(ctx context.Context) {
@@ -465,11 +465,11 @@ func (s *scheduler) tick(ctx context.Context) {
 	// The periodic noise job goes in first so its number matches its place
 	// in the queue on the first run.
 	s.scheduleNoise()
-	if time.Since(s.lastLibPoll) >= s.cfg.libPoll {
-		s.lastLibPoll = time.Now()
-		s.pollLibraries(ctx)
+	remote := time.Since(s.lastTargetPoll) >= s.cfg.targetPoll
+	if remote {
+		s.lastTargetPoll = time.Now()
 	}
-	s.updateOwnTargets()
+	s.pollTargets(ctx, remote)
 	if n, err := s.db.seenCount(); err == nil && n == 0 {
 		s.bootstrap(branches)
 	}
@@ -644,7 +644,7 @@ func (s *scheduler) enqueueMainCommit(sha string) error {
 	if err != nil {
 		return fmt.Errorf("no parent for %s: %w", sha, err)
 	}
-	j := &job{Kind: kindCommit, Branch: s.cfg.mainBranch, HeadSHA: sha, HeadDesc: s.git.describe(sha),
+	j := &job{Kind: kindCommit, Targets: targetMaster, Branch: s.cfg.mainBranch, HeadSHA: sha, HeadDesc: s.git.describe(sha),
 		BaseSHA: parent, BaseRef: s.cfg.mainBranch + "^", BaseDesc: s.git.describe(parent), PR: prNumber(s.git.subject(sha))}
 	if exists, err := s.db.hasJobFor(sha, parent); err != nil || exists {
 		return err
@@ -726,17 +726,6 @@ func (s *scheduler) scheduleNoise() {
 	}
 }
 
-// updateOwnTargets records what dynamic-ssz's master and release targets
-// point to.
-func (s *scheduler) updateOwnTargets() {
-	if sha, ok := s.git.branches2(s.cfg.mainBranch); ok {
-		_ = s.db.setTarget(targetState{Subject: subjectDynSSZ, Name: targetMaster, SHA: sha, Label: s.cfg.mainBranch})
-	}
-	if tag, sha, err := s.git.latestRelease(); err == nil {
-		_ = s.db.setTarget(targetState{Subject: subjectDynSSZ, Name: targetRelease, SHA: sha, Label: tag})
-	}
-}
-
 // resolvePRs fills the pull request of main-branch commit jobs that have
 // none from the commit's full subject (a squash merge ends in "(#N)").
 func (s *scheduler) resolvePRs() {
@@ -779,17 +768,16 @@ func (g *gitRepo) branches2(name string) (string, bool) {
 // comparison in between.
 // The machine never idles; every rerun pools with the earlier runs of its
 // pair and tightens that comparison.
-// libIdleRuns is how many library refinement runs follow one idle job of
-// dynamic-ssz.
-const libIdleRuns = 6
+// otherIdleRuns is how many refinement runs of the other libraries follow
+// one idle job of the mirrored one: a job of theirs measures one side of
+// one engine and takes about a seventh of the time, so this shares the
+// idle time about half and half.
+const otherIdleRuns = 6
 
 func (s *scheduler) idleJob() (*job, error) {
-	// Idle time is shared about half and half between dynamic-ssz and the
-	// other libraries: a library job takes about a seventh of ours, so
-	// libIdleRuns of them follow every idle job of ours.
 	s.idleTurn++
-	if s.idleTurn%(libIdleRuns+1) != 1 {
-		if j, err := s.idleLibJob(); err != nil || j != nil {
+	if s.idleTurn%(otherIdleRuns+1) != 1 {
+		if j, err := s.idleTargetJob(func(sub *subject) bool { return !sub.mirrored() }); err != nil || j != nil {
 			return j, err
 		}
 	}
@@ -798,7 +786,7 @@ func (s *scheduler) idleJob() (*job, error) {
 	case 0:
 		return s.idleJobOfKind(kindNoise)
 	case 2, 6:
-		if j, err := s.releaseJob(); err != nil || j != nil {
+		if j, err := s.idleTargetJob((*subject).mirrored); err != nil || j != nil {
 			return j, err
 		}
 	}
@@ -807,28 +795,10 @@ func (s *scheduler) idleJob() (*job, error) {
 		return nil, err
 	}
 	if prev == nil {
-		if j, err := s.releaseJob(); err != nil || j != nil {
-			return j, err
-		}
 		return s.idleJobOfKind(kindNoise)
 	}
 	return &job{Kind: kindCommit, Branch: prev.Branch, HeadSHA: prev.HeadSHA, HeadDesc: prev.HeadDesc,
 		BaseSHA: prev.BaseSHA, BaseRef: prev.BaseRef, BaseDesc: prev.BaseDesc, PR: prev.PR, Note: "refinement run"}, nil
-}
-
-// releaseJob is the main branch against the latest release, or nil when
-// that pair is known not to build (the harness needs library options the
-// release lacks).
-func (s *scheduler) releaseJob() (*job, error) {
-	j, err := s.idleJobOfKind(kindRelease)
-	if err != nil {
-		return nil, err
-	}
-	failed, err := s.db.pairBuildFailed(j.HeadSHA, j.BaseSHA)
-	if err != nil || failed {
-		return nil, err
-	}
-	return j, nil
 }
 
 func (s *scheduler) idleJobOfKind(kind string) (*job, error) {

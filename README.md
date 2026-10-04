@@ -210,40 +210,49 @@ Gloas type features) is measured on the packages it builds.
 
 ## Libraries and targets
 
-Every measured library is a subject. dynamic-ssz is the one with
-branches, pull requests, two-sided jobs and GitHub checks. The other
-libraries are measured one-sided (`lib` jobs), at the commits their
-targets point to (`benchd/subjects.go`):
+Every measured library is defined in `benchd/subjects.go`: its
+repository, how it is built, and its targets (refs that are kept
+measured). All libraries have the same kinds of jobs: a **commit** job
+measures a commit of the main branch, a **release** job a release; a job
+measures its head, and its base when it has one.
 
-| subject | fixed | release | master |
-|---|---|---|---|
-| fastssz-v1 | `v1.0.0` | | |
-| fastssz | | latest `v2.x.y` tag | `main` |
-| karalabe-ssz | | latest tag | `main` |
-| methodical-ssz | | the version the latest Prysm release pins | `main` or `progression`, whichever has the newer head (Prysm ships from `progression`, which is ahead of `main` today) |
+| library | built from | fixed | release | master |
+|---|---|---|---|---|
+| dynamic-ssz | the harness packages against a checkout from the mirror | | latest tag | the main branch |
+| fastssz-v1 | adapter `baselines/fastssz1` | `v1.0.0` | | |
+| fastssz | adapter `baselines/fastssz2` | | latest `v2.x.y` tag | `main` |
+| karalabe-ssz | adapter `baselines/karalabessz` | | latest tag | `main` |
+| methodical-ssz | adapter `baselines/prysmssz` | | the version the latest Prysm release pins | `main` or `progression`, whichever has the newer head (Prysm ships from `progression`, which is ahead of `main` today) |
 
-- Every 15 minutes (`-lib-poll`) the daemon resolves the targets with
-  `git ls-remote` (and Prysm's go.mod); a commit that has no job with the
-  current adapter gets one, ahead of the queue. No checkout: the job's
-  build fetches the library module at that commit.
-- A library job copies the harness, runs the adapter's
-  `baselines/<adapter>/generate.sh <commit>` in the sandbox (it fetches
-  the library, runs that commit's generator with the Go toolchain it
-  needs, and tidies the module), and links one binary per fork and seed.
-  A build that fails fails the job with its error; the commit is not
-  tried again until the adapter changes or the target moves.
+- Targets are resolved from the mirror for the mirrored library on every
+  tick, and with `git ls-remote` (and Prysm's go.mod) every 15 minutes
+  (`-target-poll`) for the others. A commit a target points to that has
+  no job with the current harness version gets one, ahead of the queue.
+- The mirrored library additionally has every commit of its main branch
+  measured against its parent, its pull requests against their base, and
+  GitHub checks reported.
+- A library with an adapter is built without a checkout: the job copies
+  the harness and runs `baselines/<adapter>/generate.sh <commit>` in the
+  sandbox (it fetches the library at that commit, runs that commit's
+  generator with the Go toolchain it needs, and tidies the module), then
+  links one binary per fork and seed.
+- A build that fails fails the job with its error; the commit is not
+  tried again until the harness version changes or the target moves.
 - `baselines/gen.sh` is the offline step: it converts the harness types
   for every adapter (needs Python) and runs the recipes at their pinned
   default versions. Its output is checked in.
-- Idle time is shared about half and half: six library refinement runs
-  (the least measured target commit first) follow every idle job of
-  dynamic-ssz.
+- Adding a library: an adapter directory with its types, benchmark file
+  and `generate.sh`, and an entry in `subjects`.
+- Idle time is shared about half and half between the mirrored library
+  and the others: six refinement runs of the others (the least measured
+  target commit first) follow every idle job of the mirrored one, whose
+  own targets are refined in the same way.
 - Pooled values: when a job finishes, the values of the commits it
   measured are recomputed over every job of the same harness version that
   had the commit on either side (`commit_values`). The Operations page
   shows them per library at its master or its release target, in master
-  mode with the change against the release; our job pages show the
-  libraries' release values next to our own.
+  mode with the change against the release; a job's page shows the other
+  libraries' release values next to its own results.
 
 ## Scheduling
 

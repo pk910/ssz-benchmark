@@ -304,7 +304,7 @@ func (w *webServer) apiStatus(rw http.ResponseWriter, req *http.Request) {
 func (w *webServer) subjectRepos() map[string]string {
 	repos := map[string]string{}
 	for _, name := range subjectNames() {
-		repos[name] = repoURL(w.cfg, name)
+		repos[name] = repoURL(name)
 	}
 	return repos
 }
@@ -386,17 +386,10 @@ func (w *webServer) apiJob(rw http.ResponseWriter, req *http.Request) {
 		if j.State == stateDone {
 			runs, _ = w.db.pairJobIDs(j.HeadSHA, j.BaseSHA, j.Harness, j.Runner)
 		}
-		// The other libraries are measured by their own jobs; their pooled
-		// values stand next to every job of ours.
-		if j.Kind != kindBaseline && j.Kind != kindLib {
-			own := results[:0:0]
-			for _, r := range results {
-				if !r.Baseline {
-					own = append(own, r)
-				}
-			}
-			results = own
-			refs := w.libraryResults()
+		// The pooled values of the other libraries stand next to every
+		// job's own results.
+		if j.Kind != kindBaseline {
+			refs := w.otherResults(j.Subject)
 			have := map[string]bool{}
 			for _, r := range results {
 				have[joinKey(r.Engine, r.Object, r.Op)] = true
@@ -768,7 +761,7 @@ func (w *webServer) apiOp(rw http.ResponseWriter, req *http.Request) {
 		http.NotFound(rw, req)
 		return
 	}
-	v, ok := w.opView(parts[0], parts[1], 2000, w.libraryResults())
+	v, ok := w.opView(parts[0], parts[1], 2000, w.otherResults(subjectDynSSZ))
 	if !ok {
 		http.NotFound(rw, req)
 		return

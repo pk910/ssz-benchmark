@@ -217,7 +217,9 @@ type checkOutput struct {
 // reported says whether a job gets a check: a commit of the repository
 // measured against its base, queued after the reporter was switched on.
 func (c *checkReporter) reported(j *job) bool {
-	return c != nil && j.Kind == kindCommit && j.ID > c.sinceJob && len(j.HeadSHA) == 40
+	// Checks go to the repository the app is installed on, for jobs that
+	// compare a commit with a base.
+	return c != nil && j.Kind == kindCommit && j.Subject == subjectDynSSZ && j.BaseSHA != "" && j.ID > c.sinceJob && len(j.HeadSHA) == 40
 }
 
 // sync brings the job's check run in line with the job. It is idempotent:

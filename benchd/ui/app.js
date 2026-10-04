@@ -174,7 +174,15 @@
     return `<div class="card"><h3>Build <span class="muted" style="text-transform:none">(head, change against the base)</span></h3>${rows.map(x => `<div class="sub mono">${x.pkg}: code ${sizeDelta(x.head.TextBytes, x.base ? x.base.TextBytes : 0)} · binary ${sizeDelta(x.head.BinBytes, x.base ? x.base.BinBytes : 0)} · generated source ${sizeDelta(x.head.GenBytes, x.base ? x.base.GenBytes : 0)}</div>`).join('')}${secs > 0 ? `<div class="sub">generating and compiling the head took ${dur(secs)}</div>` : ''}</div>`;
   }
   const ciText = m => `<span class="ci">[${pct(m.Lo, 1)}, ${pct(m.Hi, 1)}]</span>`;
-  const chip = j => `<span class="chip ${j.State}">${j.State}</span> <span class="chip ${j.Kind}">${j.Kind}</span>`;
+  // kindsOf names what a job measures. A job of another library measures
+  // a commit of its main branch, a release, or both when they coincide.
+  const kindsOf = j => j.Kind !== 'lib' && !(j.Targets || '').includes('+') ? [j.Kind] : [...new Set((j.Targets || j.Branch || '').split('+').map(t => t === 'master' ? 'commit' : 'release'))];
+  const kindChips = j => kindsOf(j).map(k => `<span class="chip ${k}">${k}</span>`).join(' ');
+  const chip = j => `<span class="chip ${j.State}">${j.State}</span> ${kindChips(j)}`;
+  // repoLink names the repository of a job's library, linked.
+  const repoLink = subject => { const url = subjectRepos[subject] || repo; return url ? `<a href="${url}" target="_blank" rel="noopener">${esc(url.replace('https://github.com/', ''))}</a>` : esc(subject || ''); };
+  // refLabel is the branch or tag a job's commit was found under.
+  const refLabel = j => esc(j.Branch) + prLink(j);
   // commitLink links a commit in the repository of its library (ours when
   // none is named).
   const commitLink = (sha, subject) => !sha ? '<span class="muted">-</span>' : sha === 'baselines' ? '<span class="muted">reference libraries</span>' : `<a class="mono" href="${(subject && subjectRepos[subject]) || repo}/commit/${sha}" target="_blank" rel="noopener">${short(sha)}</a>`;
@@ -274,13 +282,13 @@
   /* ---------- views ---------- */
   function jobRows(jobs, opts = {}) {
     if (!jobs || !jobs.length) return '<p class="muted">none</p>';
-    return `<table><thead><tr><th>#</th><th>State</th><th>Branch / PR</th><th>Head</th><th>Base</th><th>Runner</th>${opts.summaries ? '<th>Ratio per engine <span class="muted" style="text-transform:none">(cycles when counted, else time)</span></th>' : ''}<th class="num">Passes</th><th class="num">Took</th><th>${opts.queue ? 'Queued' : 'Finished'}</th></tr></thead><tbody>` +
+    return `<table><thead><tr><th>#</th><th>State</th><th>Repository</th><th>Branch / PR</th><th>Head</th><th>Base</th><th>Runner</th>${opts.summaries ? '<th>Ratio per engine <span class="muted" style="text-transform:none">(cycles when counted, else time)</span></th>' : ''}<th class="num">Passes</th><th class="num">Took</th><th>${opts.queue ? 'Queued' : 'Finished'}</th></tr></thead><tbody>` +
       jobs.map(row => {
         const j = row.Job || row;
         const sums = row.Summaries ? `<td><div class="chips">${engineTotals(row.Summaries).map(s => `<span class="chip" title="geomean of head/base ${s.Cycles ? 'cycles' : 'time'} over ${s.N} operations of every object">${s.Engine} <b>${pct(s.Geomean, 1)}</b></span>`).join('')}</div></td>` : (opts.summaries ? '<td></td>' : '');
         const fin = j.State === 'queued' ? `${j.Priority ? 'priority ' + j.Priority + ' · ' : ''}${ago(j.Created)}` : j.State === 'running' ? `since ${when(j.Started)}` : when(j.Finished);
-        return `<tr><td><a href="#/job/${j.ID}">${j.ID}</a></td><td>${chip(j)}</td><td class="mono">${esc(j.Branch)}${prLink(j)}</td>` +
-          `<td>${commitLink(j.HeadSHA, j.Subject)} <span class="muted desc" style="display:inline-block;vertical-align:bottom">${esc(j.HeadDesc).replace(/^[0-9a-f]{7} /, '')}</span></td>` +
+        return `<tr><td><a href="#/job/${j.ID}">${j.ID}</a></td><td>${chip(j)}</td><td>${repoLink(j.Subject)}</td><td class="mono">${refLabel(j)}</td>` +
+          `<td>${commitLink(j.HeadSHA, j.Subject)} <span class="muted desc" style="display:inline-block;vertical-align:bottom">${esc(j.HeadDesc).replace(/^[0-9a-f]{7,12} /, '')}</span></td>` +
           `<td>${commitLink(j.BaseSHA, j.Subject)} <span class="muted">${esc(j.BaseRef)}</span></td><td class="mono muted">${esc(j.Runner || '')}</td>${sums}<td class="num">${j.Passes || ''}</td><td class="num">${j.Seconds ? dur(j.Seconds) : ''}</td>` +
           `<td class="muted">${fin}${j.Error ? ` <span class="err" title="${esc(j.Error)}">error</span>` : ''}</td></tr>`;
       }).join('') + '</tbody></table>';
@@ -319,9 +327,15 @@
   }
 
   async function viewJobs(kind) {
-    const jobs = await get('/api/jobs?limit=500' + (kind ? '&kind=' + kind : ''));
-    const tabs = ['', 'commit', 'release', 'noise', 'baseline'].map(k => `<a href="#/jobs${k ? '?kind=' + k : ''}" class="chip ${k === (kind || '') ? 'commit' : ''}">${k || 'all'}</a>`).join(' ');
-    app.innerHTML = `<h1>Jobs</h1><div class="toolbar">${tabs}</div>${jobRows(jobs)}`;
+    const all = await get('/api/jobs?limit=500');
+    const params = new URLSearchParams(location.hash.split('?')[1] || '');
+    const repoSel = params.get('repo') || '';
+    const link = (k, r) => `#/jobs${k || r ? '?' + [k ? 'kind=' + k : '', r ? 'repo=' + encodeURIComponent(r) : ''].filter(Boolean).join('&') : ''}`;
+    const kinds = ['', 'commit', 'release', 'noise'].map(k => `<a href="${link(k, repoSel)}" class="chip ${k === (kind || '') ? 'commit' : ''}">${k || 'all kinds'}</a>`).join(' ');
+    const subjects = [...new Set(all.map(j => j.Subject))].sort((a, b) => (a !== 'dynamic-ssz') - (b !== 'dynamic-ssz') || a.localeCompare(b));
+    const repos = ['', ...subjects].map(r => `<a href="${link(kind, r)}" class="chip ${r === repoSel ? 'commit' : ''}">${r ? esc((subjectRepos[r] || r).replace('https://github.com/', '')) : 'all repositories'}</a>`).join(' ');
+    const jobs = all.filter(j => (!kind || kindsOf(j).includes(kind)) && (!repoSel || j.Subject === repoSel));
+    app.innerHTML = `<h1>Jobs</h1><div class="toolbar">${kinds}</div><div class="toolbar">${repos}</div>${jobRows(jobs)}`;
   }
 
   /* job page: metric switch, delta charts, matrices */
@@ -332,13 +346,18 @@
       const rs = byObj[obj];
       // Async engines measure one operation; they show inside the parent
       // engine's cell instead of a column of their own.
-      const engines = sortEngines([...new Set(rs.filter(r => !r.Baseline && !r.Engine.endsWith('Async')).map(r => r.Engine))]);
-      const asyncEngines = sortEngines([...new Set(rs.filter(r => !r.Baseline && r.Engine.endsWith('Async')).map(r => r.Engine))]);
-      const baselines = sortEngines([...new Set(rs.filter(r => r.Baseline).map(r => r.Engine))]);
+      // A job's own engines take the columns; the values of the other
+      // libraries (r.Other) stand beside them. Without a base the job's
+      // results are values only.
+      const own = rs.filter(r => !r.Other);
+      const engines = sortEngines([...new Set(own.filter(r => !r.Engine.endsWith('Async')).map(r => r.Engine))]);
+      const asyncEngines = sortEngines([...new Set(own.filter(r => r.Engine.endsWith('Async')).map(r => r.Engine))]);
+      const baselines = sortEngines([...new Set(rs.filter(r => r.Other).map(r => r.Engine))]);
+      const oneSided = own.length > 0 && own.every(r => r.Baseline);
       const ops = [...new Set(rs.map(r => r.Op))].sort((a, b) => rank(OPS, a) - rank(OPS, b) || a.localeCompare(b));
       const cells = {};
       rs.forEach(r => cells[r.Engine + '/' + r.Op] = r);
-      return { obj, engines, asyncEngines, baselines, ops, cells };
+      return { obj, engines, asyncEngines, baselines, ops, cells, oneSided };
     });
   }
 
@@ -385,10 +404,14 @@
   }
 
   function matrixTable(mx, m, jobID) {
-    const head = `<tr><th>Operation</th>${mx.engines.map(e => `<th class="grp">${e} <span class="muted" style="text-transform:none;letter-spacing:0">base → head</span></th>`).join('')}${mx.baselines.length ? '<th class="grp">Other libraries <span class="muted" style="text-transform:none;letter-spacing:0">their value · ours ÷ theirs</span></th>' : ''}</tr>`;
+    const head = `<tr><th>Operation</th>${mx.engines.map(e => `<th class="grp">${e}${mx.oneSided ? '' : ' <span class="muted" style="text-transform:none;letter-spacing:0">base → head</span>'}</th>`).join('')}${mx.baselines.length ? '<th class="grp">Other libraries <span class="muted" style="text-transform:none;letter-spacing:0">their value · ours ÷ theirs</span></th>' : ''}</tr>`;
     const rows = mx.ops.map(op => {
       const tds = mx.engines.map(e => {
         const r = mx.cells[e + '/' + op], ra = mx.cells[e + 'Async/' + op];
+        if (mx.oneSided) {
+          const one = (x, label) => { const xm = metricFor(m, x.Engine, x); return `<a href="#/job/${jobID}/leaf/${x.Engine}/${x.Object}/${x.Op}">${label ? `<span class="muted small">${label}${xm !== m ? ' (time)' : ''}</span> ` : ''}${cellAbs(x, xm)}</a>`; };
+          return `<td class="grp cell">${r ? one(r) : '<span class="muted">-</span>'}${ra ? one(ra, 'async') : ''}</td>`;
+        }
         return `<td class="grp cell">${r ? cellDelta(r, m, jobID) : '<span class="muted">-</span>'}${ra ? cellDelta(ra, m, jobID, 'async') : ''}</td>`;
       }).join('');
       const refs = mx.baselines.length ? `<td class="grp small refs">${refCell(mx, m, op)}</td>` : '';
@@ -698,6 +721,9 @@
     leafNoise = (d.Noise && d.Noise.PerLeaf) || {};
     const j = d.Job, m = METRICS[metric];
     const mxs = buildMatrices(d.Results);
+    // A one-sided job has values only: its charts show them, never deltas.
+    const oneSided = mxs.length > 0 && mxs.every(mx => mx.oneSided);
+    const mode = oneSided ? 'abs' : chartMode;
     const r = d.Runner, p = (r && r.Progress) || {};
     const live = d.Live ? `<div class="card wide"><div class="sub">${r ? esc(r.Runner) + ': ' + esc(r.Phase) : 'running on ' + esc(j.Runner) + ' (no live report yet)'}</div>${r && p.Leaves ? `<div class="bar"><div style="width:${r.Percent}%"></div></div><div class="sub">pass ${p.Pass}${p.PlannedPasses ? ' of ~' + p.PlannedPasses : ''} · leaf ${p.Leaf}/${p.Leaves} · ${dur(p.Measured / 1e9)} measured · running ${dur(r.Running)} · provisional results from the samples so far, refreshes every 20 s</div>` : ''}</div>` : '';
     const runs = d.Runs && d.Runs.length > 1 ? ` · pooled over ${d.Runs.length} runs (${d.Runs.map(r => `<a href="#/job/${r}">#${r}</a>`).join(', ')})` : '';
@@ -708,16 +734,16 @@
         <div class="card"${j.BaseSHA ? '' : ' style="display:none"'}><h3>Base (${esc(j.BaseRef)})</h3><div class="mono">${commitLink(j.BaseSHA)} ${esc(j.BaseDesc).replace(/^[0-9a-f]{7} /, '')}</div>${j.BaseSHA !== j.HeadSHA ? `<div class="sub"><a href="${repo}/compare/${j.BaseSHA}...${j.HeadSHA}" target="_blank" rel="noopener">diff on GitHub</a></div>` : ''}</div>
         <div class="card"><h3>Measurement</h3><div class="mono">${j.Passes} passes${j.Seconds ? ', ' + dur(j.Seconds) : ''}${runs}</div><div class="sub">runner ${esc(j.Runner || '-')}</div><div class="sub">${esc(j.GoVersion)} · harness ${j.Harness}${d.Steal ? ` · ${d.Steal} steal ticks (wake-ups, within the limit)` : ' · no steal'}</div><div class="sub">queued ${when(j.Created)} · finished ${when(j.Finished)}</div></div>
         ${buildCard(d.Builds)}
-        <div class="card"><h3>Ratio per engine <span class="muted" style="text-transform:none">(cycles when counted, else time)</span></h3><div class="chips">${engineTotals(d.Summaries || []).map(x => `<span class="chip" title="geomean of head/base ${x.Cycles ? 'cycles' : 'time'} over ${x.N} operations of every object">${x.Engine} <b>${pct(x.Geomean, 1)}</b></span>`).join('') || '<span class="muted">-</span>'}</div><details class="small" style="margin-top:6px"><summary>per object</summary><div class="chips" style="margin-top:4px">${(d.Summaries || []).map(x => `<span class="chip">${x.Engine}·${x.Object} <b>${pct(x.Geomean, 1)}</b></span>`).join('')}</div></details></div>
+        <div class="card"${oneSided ? ' style="display:none"' : ''}><h3>Ratio per engine <span class="muted" style="text-transform:none">(cycles when counted, else time)</span></h3><div class="chips">${engineTotals(d.Summaries || []).map(x => `<span class="chip" title="geomean of head/base ${x.Cycles ? 'cycles' : 'time'} over ${x.N} operations of every object">${x.Engine} <b>${pct(x.Geomean, 1)}</b></span>`).join('') || '<span class="muted">-</span>'}</div><details class="small" style="margin-top:6px"><summary>per object</summary><div class="chips" style="margin-top:4px">${(d.Summaries || []).map(x => `<span class="chip">${x.Engine}·${x.Object} <b>${pct(x.Geomean, 1)}</b></span>`).join('')}</div></details></div>
       </div>
-      ${j.Note ? `<p class="note">${esc(j.Note)}</p>` : ''}${d.Subject === 'dynamic-ssz' ? `<p class="note">Other libraries: their pooled values at their latest release, measured by their own jobs on the same machine and payload (see <a href="#/ops">Operations</a>). They cannot hash Gloas objects unless they implement progressive merkleization.</p>` : ''}${j.Error ? `<pre class="err">${esc(j.Error)}</pre>` : ''}
-      <div class="toolbar">${metricTabs()}<div class="tabs" id="modeTabs"><button data-mode="rel" class="${chartMode === 'rel' ? 'active' : ''}" title="charts show head against base in percent">change in %</button><button data-mode="abs" class="${chartMode === 'abs' ? 'active' : ''}" title="charts show the measured values">measured values</button></div>${chartMode === 'abs' ? `<label class="check"><input type="checkbox" id="chartLibs" ${chartLibs ? 'checked' : ''}> with the other libraries</label>` : ''}<span class="muted">${m.label} ${m.unit}: base → head and Δ per engine and operation. Δ is the median over the passes. Green/red: a change (outside the band, most passes agree); bold: |Δ| ≥ 5%; grey: no change. Click a bar or cell for every sample.</span></div>
-      ${mxs.map((mx, i) => { const bars = chartMode === 'abs' ? absRowBars(mx, m) : mx.engines.length, rows = chartRows(mx, m, chartMode === 'abs').length; return `<h2>${objName(mx.obj)}</h2><div class="chart" style="height:${rows * Math.max(30, bars * 14 + 8) + 80}px"><canvas id="dc${i}"></canvas></div><p class="note">${chartMode === 'abs' ? `One bar per engine${chartLibs ? ' and reference library' : ''} per operation, in measured ${m.label.toLowerCase()}: the thick body is the middle half of the single runs' values and the thin line reaches to the lowest and the highest run, the white tick and the number are their mean, the grey tick on our own engines is the base's mean. The axis is logarithmic because the operations of one object span several orders of magnitude, so a bar is short when the runs agree.${chartLibs ? ' Paler bars are the other libraries, from the latest reference job.' : ''}` : `One candle per engine (colours in the legend) per operation. The thick body is the middle half of the per-pass ${m.label.toLowerCase()} deltas (each pass links head and base with another function layout and measures them minutes apart), the thin line reaches to the lowest and the highest pass, the white tick and the number are the median. A single pass far off shows as a long thin line and leaves the body and the scale alone; an arrow head means the line continues beyond the chart. The grey band behind each row is what does not count as a change there: the operation's noise floor on this machine, widened where the passes scatter. A result is a change when its median lies outside the band and at least three quarters of the passes agree. The async engines have a row of their own below the operation they run, in the colour of their engine. On the counter tabs that row shows the cycles and instructions of all their threads together (the total work, not the latency), or time for a job measured before all threads were counted.`}</p>${matrixTable(mx, m, j.ID)}`; }).join('') || '<p class="muted">no results yet</p>'}
+      ${j.Note ? `<p class="note">${esc(j.Note)}</p>` : ''}${mxs.some(mx => mx.baselines.length) ? `<p class="note">Other libraries: their pooled values at their latest release, measured by their own jobs on the same machine and payload (see <a href="#/ops">Operations</a>). They cannot hash Gloas objects unless they implement progressive merkleization.</p>` : ''}${j.Error ? `<pre class="err">${esc(j.Error)}</pre>` : ''}
+      <div class="toolbar">${metricTabs()}<div class="tabs" id="modeTabs"${oneSided ? ' style="display:none"' : ''}><button data-mode="rel" class="${mode === 'rel' ? 'active' : ''}" title="charts show head against base in percent">change in %</button><button data-mode="abs" class="${mode === 'abs' ? 'active' : ''}" title="charts show the measured values">measured values</button></div>${mode === 'abs' ? `<label class="check"><input type="checkbox" id="chartLibs" ${chartLibs ? 'checked' : ''}> with the other libraries</label>` : ''}${oneSided ? `<span class="muted">${m.label} ${m.unit} of this commit, measured on its own (nothing to compare against)</span>` : ''}<span class="muted"${oneSided ? ' style="display:none"' : ''}>${m.label} ${m.unit}: base → head and Δ per engine and operation. Δ is the median over the passes. Green/red: a change (outside the band, most passes agree); bold: |Δ| ≥ 5%; grey: no change. Click a bar or cell for every sample.</span></div>
+      ${mxs.map((mx, i) => { const bars = mode === 'abs' ? absRowBars(mx, m) : mx.engines.length, rows = chartRows(mx, m, mode === 'abs').length; return `<h2>${objName(mx.obj)}</h2><div class="chart" style="height:${rows * Math.max(30, bars * 14 + 8) + 80}px"><canvas id="dc${i}"></canvas></div><p class="note">${mode === 'abs' ? `One bar per engine${chartLibs ? ' and reference library' : ''} per operation, in measured ${m.label.toLowerCase()}: the thick body is the middle half of the single runs' values and the thin line reaches to the lowest and the highest run, the white tick and the number are their mean, the grey tick on our own engines is the base's mean. The axis is logarithmic because the operations of one object span several orders of magnitude, so a bar is short when the runs agree.${chartLibs ? ' Paler bars are the other libraries, from the latest reference job.' : ''}` : `One candle per engine (colours in the legend) per operation. The thick body is the middle half of the per-pass ${m.label.toLowerCase()} deltas (each pass links head and base with another function layout and measures them minutes apart), the thin line reaches to the lowest and the highest pass, the white tick and the number are the median. A single pass far off shows as a long thin line and leaves the body and the scale alone; an arrow head means the line continues beyond the chart. The grey band behind each row is what does not count as a change there: the operation's noise floor on this machine, widened where the passes scatter. A result is a change when its median lies outside the band and at least three quarters of the passes agree. The async engines have a row of their own below the operation they run, in the colour of their engine. On the counter tabs that row shows the cycles and instructions of all their threads together (the total work, not the latency), or time for a job measured before all threads were counted.`}</p>${matrixTable(mx, m, j.ID)}`; }).join('') || '<p class="muted">no results yet</p>'}
       ${d.Noise && d.Noise.Jobs ? `<p class="note">Noise floor over ${d.Noise.Jobs} self-comparisons: median |Δ time| ${d.Noise.MedianAbs.toFixed(2)}%, p95 ${d.Noise.P95Abs.toFixed(2)}%.</p>` : ''}
       <details><summary>Raw files</summary><p class="mono">${(d.Files || []).map(f => `<a href="/raw/${j.ID}/${f}" target="_blank">${f}</a>`).join(' · ')}</p></details>`;
     bindMetricTabs(() => viewJob(id));
     destroyCharts();
-    mxs.forEach((mx, i) => chart('dc' + i, (chartMode === 'abs' ? absChartCfg : deltaChartCfg)(mx, m, j.ID)));
+    mxs.forEach((mx, i) => chart('dc' + i, (mode === 'abs' ? absChartCfg : deltaChartCfg)(mx, m, j.ID)));
     document.querySelectorAll('#modeTabs button').forEach(b => b.onclick = () => { chartMode = b.dataset.mode; localStorage.setItem('chartMode', chartMode); viewJob(id); });
     const libs = document.getElementById('chartLibs');
     if (libs) libs.onchange = () => { chartLibs = libs.checked; localStorage.setItem('chartLibs', chartLibs ? '1' : '0'); viewJob(id); };
@@ -1033,5 +1059,6 @@
   }
   window.addEventListener('hashchange', route);
   setInterval(refreshLive, 15000);
-  route();
+  // The status names the repositories the pages link to: it comes first.
+  refreshLive().then(route);
 })();

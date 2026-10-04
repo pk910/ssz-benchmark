@@ -15,14 +15,12 @@ import (
 
 // Job kinds.
 const (
-	kindCommit  = "commit"  // a new commit against its base
-	kindRelease = "release" // the main branch against the latest release
+	kindCommit  = "commit"  // a commit of a library, against its base when it has one
+	kindRelease = "release" // a release of a library
 	kindNoise   = "noise"   // the main branch against itself
 	// kindBaseline measures the reference libraries (other SSZ
 	// implementations) on the same payload, on their own schedule.
 	kindBaseline = "baseline"
-	// kindLib measures one commit of another SSZ library, one-sided.
-	kindLib = "lib"
 )
 
 // Job states.
@@ -44,6 +42,7 @@ type job struct {
 	State     string
 	Kind      string
 	Subject   string // the library the job measures
+	Targets   string // the targets of the library the head stood for when queued ("master", "release+master")
 	Branch    string
 	HeadSHA   string
 	HeadDesc  string
@@ -147,6 +146,9 @@ type result struct {
 	Cycles   metric
 	Instrs   metric
 	Steal    int // steal ticks seen over all measurements of the leaf
+	// Other marks a value of another library shown next to a job's own
+	// results; it is not stored.
+	Other bool `json:",omitempty"`
 	// Extra is computed from the samples for the job page and not stored.
 	Extra map[string]extraStat `json:",omitempty"`
 }
@@ -333,6 +335,7 @@ func openDB(path string) (*store, error) {
 		`ALTER TABLE samples ADD COLUMN extra TEXT NOT NULL DEFAULT ''`,
 		`ALTER TABLE jobs ADD COLUMN subject TEXT NOT NULL DEFAULT '` + subjectDynSSZ + `'`,
 		`ALTER TABLE jobs ADD COLUMN boot_id TEXT NOT NULL DEFAULT ''`,
+		`ALTER TABLE jobs ADD COLUMN targets TEXT NOT NULL DEFAULT ''`,
 	}
 	for _, stmt := range migrations {
 		_, _ = db.Exec(stmt) // fails when the column exists
@@ -427,9 +430,9 @@ func (s *store) insertJob(j *job) error {
 	if j.Subject == "" {
 		j.Subject = subjectDynSSZ
 	}
-	res, err := s.db.Exec(`INSERT INTO jobs(created, state, kind, branch, head_sha, head_desc, base_sha, base_desc, base_ref, pr, note, priority, runner, subject)
-		VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		time.Now().Unix(), stateQueued, j.Kind, j.Branch, j.HeadSHA, j.HeadDesc, j.BaseSHA, j.BaseDesc, j.BaseRef, j.PR, j.Note, j.Priority, j.Runner, j.Subject)
+	res, err := s.db.Exec(`INSERT INTO jobs(created, state, kind, branch, head_sha, head_desc, base_sha, base_desc, base_ref, pr, note, priority, runner, subject, targets)
+		VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		time.Now().Unix(), stateQueued, j.Kind, j.Branch, j.HeadSHA, j.HeadDesc, j.BaseSHA, j.BaseDesc, j.BaseRef, j.PR, j.Note, j.Priority, j.Runner, j.Subject, j.Targets)
 	if err != nil {
 		return err
 	}
@@ -437,13 +440,13 @@ func (s *store) insertJob(j *job) error {
 	return nil
 }
 
-const jobColumns = `id, created, started, finished, state, kind, branch, head_sha, head_desc, base_sha, base_desc, base_ref, pr, passes, error, note, seconds, go_version, priority, harness, runner, subject`
+const jobColumns = `id, created, started, finished, state, kind, branch, head_sha, head_desc, base_sha, base_desc, base_ref, pr, passes, error, note, seconds, go_version, priority, harness, runner, subject, targets`
 
 func scanJob(row interface{ Scan(...any) error }) (*job, error) {
 	j := &job{}
 	var created int64
 	var started, finished sql.NullInt64
-	if err := row.Scan(&j.ID, &created, &started, &finished, &j.State, &j.Kind, &j.Branch, &j.HeadSHA, &j.HeadDesc, &j.BaseSHA, &j.BaseDesc, &j.BaseRef, &j.PR, &j.Passes, &j.Error, &j.Note, &j.Seconds, &j.GoVersion, &j.Priority, &j.Harness, &j.Runner, &j.Subject); err != nil {
+	if err := row.Scan(&j.ID, &created, &started, &finished, &j.State, &j.Kind, &j.Branch, &j.HeadSHA, &j.HeadDesc, &j.BaseSHA, &j.BaseDesc, &j.BaseRef, &j.PR, &j.Passes, &j.Error, &j.Note, &j.Seconds, &j.GoVersion, &j.Priority, &j.Harness, &j.Runner, &j.Subject, &j.Targets); err != nil {
 		return nil, err
 	}
 	j.Created = time.Unix(created, 0)
@@ -774,7 +777,7 @@ func (s *store) setJobNote(id int64, note string) error {
 // runs (newest among equals) as a template for a refinement run.
 func (s *store) leastRefinedPair() (*job, error) {
 	j, err := scanJob(s.db.QueryRow(`SELECT `+jobColumns+` FROM jobs WHERE id = (
-		SELECT MAX(id) FROM jobs WHERE state = ? AND kind = ? GROUP BY head_sha, base_sha, runner ORDER BY COUNT(*) ASC, MAX(id) DESC LIMIT 1)`, stateDone, kindCommit))
+		SELECT MAX(id) FROM jobs WHERE state = ? AND kind = ? AND base_sha != '' GROUP BY head_sha, base_sha, runner ORDER BY COUNT(*) ASC, MAX(id) DESC LIMIT 1)`, stateDone, kindCommit))
 	if err == sql.ErrNoRows {
 		return nil, nil
 	}

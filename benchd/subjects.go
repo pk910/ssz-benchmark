@@ -16,9 +16,11 @@ import (
 	"time"
 )
 
-// A subject is a library whose commits are measured. dynamic-ssz is the
-// subject with branches, pull requests and two-sided jobs; the other
-// libraries are measured one-sided at the commits their targets point to.
+// A subject is a library whose commits are measured. Every library has
+// targets (refs kept measured) and jobs of the same kinds. The library
+// the daemon keeps a mirror of additionally has every commit of its main
+// branch and its pull requests measured against their base, and checks
+// reported.
 const subjectDynSSZ = "dynamic-ssz"
 
 // Target names. The operations page shows one target per subject: master
@@ -42,16 +44,21 @@ type target struct {
 }
 
 type subject struct {
-	Name    string
-	Repo    string // https clone URL
-	Adapter string // the library's module under harness/baselines
+	Name string
+	Repo string // https clone URL
+	// Adapter is the library's module under harness/baselines, built per
+	// commit by its recipe. Empty: the harness packages themselves, built
+	// against a checkout from the mirror.
+	Adapter string
 	Targets []target
 }
 
 const semverTag = `^v\d+\.\d+\.\d+$`
 
-// librarySubjects are the other SSZ libraries.
-var librarySubjects = []subject{
+// subjects are the measured libraries. The first is the one the daemon
+// mirrors; its repository and main branch come from the configuration.
+var subjects = []subject{
+	{Name: subjectDynSSZ, Targets: []target{{Name: targetRelease, TagMatch: semverTag}, {Name: targetMaster}}},
 	{Name: "fastssz-v1", Repo: "https://github.com/ferranbt/fastssz", Adapter: "fastssz1",
 		Targets: []target{{Name: targetFixed, Tag: "v1.0.0"}}},
 	{Name: "fastssz", Repo: "https://github.com/ferranbt/fastssz", Adapter: "fastssz2",
@@ -67,20 +74,45 @@ var librarySubjects = []subject{
 }
 
 func subjectByName(name string) *subject {
-	for i := range librarySubjects {
-		if librarySubjects[i].Name == name {
-			return &librarySubjects[i]
+	for i := range subjects {
+		if subjects[i].Name == name {
+			return &subjects[i]
 		}
 	}
 	return nil
 }
 
+// configureSubjects fills in what the mirrored library takes from the
+// configuration.
+func configureSubjects(cfg *config) {
+	sub := subjectByName(subjectDynSSZ)
+	sub.Repo = "https://github.com/" + cfg.github
+	for i := range sub.Targets {
+		if sub.Targets[i].Name == targetMaster {
+			sub.Targets[i].Branch = cfg.mainBranch
+		}
+	}
+}
+
+// mirrored reports whether the daemon keeps a mirror of the subject's
+// repository.
+func (sub *subject) mirrored() bool { return sub.Adapter == "" }
+
 // repoURL is where the commits of a subject can be looked at.
-func repoURL(cfg *config, name string) string {
+func repoURL(name string) string {
 	if s := subjectByName(name); s != nil {
 		return s.Repo
 	}
-	return "https://github.com/" + cfg.github
+	return ""
+}
+
+// subjectHash identifies what a subject's jobs are built from besides the
+// library itself: the harness version of its jobs.
+func subjectHash(dir string, sub *subject) (string, error) {
+	if sub.mirrored() {
+		return harnessHash(dir)
+	}
+	return libHash(dir, sub.Adapter)
 }
 
 // libHash identifies a library adapter and the kit it shares with the
@@ -316,46 +348,84 @@ func resolveTargets(ctx context.Context, sub *subject) ([]targetState, error) {
 	return out, nil
 }
 
-// libJobExists reports whether a library commit has a job with this
+// targetJobExists reports whether a commit has a job as its head with this
 // harness version already (in any state: a commit that failed to build is
-// not tried again until the adapter changes), or one waiting.
-func (s *store) libJobExists(subject, sha, harness string) (bool, error) {
+// not tried again until the harness changes), or one waiting.
+func (s *store) targetJobExists(subject, sha, harness string) (bool, error) {
 	var n int
-	err := s.db.QueryRow(`SELECT count(*) FROM jobs WHERE kind = ? AND subject = ? AND head_sha = ? AND (harness = ? OR state IN (?, ?))`,
-		kindLib, subject, sha, harness, stateQueued, stateRunning).Scan(&n)
+	err := s.db.QueryRow(`SELECT count(*) FROM jobs WHERE subject = ? AND head_sha = ? AND (harness = ? OR state IN (?, ?))`,
+		subject, sha, harness, stateQueued, stateRunning).Scan(&n)
 	return n > 0, err
 }
 
-// libJob is a one-sided measurement of a library commit.
-func libJob(sub *subject, sha string, names, labels []string, note string) *job {
-	short := sha
-	if len(short) > 12 {
-		short = short[:12]
+// targetJob measures the commit one or more targets of a library point
+// to, on its own: a commit job when the main branch is among them, a
+// release job otherwise.
+func targetJob(sub *subject, sha string, names, labels []string, desc, note string) *job {
+	kind := kindRelease
+	for _, n := range names {
+		if n == targetMaster {
+			kind = kindCommit
+		}
 	}
-	return &job{Kind: kindLib, Subject: sub.Name, Branch: strings.Join(names, "+"), HeadSHA: sha,
-		HeadDesc: sub.Name + " " + strings.Join(labels, ", ") + " (" + short + ")", Note: note}
+	if desc == "" {
+		short := sha
+		if len(short) > 12 {
+			short = short[:12]
+		}
+		desc = short + " " + sub.Name + " " + strings.Join(labels, ", ")
+	}
+	return &job{Kind: kind, Subject: sub.Name, Targets: strings.Join(names, "+"), Branch: strings.Join(labels, ", "), HeadSHA: sha, HeadDesc: desc, Note: note}
 }
 
-// pollLibraries resolves the targets of every library and queues a job for
-// a commit that has none with the current adapter.
-func (s *scheduler) pollLibraries(ctx context.Context) {
-	for i := range librarySubjects {
-		sub := &librarySubjects[i]
-		states, err := resolveTargets(ctx, sub)
-		if err != nil {
-			log.Printf("library %s: %v", sub.Name, err)
+// localTargets resolves the targets of the mirrored library from the
+// mirror.
+func (s *scheduler) localTargets(sub *subject) ([]targetState, error) {
+	var out []targetState
+	for _, t := range sub.Targets {
+		switch {
+		case t.Branch != "":
+			if sha, ok := s.git.branches2(t.Branch); ok {
+				out = append(out, targetState{Subject: sub.Name, Name: t.Name, SHA: sha, Label: t.Branch})
+			}
+		case t.TagMatch != "":
+			if tag, sha, err := s.git.latestRelease(); err == nil {
+				out = append(out, targetState{Subject: sub.Name, Name: t.Name, SHA: sha, Label: tag})
+			}
+		}
+	}
+	return out, nil
+}
+
+// pollTargets resolves the targets of every library (those of other
+// repositories only when remote is set) and queues a job for a commit
+// that has none with the current harness version.
+func (s *scheduler) pollTargets(ctx context.Context, remote bool) {
+	for i := range subjects {
+		sub := &subjects[i]
+		var states []targetState
+		var err error
+		if sub.mirrored() {
+			states, err = s.localTargets(sub)
+		} else if remote {
+			states, err = resolveTargets(ctx, sub)
+		} else {
 			continue
 		}
-		hash, err := libHash(s.cfg.harnessDir, sub.Adapter)
 		if err != nil {
-			log.Printf("library %s: %v", sub.Name, err)
+			log.Printf("targets of %s: %v", sub.Name, err)
+			continue
+		}
+		hash, err := subjectHash(s.cfg.harnessDir, sub)
+		if err != nil {
+			log.Printf("targets of %s: %v", sub.Name, err)
 			continue
 		}
 		bySHA := map[string][]targetState{}
 		var order []string
 		for _, st := range states {
 			if err := s.db.setTarget(st); err != nil {
-				log.Printf("library %s: %v", sub.Name, err)
+				log.Printf("targets of %s: %v", sub.Name, err)
 			}
 			if _, ok := bySHA[st.SHA]; !ok {
 				order = append(order, st.SHA)
@@ -363,27 +433,36 @@ func (s *scheduler) pollLibraries(ctx context.Context) {
 			bySHA[st.SHA] = append(bySHA[st.SHA], st)
 		}
 		for _, sha := range order {
-			if ok, err := s.db.libJobExists(sub.Name, sha, hash); err != nil || ok {
+			if ok, err := s.db.targetJobExists(sub.Name, sha, hash); err != nil || ok {
 				continue
 			}
 			var names, labels []string
 			for _, st := range bySHA[sha] {
 				names, labels = append(names, st.Name), append(labels, st.Label)
 			}
-			j := libJob(sub, sha, names, labels, "")
+			j := targetJob(sub, sha, names, labels, s.describe(sub, sha), "")
 			j.Priority = 1
 			if err := s.db.insertJob(j); err != nil {
-				log.Printf("library %s: %v", sub.Name, err)
+				log.Printf("targets of %s: %v", sub.Name, err)
 				continue
 			}
-			log.Printf("queue %s", j.HeadDesc)
+			log.Printf("queue %s %s (%s)", sub.Name, sha, strings.Join(labels, ", "))
 		}
 	}
 }
 
-// idleLibJob is a rerun of the least measured library commit among the
-// current targets; nil when none can be measured.
-func (s *scheduler) idleLibJob() (*job, error) {
+// describe returns the one-line description of a commit where the mirror
+// has it.
+func (s *scheduler) describe(sub *subject, sha string) string {
+	if sub.mirrored() {
+		return s.git.describe(sha)
+	}
+	return ""
+}
+
+// idleTargetJob is a rerun of the least measured commit among the current
+// targets of the libraries pick accepts; nil when none can be measured.
+func (s *scheduler) idleTargetJob(pick func(*subject) bool) (*job, error) {
 	targets, err := s.db.targets()
 	if err != nil {
 		return nil, err
@@ -399,19 +478,19 @@ func (s *scheduler) idleLibJob() (*job, error) {
 	seen := map[string]*cand{}
 	for _, t := range targets {
 		sub := subjectByName(t.Subject)
-		if sub == nil {
+		if sub == nil || !pick(sub) {
 			continue
 		}
 		key := t.Subject + "|" + t.SHA
 		c := seen[key]
 		if c == nil {
-			hash, err := libHash(s.cfg.harnessDir, sub.Adapter)
+			hash, err := subjectHash(s.cfg.harnessDir, sub)
 			if err != nil {
 				return nil, err
 			}
 			var done, failed int
-			if err := s.db.db.QueryRow(`SELECT coalesce(sum(state = ?), 0), coalesce(sum(state = ?), 0) FROM jobs WHERE kind = ? AND subject = ? AND head_sha = ? AND harness = ?`,
-				stateDone, stateFailed, kindLib, t.Subject, t.SHA, hash).Scan(&done, &failed); err != nil {
+			if err := s.db.db.QueryRow(`SELECT coalesce(sum(state = ?), 0), coalesce(sum(state = ?), 0) FROM jobs WHERE subject = ? AND head_sha = ? AND harness = ?`,
+				stateDone, stateFailed, t.Subject, t.SHA, hash).Scan(&done, &failed); err != nil {
 				return nil, err
 			}
 			if failed > 0 || done == 0 {
@@ -429,5 +508,47 @@ func (s *scheduler) idleLibJob() (*job, error) {
 	}
 	sort.SliceStable(cands, func(a, b int) bool { return cands[a].runs < cands[b].runs })
 	c := cands[0]
-	return libJob(c.sub, c.sha, c.names, c.labels, "refinement run"), nil
+	return targetJob(c.sub, c.sha, c.names, c.labels, s.describe(c.sub, c.sha), "refinement run"), nil
+}
+
+// migrateJobKinds brings jobs queued before every library had the same
+// kinds of jobs to the current form: a job of the former kind "lib"
+// becomes a commit or release job, and the commit jobs of the mirrored
+// library's main branch get their target.
+func (s *store) migrateJobKinds(mainBranch string) error {
+	rows, err := s.db.Query(`SELECT id, subject, branch, head_sha, head_desc FROM jobs WHERE kind = 'lib'`)
+	if err != nil {
+		return err
+	}
+	type old struct {
+		id                         int64
+		subject, branch, sha, desc string
+	}
+	var jobs []old
+	for rows.Next() {
+		var o old
+		if err := rows.Scan(&o.id, &o.subject, &o.branch, &o.sha, &o.desc); err != nil {
+			rows.Close()
+			return err
+		}
+		jobs = append(jobs, o)
+	}
+	rows.Close()
+	for _, o := range jobs {
+		sub := subjectByName(o.subject)
+		if sub == nil {
+			continue
+		}
+		// The description was "<library> <labels> (<commit>)".
+		labels := strings.TrimPrefix(o.desc, o.subject+" ")
+		if i := strings.LastIndex(labels, " ("); i >= 0 {
+			labels = labels[:i]
+		}
+		j := targetJob(sub, o.sha, strings.Split(o.branch, "+"), strings.Split(labels, ", "), "", "")
+		if _, err := s.db.Exec(`UPDATE jobs SET kind = ?, targets = ?, branch = ?, head_desc = ? WHERE id = ?`, j.Kind, j.Targets, j.Branch, j.HeadDesc, o.id); err != nil {
+			return err
+		}
+	}
+	_, err = s.db.Exec(`UPDATE jobs SET targets = ? WHERE subject = ? AND kind = ? AND branch = ? AND targets = ''`, targetMaster, subjectDynSSZ, kindCommit, mainBranch)
+	return err
 }

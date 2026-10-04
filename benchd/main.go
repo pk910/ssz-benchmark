@@ -42,7 +42,7 @@ type config struct {
 	ghAppID          string
 	ghInstallationID string
 	ghAppKey         string
-	libPoll          time.Duration
+	targetPoll       time.Duration
 	counterPairs     bool    // count a rotating pair of further hardware counters in every run
 	oneSided         bool    // measure the base of a commit job only where an earlier run of it does not agree with the head
 	baseThreshold    float64 // percent a head run may differ from the earlier base run before the base is measured
@@ -81,7 +81,7 @@ func main() {
 	flag.StringVar(&seeds, "seeds", "101,202,303,404", "linker layout seeds, one build per seed and side")
 	flag.StringVar(&cfg.benchTime, "benchtime", "300ms", "benchtime used once per leaf to fix its iteration count")
 	flag.IntVar(&cfg.minIters, "min-iters", 2, "lowest fixed iteration count per measurement")
-	flag.DurationVar(&cfg.libPoll, "lib-poll", 15*time.Minute, "how often the repositories of the other libraries are checked for new commits and releases")
+	flag.DurationVar(&cfg.targetPoll, "target-poll", 15*time.Minute, "how often the upstream repositories of the libraries without a mirror are checked for new commits and releases")
 	flag.StringVar(&cfg.sandboxUser, "sandbox-user", os.Getenv("SANDBOX_USER"), "unprivileged user the builds and benchmark processes run as (env SANDBOX_USER); empty: as the daemon, and no fork is measured")
 	flag.StringVar(&cfg.approveLabel, "approve-label", "benchmark", "label that approves measuring a fork pull request at the head it is applied to (delivered by the GitHub webhook)")
 	flag.StringVar(&cfg.publicURL, "public-url", os.Getenv("PUBLIC_URL"), "public root of the web UI, used in links from GitHub (env PUBLIC_URL)")
@@ -119,6 +119,7 @@ func main() {
 		cfg.name, _ = os.Hostname()
 	}
 
+	configureSubjects(cfg)
 	for _, d := range []string{"wt", "hb", "jobs"} {
 		if err := os.MkdirAll(filepath.Join(cfg.dataDir, d), 0o755); err != nil {
 			log.Fatal(err)
@@ -194,6 +195,9 @@ func main() {
 		// The reference job is gone: one that never ran is removed.
 		if _, err := db.db.Exec(`DELETE FROM jobs WHERE kind = ? AND state IN (?, ?)`, kindBaseline, stateQueued, stateSkipped); err != nil {
 			log.Fatal(err)
+		}
+		if err := db.migrateJobKinds(cfg.mainBranch); err != nil {
+			log.Fatalf("job kinds: %v", err)
 		}
 		if err := db.backfillCommitValues(); err != nil {
 			log.Fatalf("pooled values: %v", err)

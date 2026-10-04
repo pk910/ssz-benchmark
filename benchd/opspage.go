@@ -34,22 +34,14 @@ func (w *webServer) valuesOf(name, mode string, targets []targetState) *subjectV
 	if pick == nil {
 		return nil
 	}
-	sv := &subjectValues{Name: name, Target: pick.Name, Label: pick.Label, SHA: pick.SHA, Repo: repoURL(w.cfg, name)}
+	sv := &subjectValues{Name: name, Target: pick.Name, Label: pick.Label, SHA: pick.SHA, Repo: repoURL(name)}
 	sv.values, _ = w.db.commitValues(name, pick.SHA)
 	if len(sv.values) == 0 {
-		// The newest finished job of this target, whatever commit it had.
+		// The newest finished job that stood for this target, whatever
+		// commit it had.
 		var sha string
-		var err error
-		if name == subjectDynSSZ {
-			if mode != targetMaster {
-				return sv
-			}
-			err = w.db.db.QueryRow(`SELECT head_sha FROM jobs WHERE state = ? AND subject = ? AND kind = ? AND branch = ? ORDER BY id DESC LIMIT 1`,
-				stateDone, name, kindCommit, w.cfg.mainBranch).Scan(&sha)
-		} else {
-			err = w.db.db.QueryRow(`SELECT head_sha FROM jobs WHERE state = ? AND subject = ? AND kind = ? AND ('+' || branch || '+') LIKE ? ORDER BY id DESC LIMIT 1`,
-				stateDone, name, kindLib, "%+"+pick.Name+"+%").Scan(&sha)
-		}
+		err := w.db.db.QueryRow(`SELECT head_sha FROM jobs WHERE state = ? AND subject = ? AND ('+' || targets || '+') LIKE ? ORDER BY id DESC LIMIT 1`,
+			stateDone, name, "%+"+pick.Name+"+%").Scan(&sha)
 		if err != nil || sha == "" {
 			return sv
 		}
@@ -63,29 +55,33 @@ func (w *webServer) valuesOf(name, mode string, targets []targetState) *subjectV
 }
 
 func subjectNames() []string {
-	names := []string{subjectDynSSZ}
-	for i := range librarySubjects {
-		names = append(names, librarySubjects[i].Name)
+	names := make([]string, len(subjects))
+	for i := range subjects {
+		names[i] = subjects[i].Name
 	}
 	return names
 }
 
-// libraryResults returns the other libraries' values as results, for the
-// pages that show them next to a dynamic-ssz job: each library at its
-// release (or fixed) target, at its master when it has no release value.
-func (w *webServer) libraryResults() []result {
+// otherResults returns the pooled values of every library but one as
+// results, for the pages that show them next to a job of that one: each
+// library at its release (or fixed) target, at its master when it has no
+// release value.
+func (w *webServer) otherResults(except string) []result {
 	targets, _ := w.db.targets()
 	var out []result
-	for i := range librarySubjects {
-		sv := w.valuesOf(librarySubjects[i].Name, targetRelease, targets)
+	for _, name := range subjectNames() {
+		if name == except {
+			continue
+		}
+		sv := w.valuesOf(name, targetRelease, targets)
 		if sv == nil || len(sv.values) == 0 {
-			sv = w.valuesOf(librarySubjects[i].Name, targetMaster, targets)
+			sv = w.valuesOf(name, targetMaster, targets)
 		}
 		if sv == nil {
 			continue
 		}
 		for _, v := range sv.values {
-			out = append(out, result{JobID: v.JobID, Engine: v.Engine, Object: v.Object, Op: v.Op, Baseline: true, N: v.N,
+			out = append(out, result{JobID: v.JobID, Engine: v.Engine, Object: v.Object, Op: v.Op, Baseline: true, Other: true, N: v.N,
 				Ns: metric{Head: v.Ns, CVHead: v.CVNs}, Cycles: metric{Head: v.Cycles, CVHead: v.CVCycles}, Instrs: metric{Head: v.Instrs},
 				Bytes: metric{Head: v.Bytes}, Allocs: metric{Head: v.Allocs}})
 		}
