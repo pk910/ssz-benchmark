@@ -96,7 +96,12 @@
   const pct = (v, d = 2) => (v >= 0 ? '+' : '') + v.toFixed(d) + '%';
   const short = s => (s || '').slice(0, 12);
   const dur = s => { s = Math.round(s); const m = Math.floor(s / 60); return m ? `${m}m${String(s % 60).padStart(2, '0')}s` : `${s}s`; };
-  const when = t => t ? new Date(t).toISOString().slice(0, 16).replace('T', ' ') : '-';
+  // when writes a time in the viewer's time zone, as YYYY-MM-DD HH:MM.
+  const when = t => {
+    if (!t) return '-';
+    const d = new Date(t), p = n => String(n).padStart(2, '0');
+    return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`;
+  };
   const ago = t => {
     if (!t) return '';
     const d = (Date.now() - new Date(t)) / 1000;
