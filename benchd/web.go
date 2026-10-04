@@ -359,16 +359,46 @@ func (w *webServer) apiDashboard(rw http.ResponseWriter, req *http.Request) {
 	}{w.status(), queue, rows, w.noiseFloor(), "https://github.com/" + w.cfg.github})
 }
 
+// queueStamp changes when a job is queued, started or removed.
+func (w *webServer) queueStamp() int {
+	var n, last, running int
+	_ = w.db.db.QueryRow(`SELECT count(*), coalesce(max(id), 0), coalesce(sum(state = ?), 0) FROM jobs`, stateRunning).Scan(&n, &last, &running)
+	return n*31 + last*7 + running
+}
+
 func (w *webServer) apiJobs(rw http.ResponseWriter, req *http.Request) {
 	limit := 300
 	if n, err := strconv.Atoi(req.URL.Query().Get("limit")); err == nil && n > 0 {
 		limit = n
 	}
-	jobs, _ := w.db.listJobs(limit, req.URL.Query().Get("kind"))
-	if jobs == nil {
-		jobs = []*job{}
+	kind := req.URL.Query().Get("kind")
+	if req.URL.Query().Get("summaries") == "" {
+		jobs, _ := w.db.listJobs(limit, kind)
+		if jobs == nil {
+			jobs = []*job{}
+		}
+		w.writeJSON(rw, jobs)
+		return
 	}
-	w.writeJSON(rw, jobs)
+	// With the ratio per engine of every finished job, as on the dashboard.
+	rows := w.pages.get(w.db.doneStamp()+"|"+strconv.Itoa(w.queueStamp()), fmt.Sprintf("jobs|%d|%s", limit, kind), func() any {
+		type jobRow struct {
+			Job       *job
+			Summaries []engineSummary
+		}
+		jobs, _ := w.db.listJobs(limit, kind)
+		rows := []jobRow{}
+		for _, j := range jobs {
+			row := jobRow{Job: j}
+			if j.State == stateDone && j.BaseSHA != "" {
+				results, _ := w.db.resultsFor(j.ID)
+				row.Summaries = summaries(results)
+			}
+			rows = append(rows, row)
+		}
+		return rows
+	})
+	w.writeJSON(rw, rows)
 }
 
 // apiJob: /api/job/<id> (results; provisional results for a running job),

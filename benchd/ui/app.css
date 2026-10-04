@@ -74,7 +74,7 @@ td.grp, th.grp { border-left: 1px solid var(--line); }
 td.cell a { color: inherit; display: block; }
 td.cell a:hover { text-decoration: none; }
 .wrap { white-space: normal; }
-.desc { max-width: 440px; overflow: hidden; text-overflow: ellipsis; }
+.desc { max-width: 300px; overflow: hidden; text-overflow: ellipsis; }
 
 /* delta cell */
 .d { display: inline-flex; align-items: baseline; gap: 6px; }

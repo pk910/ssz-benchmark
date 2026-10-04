@@ -324,14 +324,16 @@
   /* ---------- views ---------- */
   function jobRows(jobs, opts = {}) {
     if (!jobs || !jobs.length) return '<p class="muted">none</p>';
-    return `<table><thead><tr><th>#</th><th>State</th><th>Repository</th><th>Branch / PR</th><th>Head</th><th>Base</th><th>Runner</th>${opts.summaries ? '<th>Ratio per engine <span class="muted" style="text-transform:none">(cycles when counted, else time)</span></th>' : ''}<th class="num">Passes</th><th class="num">Took</th><th>${opts.queue ? 'Queued' : 'Finished'}</th></tr></thead><tbody>` +
+    // The runner is named only when the jobs ran on more than one machine.
+    const runners = new Set(jobs.map(row => (row.Job || row).Runner).filter(Boolean)).size > 1;
+    return `<table><thead><tr><th>#</th><th>State</th><th>Repository</th><th>Branch / PR</th><th>Head</th><th>Base</th>${runners ? '<th>Runner</th>' : ''}${opts.summaries ? '<th>Ratio per engine <span class="muted" style="text-transform:none">(cycles, else time)</span></th>' : ''}<th class="num">Passes</th><th class="num">Took</th><th>${opts.queue ? 'Queued' : 'Finished'}</th></tr></thead><tbody>` +
       jobs.map(row => {
         const j = row.Job || row;
-        const sums = row.Summaries ? `<td><div class="chips">${engineTotals(row.Summaries).map(s => `<span class="chip" title="geomean of head/base ${s.Cycles ? 'cycles' : 'time'} over ${s.N} operations of every object">${engName(s.Engine)} <b>${pct(s.Geomean, 1)}</b></span>`).join('')}</div></td>` : (opts.summaries ? '<td></td>' : '');
+        const sums = row.Summaries ? `<td><div class="chips">${engineTotals(row.Summaries).map(s => `<span class="chip" title="geomean of head/base ${s.Cycles ? 'cycles' : 'time'} over ${s.N} operations of every object">${engName(s.Engine).replace(/^dynamic-ssz /, '')} <b>${pct(s.Geomean, 1)}</b></span>`).join('')}</div></td>` : (opts.summaries ? '<td></td>' : '');
         const fin = j.State === 'queued' ? `${j.Priority ? 'priority ' + j.Priority + ' · ' : ''}${ago(j.Created)}` : j.State === 'running' ? `since ${when(j.Started)}` : when(j.Finished);
         return `<tr><td><a href="#/job/${j.ID}">${j.ID}</a></td><td>${chip(j)}</td><td>${repoLink(j.Subject)}</td><td class="mono">${refLabel(j)}</td>` +
           `<td>${commitLink(j.HeadSHA, j.Subject)} <span class="muted desc" style="display:inline-block;vertical-align:bottom">${esc(j.HeadDesc).replace(/^[0-9a-f]{7,12} /, '')}</span></td>` +
-          `<td>${commitLink(j.BaseSHA, j.Subject)} <span class="muted">${esc(j.BaseRef)}</span></td><td class="mono muted">${esc(j.Runner || '')}</td>${sums}<td class="num">${j.Passes || ''}</td><td class="num">${j.Seconds ? dur(j.Seconds) : ''}</td>` +
+          `<td>${commitLink(j.BaseSHA, j.Subject)} <span class="muted">${esc(j.BaseRef)}</span></td>${runners ? `<td class="mono muted">${esc(j.Runner || '')}</td>` : ''}${sums}<td class="num">${j.Passes || ''}</td><td class="num">${j.Seconds ? dur(j.Seconds) : ''}</td>` +
           `<td class="muted">${fin}${j.Error ? ` <span class="err" title="${esc(j.Error)}">error</span>` : ''}</td></tr>`;
       }).join('') + '</tbody></table>';
   }
@@ -369,15 +371,16 @@
   }
 
   async function viewJobs(kind) {
-    const all = await get('/api/jobs?limit=500');
+    const rows = await get('/api/jobs?limit=500&summaries=1');
+    const all = rows.map(r => r.Job);
     const params = new URLSearchParams(location.hash.split('?')[1] || '');
     const repoSel = params.get('repo') || '', sha = params.get('sha') || '';
     const link = (k, r) => `#/jobs${k || r ? '?' + [k ? 'kind=' + k : '', r ? 'repo=' + encodeURIComponent(r) : ''].filter(Boolean).join('&') : ''}`;
     const kinds = ['', 'commit', 'release', 'noise'].map(k => `<a href="${link(k, repoSel)}" class="chip ${k === (kind || '') ? 'commit' : ''}">${k || 'all kinds'}</a>`).join(' ');
     const subjects = [...new Set(all.map(j => j.Subject))].sort((a, b) => (a !== 'dynamic-ssz') - (b !== 'dynamic-ssz') || a.localeCompare(b));
     const repos = ['', ...subjects].map(r => `<a href="${link(kind, r)}" class="chip ${r === repoSel ? 'commit' : ''}">${r ? esc((subjectRepos[r] || r).replace('https://github.com/', '')) : 'all repositories'}</a>`).join(' ');
-    const jobs = all.filter(j => (!kind || kindsOf(j).includes(kind)) && (!repoSel || j.Subject === repoSel) && (!sha || j.HeadSHA === sha || j.BaseSHA === sha));
-    app.innerHTML = `<h1>Jobs</h1><div class="toolbar">${kinds}</div><div class="toolbar">${repos}</div>${sha ? `<p class="note">Jobs that measured commit <span class="mono">${esc(sha.slice(0, 12))}</span> as head or base. <a href="#/jobs">all jobs</a></p>` : ''}${jobRows(jobs)}`;
+    const jobs = rows.filter(r => { const j = r.Job; return (!kind || kindsOf(j).includes(kind)) && (!repoSel || j.Subject === repoSel) && (!sha || j.HeadSHA === sha || j.BaseSHA === sha); });
+    app.innerHTML = `<h1>Jobs</h1><div class="toolbar">${kinds}</div><div class="toolbar">${repos}</div>${sha ? `<p class="note">Jobs that measured commit <span class="mono">${esc(sha.slice(0, 12))}</span> as head or base. <a href="#/jobs">all jobs</a></p>` : ''}${jobRows(jobs, { summaries: true })}`;
   }
 
   /* job page: metric switch, delta charts, matrices */
