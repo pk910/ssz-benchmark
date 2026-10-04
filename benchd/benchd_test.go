@@ -448,3 +448,31 @@ func TestSampleBlobAndMigration(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+func TestBuildFacts(t *testing.T) {
+	hdir := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(hdir, "types", "fulu"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(hdir, "types", "fulu", "gen_ssz.go"), make([]byte, 1234), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	writeBuildNote(hdir, 42)
+	// The test binary stands in for a harness binary.
+	s := &side{name: "head", sha: "abc", hdir: hdir, bins: map[string]map[string]string{"fulu": {"101": os.Args[0]}}}
+	facts := buildFacts(7, s)
+	if len(facts) != 1 || facts[0].TextBytes <= 0 || facts[0].BinBytes < facts[0].TextBytes || facts[0].GenBytes != 1234 || facts[0].BuildSeconds != 42 {
+		t.Fatalf("facts %+v", facts)
+	}
+	db, err := openDB(filepath.Join(t.TempDir(), "t.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := db.insertBuilds(facts); err != nil {
+		t.Fatal(err)
+	}
+	got, err := db.buildsFor(7)
+	if err != nil || len(got) != 1 || got[0] != facts[0] {
+		t.Fatalf("stored %+v, %v", got, err)
+	}
+}

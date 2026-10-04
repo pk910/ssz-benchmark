@@ -25,6 +25,7 @@ type jobStore interface {
 	setBenchIters(l leaf, n int) error
 	resetSamples(id int64) error
 	addSamples(samples []sample) error
+	addBuilds(facts []buildFact) error
 	finish(id int64, passes int, errText string, seconds float64) error
 	interrupted(id int64) error
 }
@@ -163,6 +164,7 @@ func (s *localStore) benchIters() (map[string]int, error) { return s.db.benchIte
 func (s *localStore) setBenchIters(l leaf, n int) error   { return s.db.setBenchIters(l, n) }
 func (s *localStore) resetSamples(id int64) error         { return s.db.deleteSamples(id) }
 func (s *localStore) addSamples(samples []sample) error   { return s.db.insertSamples(samples) }
+func (s *localStore) addBuilds(facts []buildFact) error   { return s.db.insertBuilds(facts) }
 func (s *localStore) interrupted(id int64) error {
 	err := s.db.requeueJob(id)
 	s.checks.syncJob(id)

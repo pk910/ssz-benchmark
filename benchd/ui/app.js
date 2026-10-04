@@ -144,6 +144,20 @@
   const kindChip = r => kindOf(r) ? `<span class="kind ${kindOf(r)}" title="${kindText(r)}">${kindOf(r) === 'code' ? 'code' : 'same work'}</span>` : '';
   // cpi is cycles per instruction of one side of a result.
   const cpi = (r, side) => r.Instrs && r.Instrs[side] > 0 && r.Cycles[side] > 0 ? r.Cycles[side] / r.Instrs[side] : 0;
+  // buildRows pairs the head and base build facts of a job per package.
+  function buildRows(builds) {
+    const by = {};
+    (builds || []).forEach(b => { (by[b.Pkg] = by[b.Pkg] || {})[b.Side] = b; });
+    return Object.keys(by).sort().map(pkg => ({ pkg, head: by[pkg].head, base: by[pkg].base })).filter(x => x.head);
+  }
+  // sizeDelta writes a head size with its change against the base.
+  const sizeDelta = (h, b) => `${fmtBytes(h)}${b > 0 && b !== h ? ` <span class="${h > b ? 'worse' : 'better'}">${pct((h - b) / b * 100)}</span>` : ''}`;
+  function buildCard(builds) {
+    const rows = buildRows(builds);
+    if (!rows.length) return '';
+    const secs = rows[0].head.BuildSeconds;
+    return `<div class="card"><h3>Build <span class="muted" style="text-transform:none">(head, change against the base)</span></h3>${rows.map(x => `<div class="sub mono">${x.pkg}: code ${sizeDelta(x.head.TextBytes, x.base ? x.base.TextBytes : 0)} · binary ${sizeDelta(x.head.BinBytes, x.base ? x.base.BinBytes : 0)} · generated source ${sizeDelta(x.head.GenBytes, x.base ? x.base.GenBytes : 0)}</div>`).join('')}${secs > 0 ? `<div class="sub">generating and compiling the head took ${dur(secs)}</div>` : ''}</div>`;
+  }
   const ciText = m => `<span class="ci">[${pct(m.Lo, 1)}, ${pct(m.Hi, 1)}]</span>`;
   const chip = j => `<span class="chip ${j.State}">${j.State}</span> <span class="chip ${j.Kind}">${j.Kind}</span>`;
   const commitLink = sha => sha === 'baselines' ? '<span class="muted">reference libraries</span>' : `<a class="mono" href="${repo}/commit/${sha}" target="_blank" rel="noopener">${short(sha)}</a>`;
@@ -672,6 +686,7 @@
         <div class="card"><h3>Head</h3><div class="mono">${commitLink(j.HeadSHA)} ${esc(j.HeadDesc).replace(/^[0-9a-f]{7} /, '')}</div><div class="sub mono">${esc(j.Branch)}${prLink(j)}</div></div>
         <div class="card"><h3>Base (${esc(j.BaseRef)})</h3><div class="mono">${commitLink(j.BaseSHA)} ${esc(j.BaseDesc).replace(/^[0-9a-f]{7} /, '')}</div>${j.BaseSHA !== j.HeadSHA ? `<div class="sub"><a href="${repo}/compare/${j.BaseSHA}...${j.HeadSHA}" target="_blank" rel="noopener">diff on GitHub</a></div>` : ''}</div>
         <div class="card"><h3>Measurement</h3><div class="mono">${j.Passes} passes${j.Seconds ? ', ' + dur(j.Seconds) : ''}${runs}</div><div class="sub">runner ${esc(j.Runner || '-')}</div><div class="sub">${esc(j.GoVersion)} · harness ${j.Harness}${d.Steal ? ` · ${d.Steal} steal ticks (wake-ups, within the limit)` : ' · no steal'}</div><div class="sub">queued ${when(j.Created)} · finished ${when(j.Finished)}</div></div>
+        ${buildCard(d.Builds)}
         <div class="card"><h3>Ratio per engine <span class="muted" style="text-transform:none">(cycles when counted, else time)</span></h3><div class="chips">${engineTotals(d.Summaries || []).map(x => `<span class="chip" title="geomean of head/base ${x.Cycles ? 'cycles' : 'time'} over ${x.N} operations of every object">${x.Engine} <b>${pct(x.Geomean, 1)}</b></span>`).join('') || '<span class="muted">-</span>'}</div><details class="small" style="margin-top:6px"><summary>per object</summary><div class="chips" style="margin-top:4px">${(d.Summaries || []).map(x => `<span class="chip">${x.Engine}·${x.Object} <b>${pct(x.Geomean, 1)}</b></span>`).join('')}</div></details></div>
       </div>
       ${j.Note ? `<p class="note">${esc(j.Note)}</p>` : ''}${d.BaselineJob ? `<p class="note">Other libraries: values from the reference job <a href="#/job/${d.BaselineJob}">#${d.BaselineJob}</a> on the same machine and payload. They cannot hash Gloas objects unless they implement progressive merkleization (PrysmSSZ does), and none but PrysmSSZ can express the Gloas state.</p>` : ''}${j.Error ? `<pre class="err">${esc(j.Error)}</pre>` : ''}
@@ -793,12 +808,13 @@
         <span class="muted">${measured.length} of ${count} commits measured</span></div>
       ${measured.length ? '<div class="chart h300"><canvas id="prc"></canvas></div>' : '<p class="muted">no commit of this pull request has been measured yet</p>'}
       <p class="note">The commits of the pull request, oldest first. A push is measured at its head, so commits pushed together share one measurement at the last of them. "Against the base" is the full effect of the pull request at that commit. "Against the previous measured commit" is what came in since; it compares two separate jobs and is less exact than a job's own comparison.</p>
-      <table><thead><tr><th>Commit</th><th>Subject</th><th>Committed</th><th>Job</th><th>Against the base</th><th>Against the previous measured commit</th></tr></thead><tbody>
+      <table><thead><tr><th>Commit</th><th>Subject</th><th>Committed</th><th>Job</th><th>Against the base</th><th>Against the previous measured commit</th><th title="size of the compiled benchmark code and of the generated SSZ source at this commit, summed over the harness packages, with the change against the base">Code · generated</th></tr></thead><tbody>
       ${d.Rows.map(r => { const j = r.Job; const prev = r.Previous ? d.Rows.find(x => x.Job && x.Job.ID === r.Previous) : null; return `<tr class="${j ? '' : 'unmeasured'}"><td>${commitLink(r.SHA)}${r.Detached ? ' <span class="chip" title="measured earlier; a force push took this commit out of the branch">earlier head</span>' : ''}</td>
         <td class="desc">${esc(r.Subject)}</td><td class="muted">${when(r.Time)}</td>
         <td>${j ? `<a href="#/job/${j.ID}">#${j.ID}</a> ${chip(j)}` : '<span class="muted">not measured</span>'}</td>
         <td><div class="chips">${j && j.State === 'done' ? chips(r.Summaries) : j ? `<span class="muted">${esc(j.Note || j.State)}</span>` : ''}</div></td>
-        <td><div class="chips">${prev ? chips(r.Step) + ` <a href="#/compare?a=${prev.SHA}&b=${r.SHA}">compare</a>` : ''}</div></td></tr>`; }).join('')}
+        <td><div class="chips">${prev ? chips(r.Step) + ` <a href="#/compare?a=${prev.SHA}&b=${r.SHA}">compare</a>` : ''}</div></td>
+        <td class="small">${(() => { const b = buildRows(r.Builds); if (!b.length) return ''; const sum = (side, f) => b.reduce((a, x) => a + (x[side] ? x[side][f] : 0), 0); return `${sizeDelta(sum('head', 'TextBytes'), sum('base', 'TextBytes'))} · ${sizeDelta(sum('head', 'GenBytes'), sum('base', 'GenBytes'))}`; })()}</td></tr>`; }).join('')}
       </tbody></table>`;
     bindMetricTabs(() => viewPR(n));
     document.querySelectorAll('#prMode button').forEach(b => b.onclick = () => { prMode = b.dataset.mode; localStorage.setItem('prMode', prMode); viewPR(n); });

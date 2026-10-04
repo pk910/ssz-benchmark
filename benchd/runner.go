@@ -307,6 +307,9 @@ func (r *runner) runJob(ctx context.Context, j *job) bool {
 		}
 		used(s.dir)
 		used(s.hdir)
+		if err := r.store.addBuilds(buildFacts(j.ID, s)); err != nil {
+			logw("%s: build facts: %v", s.name, err)
+		}
 	}
 
 	passes, err := r.measure(ctx, j, head, base, jobDir, logw)
@@ -451,6 +454,7 @@ func (r *runner) buildHarness(ctx context.Context, s *side, logw func(string, ..
 	if err := os.WriteFile(filepath.Join(s.hdir, "ok"), []byte(strings.Join(built, " ")), 0o644); err != nil {
 		return err
 	}
+	writeBuildNote(s.hdir, time.Since(start).Seconds())
 	logw("%s: harness built against %s in %s (packages %s)", s.name, s.sha[:12], time.Since(start).Round(time.Second), strings.Join(built, ", "))
 	return nil
 }

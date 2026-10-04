@@ -131,6 +131,13 @@ func (s *remoteStore) resetSamples(id int64) error {
 	return s.call("POST", fmt.Sprintf("/runner/job/%d/reset", id), nil, nil)
 }
 
+func (s *remoteStore) addBuilds(facts []buildFact) error {
+	if len(facts) == 0 {
+		return nil
+	}
+	return s.call("POST", fmt.Sprintf("/runner/job/%d/builds", facts[0].JobID), facts, nil)
+}
+
 func (s *remoteStore) addSamples(samples []sample) error {
 	if len(samples) == 0 {
 		return nil
@@ -283,6 +290,15 @@ func (a *runnerAPI) handle(rw http.ResponseWriter, req *http.Request) {
 				samples[i].JobID = id
 			}
 			err = a.store.addSamples(samples)
+		case "builds":
+			var facts []buildFact
+			if !decode(&facts) {
+				return
+			}
+			for i := range facts {
+				facts[i].JobID = id
+			}
+			err = a.store.addBuilds(facts)
 		case "finish":
 			var in struct {
 				Passes  int

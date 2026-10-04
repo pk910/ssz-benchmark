@@ -200,6 +200,17 @@ func openDB(path string) (*store, error) {
 			instrs REAL NOT NULL DEFAULT 0
 		)`,
 		`CREATE INDEX IF NOT EXISTS samples_job ON samples(job_id, engine, object, op)`,
+		`CREATE TABLE IF NOT EXISTS builds (
+			job_id INTEGER NOT NULL,
+			side TEXT NOT NULL,
+			sha TEXT NOT NULL,
+			pkg TEXT NOT NULL,
+			bin_bytes INTEGER NOT NULL,
+			text_bytes INTEGER NOT NULL,
+			gen_bytes INTEGER NOT NULL,
+			build_seconds REAL NOT NULL,
+			PRIMARY KEY (job_id, side, pkg)
+		)`,
 		`CREATE TABLE IF NOT EXISTS job_samples (
 			job_id INTEGER PRIMARY KEY,
 			data BLOB NOT NULL

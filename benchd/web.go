@@ -365,6 +365,7 @@ func (w *webServer) apiJob(rw http.ResponseWriter, req *http.Request) {
 		if results == nil {
 			results = []result{}
 		}
+		builds, _ := w.db.buildsFor(j.ID)
 		files := jobFiles(filepath.Join(w.cfg.dataDir, "jobs", strconv.FormatInt(j.ID, 10)))
 		steal := 0
 		for _, r := range results {
@@ -406,13 +407,14 @@ func (w *webServer) apiJob(rw http.ResponseWriter, req *http.Request) {
 			Summaries []engineSummary
 			Files     []string
 			Steal     int
+			Builds    []buildFact
 			Runs      []int64
 			Noise     noiseFloor
 			Repo      string
 			// BaselineJob is the job the reference library values come from
 			// when they are not this job's own.
 			BaselineJob int64
-		}{j, j.State == stateRunning, live, st, results, summaries(results), files, steal, runs, w.noiseFloor(), "https://github.com/" + w.cfg.github, baselineJob})
+		}{j, j.State == stateRunning, live, st, results, summaries(results), files, steal, builds, runs, w.noiseFloor(), "https://github.com/" + w.cfg.github, baselineJob})
 	case tail == "samples":
 		samples, _ := w.db.samplesFor(j.ID)
 		w.writeJSON(rw, samples)
@@ -540,6 +542,7 @@ func (w *webServer) apiPR(rw http.ResponseWriter, req *http.Request) {
 		Step      []engineSummary // head against the previous measured commit
 		Previous  int64           // job of that previous commit
 		Results   []result        // the measured values, for the charts
+		Builds    []buildFact     // what the head and the base were built into
 		Detached  bool            // measured, but no longer part of the branch
 	}
 	// The newest job of every head.
@@ -576,10 +579,11 @@ func (w *webServer) apiPR(rw http.ResponseWriter, req *http.Request) {
 	var prevJob int64
 	for i := range rows {
 		r := &rows[i]
-		r.Summaries, r.Step, r.Results = []engineSummary{}, []engineSummary{}, []result{}
+		r.Summaries, r.Step, r.Results, r.Builds = []engineSummary{}, []engineSummary{}, []result{}, []buildFact{}
 		if r.Job == nil || r.Job.State != stateDone {
 			continue
 		}
+		r.Builds, _ = w.db.buildsFor(r.Job.ID)
 		results, _ := w.db.resultsFor(r.Job.ID)
 		for _, res := range results {
 			if !res.Baseline {
