@@ -25,7 +25,9 @@
   }
   const app = {
     set innerHTML(html) {
-      html = html.replace(/<table/g, '<div class="tw"><table').replace(/<\/table>/g, '</table></div>');
+      // Every table gets a scrolling frame, except the small fact tables
+      // inside cards.
+      html = html.replace(/<table(?! class="facts")/g, '<div class="tw"><table').replace(/<\/table>/g, '</table></div>').replace(/(<table class="facts"[\s\S]*?<\/table>)<\/div>/g, '$1');
       if (!refreshing) { appEl.innerHTML = html; return; }
       const t = document.createElement('div');
       t.innerHTML = html;
