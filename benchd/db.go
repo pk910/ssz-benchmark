@@ -146,6 +146,10 @@ type result struct {
 	Cycles   metric
 	Instrs   metric
 	Steal    int // steal ticks seen over all measurements of the leaf
+	// Threads is how many threads the counters covered when all threads of
+	// the process were counted (an async engine): its cycles and
+	// instructions are then the total work. 0: the measured thread only.
+	Threads int
 	// Other marks a value of another library shown next to a job's own
 	// results; it is not stored.
 	Other bool `json:",omitempty"`
@@ -336,12 +340,14 @@ func openDB(path string) (*store, error) {
 		`ALTER TABLE jobs ADD COLUMN subject TEXT NOT NULL DEFAULT '` + subjectDynSSZ + `'`,
 		`ALTER TABLE jobs ADD COLUMN boot_id TEXT NOT NULL DEFAULT ''`,
 		`ALTER TABLE jobs ADD COLUMN targets TEXT NOT NULL DEFAULT ''`,
+		`ALTER TABLE results ADD COLUMN threads INTEGER NOT NULL DEFAULT 0`,
+		`ALTER TABLE commit_values ADD COLUMN threads INTEGER NOT NULL DEFAULT 0`,
 	}
 	for _, stmt := range migrations {
 		_, _ = db.Exec(stmt) // fails when the column exists
 	}
 	s := &store{db: db, dataDir: filepath.Dir(path)}
-	if err := s.refreshResults("results:robust-spread"); err != nil {
+	if err := s.refreshResults("results:threads"); err != nil {
 		return nil, err
 	}
 	return s, nil
@@ -875,7 +881,7 @@ var (
 	metricPrefixes = []string{"ns_", "b_", "a_", "c_", "i_"}
 	metricColumns  = []string{"base", "head", "cv_base", "cv_head", "delta", "dmin", "dmax", "pmed", "pspread", "pagree", "pn"}
 	resultColumns  = func() string {
-		cols := []string{"job_id", "engine", "object", "op", "baseline", "n", "iters", "steal"}
+		cols := []string{"job_id", "engine", "object", "op", "baseline", "n", "iters", "steal", "threads"}
 		for _, p := range metricPrefixes {
 			for _, c := range metricColumns {
 				cols = append(cols, p+c)
@@ -895,7 +901,8 @@ func resultsSchema(table string) string {
 			baseline INTEGER NOT NULL,
 			n INTEGER NOT NULL,
 			iters INTEGER NOT NULL,
-			steal INTEGER NOT NULL,`)
+			steal INTEGER NOT NULL,
+			threads INTEGER NOT NULL DEFAULT 0,`)
 	for _, p := range metricPrefixes {
 		for _, c := range metricColumns {
 			b.WriteString("\n\t\t\t" + p + c + " REAL NOT NULL DEFAULT 0,")
@@ -922,13 +929,13 @@ func (s *store) replaceResults(jobID int64, results []result) error {
 		tx.Rollback()
 		return err
 	}
-	stmt, err := tx.Prepare(`INSERT INTO results(` + resultColumns + `) VALUES(` + strings.TrimSuffix(strings.Repeat("?,", 8+len(metricPrefixes)*len(metricColumns)), ",") + `)`)
+	stmt, err := tx.Prepare(`INSERT INTO results(` + resultColumns + `) VALUES(` + strings.TrimSuffix(strings.Repeat("?,", 9+len(metricPrefixes)*len(metricColumns)), ",") + `)`)
 	if err != nil {
 		tx.Rollback()
 		return err
 	}
 	for _, r := range results {
-		args := []any{jobID, r.Engine, r.Object, r.Op, r.Baseline, r.N, r.Iters, r.Steal}
+		args := []any{jobID, r.Engine, r.Object, r.Op, r.Baseline, r.N, r.Iters, r.Steal, r.Threads}
 		args = append(args, metricValues(r.Ns)...)
 		args = append(args, metricValues(r.Bytes)...)
 		args = append(args, metricValues(r.Allocs)...)
@@ -950,7 +957,7 @@ func scanResults(rows *sql.Rows, err error) ([]result, error) {
 	var out []result
 	for rows.Next() {
 		var r result
-		args := []any{&r.JobID, &r.Engine, &r.Object, &r.Op, &r.Baseline, &r.N, &r.Iters, &r.Steal}
+		args := []any{&r.JobID, &r.Engine, &r.Object, &r.Op, &r.Baseline, &r.N, &r.Iters, &r.Steal, &r.Threads}
 		args = append(args, metricArgs(&r.Ns)...)
 		args = append(args, metricArgs(&r.Bytes)...)
 		args = append(args, metricArgs(&r.Allocs)...)

@@ -86,7 +86,7 @@ func (w *webServer) otherResults(except string) []result {
 			continue
 		}
 		for _, v := range sv.values {
-			out = append(out, result{JobID: v.JobID, Engine: v.Engine, Object: v.Object, Op: v.Op, Baseline: true, Other: true, N: v.N,
+			out = append(out, result{JobID: v.JobID, Engine: v.Engine, Object: v.Object, Op: v.Op, Baseline: true, Other: true, N: v.N, Threads: v.Threads,
 				Ns: metric{Head: v.Ns, CVHead: v.CVNs}, Cycles: metric{Head: v.Cycles, CVHead: v.CVCycles}, Instrs: metric{Head: v.Instrs},
 				Bytes: metric{Head: v.Bytes}, Allocs: metric{Head: v.Allocs}})
 		}
@@ -101,6 +101,7 @@ type opsCell struct {
 	Subject                           string
 	JobID                             int64
 	N                                 int
+	Threads                           int // threads the counters covered when all were counted
 	Ns, Cycles, Instrs, Bytes, Allocs float64
 	CVNs, CVCycles                    float64
 	Rel                               map[string]float64 `json:",omitempty"`
@@ -146,7 +147,7 @@ func (w *webServer) buildOps(mode string) any {
 				rows[k] = &opsRow{Object: v.Object, Op: v.Op, Cells: map[string]*opsCell{}}
 			}
 			engines[v.Engine] = true
-			c := &opsCell{Subject: name, JobID: v.JobID, N: v.N, Ns: v.Ns, Cycles: v.Cycles, Instrs: v.Instrs, Bytes: v.Bytes, Allocs: v.Allocs, CVNs: v.CVNs, CVCycles: v.CVCycles}
+			c := &opsCell{Subject: name, JobID: v.JobID, N: v.N, Threads: v.Threads, Ns: v.Ns, Cycles: v.Cycles, Instrs: v.Instrs, Bytes: v.Bytes, Allocs: v.Allocs, CVNs: v.CVNs, CVCycles: v.CVCycles}
 			if r, ok := release[joinKey(v.Engine, v.Object, v.Op)]; ok && r.Harness == v.Harness {
 				c.Rel = map[string]float64{}
 				for metric, pair := range map[string][2]float64{"Ns": {v.Ns, r.Ns}, "Cycles": {v.Cycles, r.Cycles}, "Instrs": {v.Instrs, r.Instrs}, "Bytes": {v.Bytes, r.Bytes}, "Allocs": {v.Allocs, r.Allocs}} {

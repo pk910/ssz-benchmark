@@ -12,6 +12,7 @@ type commitValue struct {
 	Engine, Object, Op                string
 	JobID                             int64 // newest job that measured it
 	N                                 int   // runs
+	Threads                           int   // threads the counters covered when all were counted (0: one)
 	Ns, Cycles, Instrs, Bytes, Allocs float64
 	CVNs, CVCycles                    float64 // spread of the runs, percent
 }
@@ -56,6 +57,7 @@ func (s *store) updateCommitValue(subject, sha, harness, runner string) error {
 	rows.Close()
 	type acc struct {
 		ns, cycles, instrs, bytes, allocs []float64
+		threads                           []float64
 	}
 	leaves := map[leaf]*acc{}
 	var newest int64
@@ -81,6 +83,9 @@ func (s *store) updateCommitValue(subject, sha, harness, runner string) error {
 			if sm.Cycles > 0 {
 				a.cycles = append(a.cycles, sm.Cycles)
 				a.instrs = append(a.instrs, sm.Instrs)
+				if t := sm.Extra["threads"]; t > 0 {
+					a.threads = append(a.threads, t)
+				}
 			}
 		}
 	}
@@ -109,9 +114,13 @@ func (s *store) updateCommitValue(subject, sha, harness, runner string) error {
 		return median(xs)
 	}
 	for k, a := range leaves {
-		if _, err := tx.Exec(`INSERT INTO commit_values(subject, sha, harness, engine, object, op, job_id, n, ns, cycles, instrs, bytes, allocs, cv_ns, cv_cycles)
-			VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-			subject, sha, harness, k.Engine, k.Object, k.Op, newest, len(a.ns), med(a.ns), med(a.cycles), med(a.instrs), med(a.bytes), med(a.allocs), spread(a.ns), spread(a.cycles)); err != nil {
+		threads := 0
+		if len(a.threads) > 0 && len(a.threads) == len(a.cycles) {
+			threads = int(median(a.threads))
+		}
+		if _, err := tx.Exec(`INSERT INTO commit_values(subject, sha, harness, engine, object, op, job_id, n, ns, cycles, instrs, bytes, allocs, cv_ns, cv_cycles, threads)
+			VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+			subject, sha, harness, k.Engine, k.Object, k.Op, newest, len(a.ns), med(a.ns), med(a.cycles), med(a.instrs), med(a.bytes), med(a.allocs), spread(a.ns), spread(a.cycles), threads); err != nil {
 			tx.Rollback()
 			return err
 		}
@@ -122,7 +131,7 @@ func (s *store) updateCommitValue(subject, sha, harness, runner string) error {
 // commitValues returns the pooled values of a commit with the harness
 // version it was measured with last.
 func (s *store) commitValues(subject, sha string) ([]commitValue, error) {
-	rows, err := s.db.Query(`SELECT subject, sha, harness, engine, object, op, job_id, n, ns, cycles, instrs, bytes, allocs, cv_ns, cv_cycles FROM commit_values
+	rows, err := s.db.Query(`SELECT subject, sha, harness, engine, object, op, job_id, n, ns, cycles, instrs, bytes, allocs, cv_ns, cv_cycles, threads FROM commit_values
 		WHERE subject = ? AND sha = ? AND harness = (SELECT harness FROM commit_values WHERE subject = ? AND sha = ? ORDER BY job_id DESC LIMIT 1)`, subject, sha, subject, sha)
 	if err != nil {
 		return nil, err
@@ -131,7 +140,7 @@ func (s *store) commitValues(subject, sha string) ([]commitValue, error) {
 	var out []commitValue
 	for rows.Next() {
 		var v commitValue
-		if err := rows.Scan(&v.Subject, &v.SHA, &v.Harness, &v.Engine, &v.Object, &v.Op, &v.JobID, &v.N, &v.Ns, &v.Cycles, &v.Instrs, &v.Bytes, &v.Allocs, &v.CVNs, &v.CVCycles); err != nil {
+		if err := rows.Scan(&v.Subject, &v.SHA, &v.Harness, &v.Engine, &v.Object, &v.Op, &v.JobID, &v.N, &v.Ns, &v.Cycles, &v.Instrs, &v.Bytes, &v.Allocs, &v.CVNs, &v.CVCycles, &v.Threads); err != nil {
 			return nil, err
 		}
 		out = append(out, v)
@@ -142,7 +151,7 @@ func (s *store) commitValues(subject, sha string) ([]commitValue, error) {
 // backfillCommitValues computes the pooled values of every measured commit
 // once.
 func (s *store) backfillCommitValues() error {
-	const key = "commit_values:pooled"
+	const key = "commit_values:threads"
 	if v, _ := s.getKV(key); v != "" {
 		return nil
 	}

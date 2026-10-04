@@ -344,6 +344,10 @@ func summarize(samples []sample) []result {
 			}
 			r.Extra[k] = st
 		}
+		// All threads were counted when every run says so.
+		if t := g.extraH["threads"]; len(t) == len(g.nsH) && len(t) > 0 && (len(g.nsB) == 0 || len(g.extraB["threads"]) == len(g.nsB)) {
+			r.Threads = int(median(t))
+		}
 		if !r.Baseline {
 			r.N = min(len(g.nsB), len(g.nsH))
 		}

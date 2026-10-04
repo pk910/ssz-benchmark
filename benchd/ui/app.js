@@ -73,7 +73,7 @@
   // metricFor is the metric an engine is read by on a tab. The counters of
   // an async engine cover one of its threads only, so the counter tabs
   // show its time, unless the result says all its threads were counted.
-  const allThreads = r => !!(r && r.Extra && r.Extra.threads);
+  const allThreads = r => !!(r && (r.Threads > 0 || (r.Extra && r.Extra.threads)));
   const metricFor = (m, engine, r) => engine.endsWith('Async') && (m.key === 'Cycles' || m.key === 'Instrs') && !allThreads(r) ? METRICS.ns : m;
   let repo = '';
   let subjectRepos = {}; // library -> repository URL, from the status
@@ -838,14 +838,15 @@
     const cell = (r, e) => {
       const c = r.Cells[e];
       if (!c) return '<td class="grp muted">-</td>';
-      const em = metricFor(m, e), v = c[em.key];
+      const em = metricFor(m, e, c), v = c[em.key];
       if (!(v > 0) && em.key !== 'Bytes' && em.key !== 'Allocs') return '<td class="grp muted">-</td>';
+      const unit = em !== m ? ' <span class="ci">time</span>' : '';
       const rel = c.Rel && c.Rel[em.key] !== undefined ? c.Rel[em.key] : null;
       const cv = em.key === 'Ns' ? c.CVNs : em.key === 'Cycles' ? c.CVCycles : 0;
-      return `<td class="grp"><b title="median of ${c.N} runs of this commit${cv ? `, spread ${cv.toFixed(1)}%` : ''}">${em.fmt(v)}</b>${rel !== null ? ` <span class="ci ${Math.abs(rel) < 1 ? '' : rel < 0 ? 'better' : 'worse'}" title="master against the latest release of the same library">${pct(rel, 1)} vs release</span>` : ''}</td>`;
+      return `<td class="grp"><b title="median of ${c.N} runs of this commit${cv ? `, spread ${cv.toFixed(1)}%` : ''}${c.Threads ? `, counted over all ${c.Threads} threads` : ''}">${em.fmt(v)}</b>${unit}${rel !== null ? ` <span class="ci ${Math.abs(rel) < 1 ? '' : rel < 0 ? 'better' : 'worse'}" title="master against the latest release of the same library">${pct(rel, 1)} vs release</span>` : ''}</td>`;
     };
     const asyncRow = r => Object.keys(r.Cells).some(e => e.endsWith('Async'))
-      ? `<tr><td><span class="muted">${r.Object}</span></td><td class="mono muted">${r.Op} (async${metricFor(m, 'Async') !== m ? ', time' : ''})</td>${engines.map(e => cell(r, e + 'Async')).join('')}</tr>` : '';
+      ? `<tr><td><span class="muted">${r.Object}</span></td><td class="mono muted">${r.Op} (async${(m.key === 'Cycles' || m.key === 'Instrs') ? ', all threads' : ''})</td>${engines.map(e => cell(r, e + 'Async')).join('')}</tr>` : '';
     const subjectChip = s => {
       const link = /^[0-9a-f]{12,40}$/.test(s.SHA) ? `<a href="${s.Repo}/commit/${s.SHA}" target="_blank" rel="noopener" class="mono">${shortRef(s.SHA)}</a>` : `<span class="mono">${esc(s.SHA)}</span>`;
       const state = !s.Jobs ? ' · <span class="muted">not measured</span>' : ` · <a href="#/jobs?sha=${s.SHA}" title="the jobs that measured this commit">${s.Jobs} job${s.Jobs === 1 ? '' : 's'}</a>, ${s.Runs} runs`;
