@@ -949,8 +949,8 @@
       <div class="toolbar">${metricTabs()}<span class="muted">master history: head value of every ${esc(main)} job, newest right</span></div>
       <div class="chart h300"><canvas id="hc"></canvas></div>
       <h2>Every job</h2>
-      <table><thead><tr><th>Job</th><th>Kind</th><th>Branch</th><th>Head</th><th>Base</th>${v.Engines.map(e => `<th class="grp">${engName(e)}</th>`).join('')}</tr></thead><tbody>
-      ${v.History.map(row => `<tr><td><a href="#/job/${row.Job.ID}">#${row.Job.ID}</a></td><td><span class="chip ${row.Job.Kind}">${row.Job.Kind}</span></td><td class="mono">${esc(row.Job.Branch)}</td><td>${commitLink(row.Job.HeadSHA)}</td><td>${commitLink(row.Job.BaseSHA)}</td>${v.Engines.map(e => {
+      <table><thead><tr><th>Job</th><th>Kind</th><th>Repository</th><th>Branch</th><th>Head</th><th>Base</th>${v.Engines.map(e => `<th class="grp">${engName(e)}</th>`).join('')}</tr></thead><tbody>
+      ${v.History.map(row => `<tr><td><a href="#/job/${row.Job.ID}">#${row.Job.ID}</a></td><td>${kindChips(row.Job)}</td><td>${repoLink(row.Job.Subject)}</td><td class="mono">${esc(row.Job.Branch)}</td><td>${commitLink(row.Job.HeadSHA, row.Job.Subject)}</td><td>${commitLink(row.Job.BaseSHA, row.Job.Subject)}</td>${v.Engines.map(e => {
         const r = row.Results[e];
         if (!r) return '<td class="grp muted">-</td>';
         return `<td class="grp cell">${r.Baseline ? cellAbs(r, m) : cellDelta(r, m, row.Job.ID)}</td>`;
@@ -959,10 +959,10 @@
     bindMetricTabs(() => viewOp(object, op));
     destroyCharts();
     const pts = v.History.slice().reverse().filter(row => row.Job.Branch === main && row.Job.Kind !== 'noise' && row.Job.Finished);
-    const datasets = v.Engines.map((e, i) => ({
+    const datasets = v.Engines.filter(e => pts.some(row => row.Results[e])).map(e => { const i = v.Engines.indexOf(e); return {
       label: engName(e), borderColor: COLORS[i], backgroundColor: COLORS[i], pointRadius: 3, borderWidth: 1.5, tension: 0.1, spanGaps: true,
       data: pts.map(row => row.Results[e] ? { x: when(row.Job.Finished), y: row.Results[e][m.key].Head, j: row.Job } : null).filter(Boolean),
-    }));
+    }; });
     chart('hc', {
       type: 'line',
       data: { labels: pts.map(row => when(row.Job.Finished)), datasets },

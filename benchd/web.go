@@ -677,7 +677,7 @@ type opHistoryRow struct {
 }
 
 func (w *webServer) opView(object, op string, limit int, refs []result) (opView, bool) {
-	results, jobs, err := w.db.leafHistory(object, op, []string{kindCommit, kindRelease, kindNoise, kindBaseline}, limit)
+	results, jobs, err := w.db.leafHistory(object, op, []string{kindCommit, kindRelease, kindNoise}, limit)
 	if err != nil || len(results) == 0 {
 		return opView{}, false
 	}
@@ -687,11 +687,6 @@ func (w *webServer) opView(object, op string, limit int, refs []result) (opView,
 	var order []int64
 	for i := range results {
 		r := &results[i]
-		if r.Baseline && jobs[r.JobID] != nil && jobs[r.JobID].Kind != kindBaseline {
-			// A reference measured inside an older job: superseded by the
-			// baseline jobs.
-			continue
-		}
 		engines[r.Engine] = true
 		if _, ok := v.Latest[r.Engine]; !ok {
 			v.Latest[r.Engine] = r
