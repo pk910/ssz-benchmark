@@ -517,3 +517,41 @@ func TestExtraFigures(t *testing.T) {
 		t.Fatalf("env %s", env)
 	}
 }
+
+func TestBranchSeriesAndTrend(t *testing.T) {
+	if tr := seriesTrend([]float64{100, 100}); tr.N != 2 || tr.Pct != 0 {
+		t.Fatalf("two points have a trend: %+v", tr)
+	}
+	if tr := seriesTrend([]float64{100, 105, 110, 115, 120}); tr.N != 5 || math.Abs(tr.Pct-20) > 1e-9 {
+		t.Fatalf("trend %+v, want +20%% over 5 points", tr)
+	}
+	db, err := openDB(filepath.Join(t.TempDir(), "t.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	add := func(branch, head, harness, state, kind string) int64 {
+		j := &job{Kind: kind, State: stateQueued, Branch: branch, HeadSHA: head, BaseSHA: "base"}
+		if err := db.insertJob(j); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := db.db.Exec(`UPDATE jobs SET state = ?, harness = ?, finished = ? WHERE id = ?`, state, harness, j.ID, j.ID); err != nil {
+			t.Fatal(err)
+		}
+		return j.ID
+	}
+	add("master", "a", "h1", stateDone, kindCommit) // an older harness: not comparable
+	b1 := add("master", "b", "h2", stateDone, kindCommit)
+	add("master", "c", "h2", stateDone, kindNoise) // noise is no commit of the series
+	c1 := add("master", "c", "h2", stateDone, kindCommit)
+	add("feature", "x", "h2", stateDone, kindCommit)
+	add("master", "d", "h2", stateFailed, kindCommit)
+	b2 := add("master", "b", "h2", stateDone, kindCommit) // a rerun of b: its newest job counts, at b's place
+	series, err := db.branchSeries("master", 10)
+	if err != nil || len(series) != 2 || series[0].ID != b2 || series[1].ID != c1 {
+		t.Fatalf("series %+v (b1 %d), %v", series, b1, err)
+	}
+	branches, err := db.branches("master")
+	if err != nil || len(branches) != 2 || branches[0].Name != "master" || branches[0].Commits != 3 || branches[1].Name != "feature" {
+		t.Fatalf("branches %+v, %v", branches, err)
+	}
+}

@@ -786,29 +786,50 @@
 
   // The engines shown in the operations table; remembered per browser.
   let opsHidden = new Set(JSON.parse(localStorage.getItem('opsHidden') || '[]'));
+  // The branch whose values the operations pages show; remembered per
+  // browser. Empty means the main branch.
+  let opsBranch = localStorage.getItem('opsBranch') || '';
+  const branchSelect = (branches, current) => `<select id="opsBranch" title="branch whose measured commits are shown">${branches.map(b => `<option value="${esc(b.Name)}" ${b.Name === current ? 'selected' : ''}>${esc(b.Name)}${b.PR ? ` (#${b.PR})` : ''} · ${b.Commits} commit${b.Commits === 1 ? '' : 's'}</option>`).join('')}</select>`;
+  function bindBranchSelect(rerender) {
+    const sel = document.getElementById('opsBranch');
+    if (sel) sel.onchange = () => { opsBranch = sel.value; localStorage.setItem('opsBranch', opsBranch); rerender(); };
+  }
+  const trendText = (t, n) => `<span class="ci" title="change of the line fitted through the last ${n} measured commits, from the first to the last of them">trend ${pct(t, 1)} / ${n} commits</span>`;
+
   async function viewOps() {
-    const rows = await get('/api/ops');
-    const m = METRICS[metric];
+    const d = await get('/api/ops' + (opsBranch ? '?branch=' + encodeURIComponent(opsBranch) : ''));
+    if (opsBranch && !d.Commits && d.Branches.length && !d.Branches.some(b => b.Name === opsBranch)) { opsBranch = ''; localStorage.removeItem('opsBranch'); return viewOps(); }
+    leafNoise = d.Noise || {};
+    const rows = d.Rows, m = METRICS[metric];
     // One column per engine or library; its async variant has a row of
     // its own below the operation it runs.
-    const all = sortEngines([...new Set(rows.flatMap(r => r.Engines).map(e => e.replace(/Async$/, '')))]);
+    const all = sortEngines([...new Set(d.Engines.map(e => e.replace(/Async$/, '')))]);
     const engines = all.filter(e => !opsHidden.has(e));
     const cell = (r, e) => {
-      const l = r.Latest[e], t = r.Trends[e];
-      if (!l) return '<td class="grp muted">-</td>';
-      const em = metricFor(m, e);
-      if (unmeasured(l[em.key])) return '<td class="grp muted">-</td>';
-      return `<td class="grp"><b>${em.fmt(l[em.key].Head)}</b>${t && t.N >= 3 ? ` <span class="ci">trend ${pct(t.SlopePct30d, 1)}/30d</span>` : ''}</td>`;
+      const c = r.Cells[e];
+      if (!c) return '<td class="grp muted">-</td>';
+      const em = metricFor(m, e), M = c[em.key];
+      if (unmeasured(M)) return '<td class="grp muted">-</td>';
+      const key = e + '/' + r.Object + '/' + r.Op;
+      const value = !c.Baseline && !d.Main && M.Base > 0
+        ? `<span class="v">${em.fmt(M.Base)}<span class="arrow">→</span><b>${em.fmt(M.Head)}</b></span> ${badge(M, key)}`
+        : `<b>${em.fmt(M.Head)}</b>`;
+      return `<td class="grp">${c.Baseline ? value : `<a href="#/job/${c.JobID}/leaf/${e}/${r.Object}/${r.Op}">${value}</a>`}${M.TrendN ? ' ' + trendText(M.Trend, M.TrendN) : ''}</td>`;
     };
-    const asyncRow = r => r.Engines.some(e => e.endsWith('Async'))
+    const asyncRow = r => Object.keys(r.Cells).some(e => e.endsWith('Async'))
       ? `<tr><td><span class="muted">${r.Object}</span></td><td class="mono muted">${r.Op} (async${metricFor(m, 'Async') !== m ? ', time' : ''})</td>${engines.map(e => cell(r, e + 'Async')).join('')}</tr>` : '';
+    const h = d.Head;
     app.innerHTML = `<h1>Operations</h1>
-      <div class="toolbar">${metricTabs()}<span class="muted">latest head value per engine and library; master trend over 30 days once three master points exist</span></div>
+      <div class="toolbar">${metricTabs()}${branchSelect(d.Branches, d.Branch)}<span class="muted">${h ? `at ${commitLink(h.HeadSHA)} (job <a href="#/job/${h.ID}">#${h.ID}</a>)${d.PR ? ` · <a href="#/pr/${d.PR}">pull request #${d.PR}</a>` : ''}` : 'no measured commit on this branch'}</span></div>
+      <p class="note">${d.Main
+        ? `The value of every operation at the newest measured commit of ${esc(d.Branch)}, and its trend over the last ${d.Commits} measured commits (three are needed).`
+        : `The base the branch started from and the value at its newest measured commit, both measured in the same job, with the change between them. The trend runs from the base through the ${d.Commits} measured commit${d.Commits === 1 ? '' : 's'} of the branch (three points are needed).`} The other libraries show their newest measurement, whatever the branch.</p>
       <div class="toolbar chips" id="engsel">${all.map(e => `<a href="#" data-e="${e}" class="chip ${opsHidden.has(e) ? '' : 'commit'}" title="show or hide this column">${e}</a>`).join(' ')}<a href="#" data-e="*" class="chip">all</a><a href="#" data-e="-" class="chip">ours only</a></div>
-      <div style="overflow-x:auto"><table><thead><tr><th>Object</th><th>Operation</th>${engines.map(e => `<th class="grp">${e}</th>`).join('')}</tr></thead><tbody>
+      <div style="overflow-x:auto"><table><thead><tr><th>Object</th><th>Operation</th>${engines.map(e => `<th class="grp">${e}${!d.Main && ['Codegen', 'Reflection'].includes(e) ? ' <span class="muted" style="text-transform:none;letter-spacing:0">base → head</span>' : ''}</th>`).join('')}</tr></thead><tbody>
       ${rows.map((r, i) => `<tr><td>${i > 0 && rows[i - 1].Object === r.Object ? `<span class="muted">${r.Object}</span>` : objName(r.Object)}</td><td class="mono"><a href="#/op/${r.Object}/${r.Op}">${r.Op}</a></td>${engines.map(e => cell(r, e)).join('')}</tr>${asyncRow(r)}`).join('')}
       </tbody></table></div>`;
     bindMetricTabs(viewOps);
+    bindBranchSelect(viewOps);
     document.querySelectorAll('#engsel a').forEach(a => a.onclick = (ev => {
       ev.preventDefault();
       const e = a.dataset.e;
@@ -885,39 +906,45 @@
   }
 
   async function viewOp(object, op) {
-    const v = await get(`/api/op/${object}/${op}`);
+    const v = await get(`/api/op/${object}/${op}` + (opsBranch ? '?branch=' + encodeURIComponent(opsBranch) : ''));
     const m = METRICS[metric];
-    const main = (await get('/api/status')).MainBranch;
     app.innerHTML = `<h1><span class="mono">${object} / ${op}</span>${objInfo(object)}</h1>
       <div class="cards">${v.Engines.map((e, i) => {
-        const l = v.Latest[e], t = v.Trends[e], n = v.Noise[e];
-        return `<div class="card"><h3><i class="legend"><i style="background:${COLORS[i]}"></i></i>${e}</h3><div class="big">${fmtNs(l.Ns.Head)}</div><div class="sub">${fmtBytes(l.Bytes.Head)} · ${fmtNum(l.Allocs.Head)} allocs/op · latest head (job <a href="#/job/${l.JobID}">#${l.JobID}</a>)</div>${t && t.N >= 3 ? `<div class="sub">master trend ${pct(t.SlopePct30d, 1)} / 30d over ${t.N} points (R² ${t.R2.toFixed(2)}), projected ${fmtNs(t.Projected30d)}</div>` : ''}${n ? `<div class="sub">noise floor p95 |Δ| ${n.toFixed(2)}%</div>` : ''}</div>`;
+        const l = v.Latest[e], em = metricFor(m, e), t = (v.Trends[e] || {})[em.key], n = v.Noise[e];
+        return `<div class="card"><h3><i class="legend"><i style="background:${COLORS[i]}"></i></i>${e}</h3><div class="big">${unmeasured(l[em.key]) ? '-' : em.fmt(l[em.key].Head)}${em !== m ? ' <span class="ci">time</span>' : ''}</div><div class="sub">${fmtNs(l.Ns.Head)} · ${fmtBytes(l.Bytes.Head)} · ${fmtNum(l.Allocs.Head)} allocs/op · job <a href="#/job/${l.JobID}">#${l.JobID}</a></div>${t && t.N >= 3 ? `<div class="sub">${trendText(t.Pct, t.N)}${n ? ` · noise floor ±${n.toFixed(2)}%` : ''}</div>` : ''}</div>`;
       }).join('')}</div>
-      <div class="toolbar">${metricTabs()}<span class="muted">master history: head value of every ${esc(main)} job, newest right</span></div>
+      <div class="toolbar">${metricTabs()}${branchSelect(v.Branches, v.Branch)}<span class="muted">head value at every measured commit of ${esc(v.Branch)}, oldest left</span></div>
       <div class="chart h300"><canvas id="hc"></canvas></div>
-      <h2>Every job</h2>
-      <table><thead><tr><th>Job</th><th>Kind</th><th>Branch</th><th>Head</th><th>Base</th>${v.Engines.map(e => `<th class="grp">${e}</th>`).join('')}</tr></thead><tbody>
-      ${v.History.map(row => `<tr><td><a href="#/job/${row.Job.ID}">#${row.Job.ID}</a></td><td><span class="chip ${row.Job.Kind}">${row.Job.Kind}</span></td><td class="mono">${esc(row.Job.Branch)}</td><td>${commitLink(row.Job.HeadSHA)}</td><td>${commitLink(row.Job.BaseSHA)}</td>${v.Engines.map(e => {
+      <h2>Measured commits of ${esc(v.Branch)}</h2>
+      <table><thead><tr><th>Job</th><th>Head</th><th>Subject</th><th>Base</th>${v.Engines.filter(e => v.History.some(row => row.Results[e])).map(e => `<th class="grp">${e} <span class="muted" style="text-transform:none;letter-spacing:0">base → head</span></th>`).join('')}</tr></thead><tbody>
+      ${v.History.map(row => `<tr><td><a href="#/job/${row.Job.ID}">#${row.Job.ID}</a></td><td>${commitLink(row.Job.HeadSHA)}</td><td class="desc">${esc(row.Job.HeadDesc).replace(/^[0-9a-f]{7} /, '')}</td><td>${commitLink(row.Job.BaseSHA)}</td>${v.Engines.filter(e => v.History.some(x => x.Results[e])).map(e => {
         const r = row.Results[e];
         if (!r) return '<td class="grp muted">-</td>';
-        return `<td class="grp cell">${r.Baseline ? cellAbs(r, m) : cellDelta(r, m, row.Job.ID)}</td>`;
+        return `<td class="grp cell">${cellDelta(r, m, row.Job.ID)}</td>`;
       }).join('')}</tr>`).join('')}
       </tbody></table>`;
     bindMetricTabs(() => viewOp(object, op));
+    bindBranchSelect(() => viewOp(object, op));
     destroyCharts();
-    const pts = v.History.slice().reverse().filter(row => row.Job.Branch === main && row.Job.Kind !== 'noise' && row.Job.Finished);
-    const datasets = v.Engines.map((e, i) => ({
-      label: e, borderColor: COLORS[i], backgroundColor: COLORS[i], pointRadius: 3, borderWidth: 1.5, tension: 0.1, spanGaps: true,
-      data: pts.map(row => row.Results[e] ? { x: when(row.Job.Finished), y: row.Results[e][m.key].Head, j: row.Job } : null).filter(Boolean),
-    }));
+    const pts = v.History.slice().reverse();
+    const own = v.Engines.filter(e => pts.some(row => row.Results[e]));
+    const datasets = own.map(e => {
+      const i = v.Engines.indexOf(e), em = metricFor(m, e);
+      return {
+        label: e + (em !== m ? ' (time)' : ''), borderColor: COLORS[i], backgroundColor: COLORS[i], pointRadius: 3, borderWidth: 1.5, tension: 0.1, spanGaps: true, yAxisID: em !== m ? 'y2' : 'y',
+        data: pts.map(row => row.Results[e] && !unmeasured(row.Results[e][em.key]) ? { x: short(row.Job.HeadSHA), y: row.Results[e][em.key].Head, j: row.Job, fmt: em.fmt } : null).filter(Boolean),
+      };
+    });
+    const second = datasets.some(ds => ds.yAxisID === 'y2');
     chart('hc', {
       type: 'line',
-      data: { labels: pts.map(row => when(row.Job.Finished)), datasets },
+      data: { labels: pts.map(row => short(row.Job.HeadSHA)), datasets },
       options: {
         responsive: true, maintainAspectRatio: false, animation: false, parsing: { xAxisKey: 'x', yAxisKey: 'y' },
-        scales: { x: { type: 'category', ticks: { maxRotation: 0, autoSkip: true } }, y: { ticks: { callback: val => m.fmt(val) }, title: { display: true, text: m.unit } } },
-        onClick: (ev, els) => { if (els.length) { const d = datasets[els[0].datasetIndex].data[els[0].index]; if (d && d.j) location.hash = '#/job/' + d.j.ID; } },
-        plugins: { legend: { labels: { boxWidth: 12 } }, tooltip: { callbacks: { label: ctx => `${ctx.dataset.label}: ${m.fmt(ctx.raw.y)} · ${short(ctx.raw.j.HeadSHA)} (job #${ctx.raw.j.ID})` } } },
+        scales: Object.assign({ x: { type: 'category', ticks: { maxRotation: 0, autoSkip: true } }, y: { ticks: { callback: val => m.fmt(val) }, title: { display: true, text: m.unit } } },
+          second ? { y2: { position: 'right', grid: { display: false }, ticks: { callback: val => fmtNs(val) }, title: { display: true, text: 'time per op (async)' } } } : {}),
+        onClick: (ev, els) => { if (els.length) { const p = datasets[els[0].datasetIndex].data[els[0].index]; if (p && p.j) location.hash = '#/job/' + p.j.ID; } },
+        plugins: { legend: { labels: { boxWidth: 12 } }, tooltip: { callbacks: { label: ctx => `${ctx.dataset.label}: ${ctx.raw.fmt(ctx.raw.y)} · ${esc(ctx.raw.j.HeadDesc)} (job #${ctx.raw.j.ID})` } } },
       },
     });
   }

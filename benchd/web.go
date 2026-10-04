@@ -34,6 +34,7 @@ type webServer struct {
 	db      *store
 	sched   *scheduler // git access and job templates for the admin endpoint
 	runners *runnerAPI // the worker-facing API
+	pages   pageCache
 }
 
 func (w *webServer) handler() (http.Handler, error) {
@@ -680,8 +681,11 @@ func (w *webServer) baselineResults(full bool) ([]result, int64) {
 type opView struct {
 	Object, Op string
 	Engines    []string
+	Branch     string
+	Main       bool
+	Branches   []branchInfo
 	Latest     map[string]*result
-	Trends     map[string]trendFit
+	Trends     map[string]map[string]trend // engine -> metric -> trend over the newest commits
 	History    []opHistoryRow
 	Noise      map[string]float64
 }
@@ -691,64 +695,62 @@ type opHistoryRow struct {
 	Results map[string]*result
 }
 
-func (w *webServer) opView(object, op string, limit int) (opView, bool) {
-	results, jobs, err := w.db.leafHistory(object, op, []string{kindCommit, kindRelease, kindNoise, kindBaseline}, limit)
-	if err != nil || len(results) == 0 {
-		return opView{}, false
+// opView is the history of one operation on a branch: the measured
+// commits newest first, the newest result per engine, the newest values of
+// the reference libraries, and per engine and metric the trend over the
+// newest commits.
+func (w *webServer) opView(object, op, branch string, limit int) (opView, bool) {
+	v := opView{Object: object, Op: op, Branch: branch, Main: branch == w.cfg.mainBranch, Latest: map[string]*result{}, Trends: map[string]map[string]trend{}, Noise: map[string]float64{}, History: []opHistoryRow{}}
+	v.Branches, _ = w.db.branches(w.cfg.mainBranch)
+	series, err := w.db.branchSeries(branch, limit)
+	if err != nil {
+		return v, false
 	}
-	v := opView{Object: object, Op: op, Latest: map[string]*result{}, Trends: map[string]trendFit{}, Noise: map[string]float64{}}
+	ids := make([]int64, len(series))
+	for i, j := range series {
+		ids[i] = j.ID
+	}
+	results, err := w.db.resultsOfJobs(ids, object, op)
+	if err != nil {
+		return v, false
+	}
 	engines := map[string]bool{}
-	byJob := map[int64]*opHistoryRow{}
-	var order []int64
-	for i := range results {
-		r := &results[i]
-		if r.Baseline && jobs[r.JobID] != nil && jobs[r.JobID].Kind != kindBaseline {
-			// A reference measured inside an older job: superseded by the
-			// baseline jobs.
-			continue
-		}
-		engines[r.Engine] = true
-		if _, ok := v.Latest[r.Engine]; !ok {
-			v.Latest[r.Engine] = r
-		}
-		row, ok := byJob[r.JobID]
-		if !ok {
-			row = &opHistoryRow{Job: jobs[r.JobID], Results: map[string]*result{}}
-			byJob[r.JobID] = row
-			order = append(order, r.JobID)
-		}
-		row.Results[r.Engine] = r
+	byEngine := seriesIndex(series, results)[object+"/"+op]
+	rows := make([]opHistoryRow, len(series))
+	for i, j := range series {
+		rows[i] = opHistoryRow{Job: j, Results: map[string]*result{}}
 	}
-	// The reference libraries' latest values do not depend on how far back
-	// the history reaches.
-	if refs, _ := w.baselineResults(false); len(refs) > 0 {
-		for i := range refs {
-			r := &refs[i]
-			if r.Object == object && r.Op == op && v.Latest[r.Engine] == nil {
-				v.Latest[r.Engine] = r
-				engines[r.Engine] = true
+	for engine, rs := range byEngine {
+		engines[engine] = true
+		v.Latest[engine] = newest(rs)
+		tail := rs
+		if len(tail) > trendCommits {
+			tail = tail[len(tail)-trendCommits:]
+		}
+		v.Trends[engine] = seriesTrends(tail, !v.Main && len(rs) <= trendCommits)
+		for i, r := range rs {
+			if r != nil {
+				rows[i].Results[engine] = r
 			}
 		}
+	}
+	for i := len(rows) - 1; i >= 0; i-- {
+		if len(rows[i].Results) > 0 {
+			v.History = append(v.History, rows[i])
+		}
+	}
+	refs, _ := w.baselineResults(false)
+	for i := range refs {
+		r := &refs[i]
+		if r.Object == object && r.Op == op {
+			v.Latest[r.Engine] = r
+			engines[r.Engine] = true
+		}
+	}
+	if len(v.Latest) == 0 {
+		return v, false
 	}
 	v.Engines = sortedBy(engines, engineOrder)
-	for _, id := range order {
-		v.History = append(v.History, *byJob[id])
-	}
-	for _, e := range v.Engines {
-		var ts []time.Time
-		var vals []float64
-		for i := len(v.History) - 1; i >= 0; i-- {
-			row := v.History[i]
-			if row.Job.Branch != w.cfg.mainBranch || row.Job.Finished == nil || row.Job.Kind == kindNoise {
-				continue
-			}
-			if r, ok := row.Results[e]; ok {
-				ts = append(ts, *row.Job.Finished)
-				vals = append(vals, r.Ns.Head)
-			}
-		}
-		v.Trends[e] = fitTrend(ts, vals)
-	}
 	nf := w.noiseFloor()
 	for _, e := range v.Engines {
 		v.Noise[e] = nf.PerLeaf[joinKey(e, object, op)]
@@ -770,32 +772,21 @@ func sortedBy(set map[string]bool, order []string) []string {
 	return out
 }
 
-func (w *webServer) apiOps(rw http.ResponseWriter, req *http.Request) {
-	leaves, _ := w.db.leaves()
-	type row struct {
-		Object, Op string
-		Engines    []string
-		Latest     map[string]*result
-		Trends     map[string]trendFit
-	}
-	rows := []row{}
-	for _, l := range leaves {
-		v, ok := w.opView(l[0], l[1], 200)
-		if !ok {
-			continue
-		}
-		rows = append(rows, row{l[0], l[1], v.Engines, v.Latest, v.Trends})
-	}
-	w.writeJSON(rw, rows)
-}
-
 func (w *webServer) apiOp(rw http.ResponseWriter, req *http.Request) {
 	parts := strings.SplitN(strings.TrimPrefix(req.URL.Path, "/api/op/"), "/", 2)
 	if len(parts) != 2 {
 		http.NotFound(rw, req)
 		return
 	}
-	v, ok := w.opView(parts[0], parts[1], 2000)
+	branch := req.URL.Query().Get("branch")
+	if branch == "" {
+		branch = w.cfg.mainBranch
+	}
+	v, ok := w.opView(parts[0], parts[1], branch, 500)
+	if !ok && branch != w.cfg.mainBranch {
+		// The operation has no measurement on that branch.
+		v, ok = w.opView(parts[0], parts[1], w.cfg.mainBranch, 500)
+	}
 	if !ok {
 		http.NotFound(rw, req)
 		return
@@ -932,7 +923,21 @@ type noiseStat struct {
 	MedianAbs, P95Abs, MaxAbs, CV float64
 }
 
-func (w *webServer) noiseFloor() noiseFloor { return noiseFloorOf(w.db, w.cfg.name) }
+func (w *webServer) noiseFloor() noiseFloor { return w.db.noiseFloor(w.cfg.name) }
+
+// noiseFloor returns the noise floor, computed anew only after a noise job
+// finished.
+func (s *store) noiseFloor(local string) noiseFloor {
+	var n, last int64
+	_ = s.db.QueryRow(`SELECT count(*), coalesce(max(id), 0) FROM jobs WHERE kind = ? AND state = ?`, kindNoise, stateDone).Scan(&n, &last)
+	key := fmt.Sprintf("%s/%d/%d", local, n, last)
+	s.nfMu.Lock()
+	defer s.nfMu.Unlock()
+	if s.nfKey != key {
+		s.nf, s.nfKey = noiseFloorOf(s, local), key
+	}
+	return s.nf
+}
 
 // noiseFloorOf computes the noise floor from the finished noise jobs;
 // local names the controller machine, whose jobs feed the overall figures.
