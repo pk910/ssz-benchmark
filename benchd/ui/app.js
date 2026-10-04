@@ -49,6 +49,10 @@
   };
   const objInfo = o => OBJECT_INFO[o] ? `<span class="info" tabindex="0" data-tip="${OBJECT_INFO[o].replace(/"/g, '&quot;')}">i</span>` : '';
   const objName = o => `${o}${objInfo(o)}`;
+  // How an engine is named on the pages. The engines of dynamic-ssz carry
+  // the library's name like the others do.
+  const ENGINE_LABELS = { Codegen: 'dynamic-ssz codegen', Reflection: 'dynamic-ssz reflection', CodegenAsync: 'dynamic-ssz codegen async', ReflectionAsync: 'dynamic-ssz reflection async' };
+  const engName = e => ENGINE_LABELS[e] || e;
   const ENGINES = ['Codegen', 'Reflection', 'CodegenAsync', 'ReflectionAsync', 'FastSSZ', 'FastSSZv1', 'FastSSZv2', 'PrysmSSZ', 'KaralabeSSZ', 'KaralabeSSZAsync'];
   const COLORS = ['#2f5fd1', '#d97706', '#7c3aed', '#0f9d8a', '#6b7280', '#db2777'];
   const METRICS = {
@@ -285,7 +289,7 @@
     return `<table><thead><tr><th>#</th><th>State</th><th>Repository</th><th>Branch / PR</th><th>Head</th><th>Base</th><th>Runner</th>${opts.summaries ? '<th>Ratio per engine <span class="muted" style="text-transform:none">(cycles when counted, else time)</span></th>' : ''}<th class="num">Passes</th><th class="num">Took</th><th>${opts.queue ? 'Queued' : 'Finished'}</th></tr></thead><tbody>` +
       jobs.map(row => {
         const j = row.Job || row;
-        const sums = row.Summaries ? `<td><div class="chips">${engineTotals(row.Summaries).map(s => `<span class="chip" title="geomean of head/base ${s.Cycles ? 'cycles' : 'time'} over ${s.N} operations of every object">${s.Engine} <b>${pct(s.Geomean, 1)}</b></span>`).join('')}</div></td>` : (opts.summaries ? '<td></td>' : '');
+        const sums = row.Summaries ? `<td><div class="chips">${engineTotals(row.Summaries).map(s => `<span class="chip" title="geomean of head/base ${s.Cycles ? 'cycles' : 'time'} over ${s.N} operations of every object">${engName(s.Engine)} <b>${pct(s.Geomean, 1)}</b></span>`).join('')}</div></td>` : (opts.summaries ? '<td></td>' : '');
         const fin = j.State === 'queued' ? `${j.Priority ? 'priority ' + j.Priority + ' · ' : ''}${ago(j.Created)}` : j.State === 'running' ? `since ${when(j.Started)}` : when(j.Finished);
         return `<tr><td><a href="#/job/${j.ID}">${j.ID}</a></td><td>${chip(j)}</td><td>${repoLink(j.Subject)}</td><td class="mono">${refLabel(j)}</td>` +
           `<td>${commitLink(j.HeadSHA, j.Subject)} <span class="muted desc" style="display:inline-block;vertical-align:bottom">${esc(j.HeadDesc).replace(/^[0-9a-f]{7,12} /, '')}</span></td>` +
@@ -394,7 +398,7 @@
         const r = mx.cells[e + '/' + op];
         if (!r || unmeasured(r[m.key]) || !(ref[m.key].Head > 0)) return '';
         const x = r[m.key].Head / ref[m.key].Head;
-        return `<span class="${x < 0.95 ? 'better' : x > 1.05 ? 'worse' : 'muted'}">${e.replace('Async', '')} ${x.toFixed(2)}×</span>`;
+        return `<span class="${x < 0.95 ? 'better' : x > 1.05 ? 'worse' : 'muted'}">${engName(e.replace('Async', ''))} ${x.toFixed(2)}×</span>`;
       }).filter(Boolean).join(' ');
       const line = `<div class="ref"><span class="muted">${b.replace('Async', ' async')}${m !== mAll ? ' (time)' : ''}</span><b>${m.fmt(ref[m.key].Head)}</b><span class="ours">${ours}</span></div>`;
       m = mAll;
@@ -404,12 +408,12 @@
   }
 
   function matrixTable(mx, m, jobID) {
-    const head = `<tr><th>Operation</th>${mx.engines.map(e => `<th class="grp">${e}${mx.oneSided ? '' : ' <span class="muted" style="text-transform:none;letter-spacing:0">base → head</span>'}</th>`).join('')}${mx.baselines.length ? '<th class="grp">Other libraries <span class="muted" style="text-transform:none;letter-spacing:0">their value · ours ÷ theirs</span></th>' : ''}</tr>`;
+    const head = `<tr><th>Operation</th>${mx.engines.map(e => `<th class="grp">${engName(e)}${mx.oneSided ? '' : ' <span class="muted" style="text-transform:none;letter-spacing:0">base → head</span>'}</th>`).join('')}${mx.baselines.length ? '<th class="grp">Other libraries <span class="muted" style="text-transform:none;letter-spacing:0">their value · ours ÷ theirs</span></th>' : ''}</tr>`;
     const rows = mx.ops.map(op => {
       const tds = mx.engines.map(e => {
         const r = mx.cells[e + '/' + op], ra = mx.cells[e + 'Async/' + op];
         if (mx.oneSided) {
-          const one = (x, label) => { const xm = metricFor(m, x.Engine, x); return `<a href="#/job/${jobID}/leaf/${x.Engine}/${x.Object}/${x.Op}">${label ? `<span class="muted small">${label}${xm !== m ? ' (time)' : ''}</span> ` : ''}${cellAbs(x, xm)}</a>`; };
+          const one = (x, label) => { const xm = metricFor(m, x.Engine, x); return `<a href="#/job/${jobID}/leaf/${engName(x.Engine)}/${x.Object}/${x.Op}">${label ? `<span class="muted small">${label}${xm !== m ? ' (time)' : ''}</span> ` : ''}${cellAbs(x, xm)}</a>`; };
           return `<td class="grp cell">${r ? one(r) : '<span class="muted">-</span>'}${ra ? one(ra, 'async') : ''}</td>`;
         }
         return `<td class="grp cell">${r ? cellDelta(r, m, jobID) : '<span class="muted">-</span>'}${ra ? cellDelta(ra, m, jobID, 'async') : ''}</td>`;
@@ -472,7 +476,7 @@
       bodyColor: css('--fg'), bodyFont: { family: 'ui-monospace, SFMono-Regular, Menlo, Consolas, monospace', size: 11 }, bodySpacing: 4,
       footerColor: css('--muted'), footerFont: { size: 11, weight: 'normal' }, footerMarginTop: 8,
       callbacks: {
-        title: items => { const c = items[0].dataset.meta[items[0].dataIndex]; return `${c.engine} · ${items[0].label}`; },
+        title: items => { const c = items[0].dataset.meta[items[0].dataIndex]; return `${engName(c.engine)} · ${items[0].label}`; },
         label: ctx => {
           const lines = rows(ctx.dataset.meta[ctx.dataIndex], ctx.dataset).filter(Boolean);
           const w = Math.max(...lines.map(l => l[0].length));
@@ -551,7 +555,7 @@
       const color = COLORS[i % COLORS.length];
       const cells = rows.map(row => rowCell(mx, m, e, row));
       return {
-        label: e, type: 'bar', backgroundColor: color + 'aa', borderColor: color, borderWidth: 1,
+        label: engName(e), type: 'bar', backgroundColor: color + 'aa', borderColor: color, borderWidth: 1,
         data: cells.map(c => c ? body(c.r[c.key]) : null),
         meta: cells, whisker: c => range(c.r[c.key]),
         barPercentage: 0.8, categoryPercentage: 0.8, minBarLength: 3,
@@ -680,7 +684,7 @@
       const color = COLORS[i % COLORS.length], ref = mx.baselines.includes(e);
       const cells = rows.map(row => absCell(mx, m, e, row));
       return {
-        label: e + (ref ? ' (library)' : ''), type: 'bar', backgroundColor: color + (ref ? '55' : 'aa'), borderColor: color, borderWidth: 1,
+        label: engName(e) + (ref ? ' (library)' : ''), type: 'bar', backgroundColor: color + (ref ? '55' : 'aa'), borderColor: color, borderWidth: 1,
         data: cells.map(c => c ? headBody(c.r[m.key]) : null),
         meta: cells, own: !ref, skipNull: true, whisker: c => [...headRange(c.r[m.key]), ...(!ref && c.r[m.key].Base > 0 ? [c.r[m.key].Base] : [])],
         barThickness: 9, minBarLength: 3,
@@ -734,7 +738,7 @@
         <div class="card"${j.BaseSHA ? '' : ' style="display:none"'}><h3>Base (${esc(j.BaseRef)})</h3><div class="mono">${commitLink(j.BaseSHA)} ${esc(j.BaseDesc).replace(/^[0-9a-f]{7} /, '')}</div>${j.BaseSHA !== j.HeadSHA ? `<div class="sub"><a href="${repo}/compare/${j.BaseSHA}...${j.HeadSHA}" target="_blank" rel="noopener">diff on GitHub</a></div>` : ''}</div>
         <div class="card"><h3>Measurement</h3><div class="mono">${j.Passes} passes${j.Seconds ? ', ' + dur(j.Seconds) : ''}${runs}</div><div class="sub">runner ${esc(j.Runner || '-')}</div><div class="sub">${esc(j.GoVersion)} · harness ${j.Harness}${d.Steal ? ` · ${d.Steal} steal ticks (wake-ups, within the limit)` : ' · no steal'}</div><div class="sub">queued ${when(j.Created)} · finished ${when(j.Finished)}</div></div>
         ${buildCard(d.Builds)}
-        <div class="card"${oneSided ? ' style="display:none"' : ''}><h3>Ratio per engine <span class="muted" style="text-transform:none">(cycles when counted, else time)</span></h3><div class="chips">${engineTotals(d.Summaries || []).map(x => `<span class="chip" title="geomean of head/base ${x.Cycles ? 'cycles' : 'time'} over ${x.N} operations of every object">${x.Engine} <b>${pct(x.Geomean, 1)}</b></span>`).join('') || '<span class="muted">-</span>'}</div><details class="small" style="margin-top:6px"><summary>per object</summary><div class="chips" style="margin-top:4px">${(d.Summaries || []).map(x => `<span class="chip">${x.Engine}·${x.Object} <b>${pct(x.Geomean, 1)}</b></span>`).join('')}</div></details></div>
+        <div class="card"${oneSided ? ' style="display:none"' : ''}><h3>Ratio per engine <span class="muted" style="text-transform:none">(cycles when counted, else time)</span></h3><div class="chips">${engineTotals(d.Summaries || []).map(x => `<span class="chip" title="geomean of head/base ${x.Cycles ? 'cycles' : 'time'} over ${x.N} operations of every object">${engName(x.Engine)} <b>${pct(x.Geomean, 1)}</b></span>`).join('') || '<span class="muted">-</span>'}</div><details class="small" style="margin-top:6px"><summary>per object</summary><div class="chips" style="margin-top:4px">${(d.Summaries || []).map(x => `<span class="chip">${engName(x.Engine)}·${x.Object} <b>${pct(x.Geomean, 1)}</b></span>`).join('')}</div></details></div>
       </div>
       ${j.Note ? `<p class="note">${esc(j.Note)}</p>` : ''}${mxs.some(mx => mx.baselines.length) ? `<p class="note">Other libraries: their pooled values at their latest release, measured by their own jobs on the same machine and payload (see <a href="#/ops">Operations</a>). They cannot hash Gloas objects unless they implement progressive merkleization.</p>` : ''}${j.Error ? `<pre class="err">${esc(j.Error)}</pre>` : ''}
       <div class="toolbar">${metricTabs()}<div class="tabs" id="modeTabs"${oneSided ? ' style="display:none"' : ''}><button data-mode="rel" class="${mode === 'rel' ? 'active' : ''}" title="charts show head against base in percent">change in %</button><button data-mode="abs" class="${mode === 'abs' ? 'active' : ''}" title="charts show the measured values">measured values</button></div>${mode === 'abs' ? `<label class="check"><input type="checkbox" id="chartLibs" ${chartLibs ? 'checked' : ''}> with the other libraries</label>` : ''}${oneSided ? `<span class="muted">${m.label} ${m.unit} of this commit, measured on its own (nothing to compare against)</span>` : ''}<span class="muted"${oneSided ? ' style="display:none"' : ''}>${m.label} ${m.unit}: base → head and Δ per engine and operation. Δ is the median over the passes. Green/red: a change (outside the band, most passes agree); bold: |Δ| ≥ 5%; grey: no change. Click a bar or cell for every sample.</span></div>
@@ -769,7 +773,7 @@
     const stat = (M, f) => r.Baseline
       ? `<div class="big">${f(M.Head)}</div><div class="sub">cv ${M.CVHead.toFixed(2)}%</div>`
       : `<div class="big">${badge(M)}</div><div class="sub">${f(M.Base)} → ${f(M.Head)} · 95% [${pct(M.Lo, 1)}, ${pct(M.Hi, 1)}] · p ${M.P.toFixed(3)} · median Δ ${pct(M.MedDelta)} · cv ${M.CVBase.toFixed(2)}% / ${M.CVHead.toFixed(2)}%</div>`;
-    app.innerHTML = `<h1><span class="mono">${engine} / ${object} / ${op}</span> <span class="muted small">job <a href="#/job/${id}">#${id}</a>${d.Runs.length > 1 ? `, pooled over ${d.Runs.length} runs` : ''}</span></h1>
+    app.innerHTML = `<h1><span class="mono">${engName(engine)} / ${object} / ${op}</span> <span class="muted small">job <a href="#/job/${id}">#${id}</a>${d.Runs.length > 1 ? `, pooled over ${d.Runs.length} runs` : ''}</span></h1>
       <div class="cards">
         <div class="card"><h3>Time per op</h3>${stat(r.Ns, fmtNs)}</div>
         ${r.Cycles.Head ? `<div class="card"><h3>Cycles per op</h3>${stat(r.Cycles, fmtNum)}</div><div class="card"><h3>Instructions per op</h3>${stat(r.Instrs, fmtNum)}</div>` : ''}
@@ -849,8 +853,8 @@
       <div class="toolbar">${metricTabs()}<div class="tabs" id="opsMode"><button data-mode="master" class="${opsMode === 'master' ? 'active' : ''}" title="every library at the head of its main branch">master</button><button data-mode="release" class="${opsMode === 'release' ? 'active' : ''}" title="every library at its latest release">release</button></div>
         <span class="muted">${opsMode === 'master' ? 'every library at the head of its main branch, with the change against its latest release' : 'every library at its latest release'}; a value is the median over all runs of that commit in every job that measured it, and idle time adds runs</span></div>
       <div class="cards">${d.Subjects.map(subjectChip).join('')}</div>
-      <div class="toolbar chips" id="engsel">${all.map(e => `<a href="#" data-e="${e}" class="chip ${opsHidden.has(e) ? '' : 'commit'}" title="show or hide this column">${e}</a>`).join(' ')}<a href="#" data-e="*" class="chip">all</a><a href="#" data-e="-" class="chip">ours only</a></div>
-      <div style="overflow-x:auto"><table><thead><tr><th>Object</th><th>Operation</th>${engines.map(e => `<th class="grp">${e}</th>`).join('')}</tr></thead><tbody>
+      <div class="toolbar chips" id="engsel">${all.map(e => `<a href="#" data-e="${e}" class="chip ${opsHidden.has(e) ? '' : 'commit'}" title="show or hide this column">${engName(e)}</a>`).join(' ')}<a href="#" data-e="*" class="chip">all</a><a href="#" data-e="-" class="chip">ours only</a></div>
+      <div style="overflow-x:auto"><table><thead><tr><th>Object</th><th>Operation</th>${engines.map(e => `<th class="grp">${engName(e)}</th>`).join('')}</tr></thead><tbody>
       ${rows.map((r, i) => `<tr><td>${i > 0 && rows[i - 1].Object === r.Object ? `<span class="muted">${r.Object}</span>` : objName(r.Object)}</td><td class="mono"><a href="#/op/${r.Object}/${r.Op}">${r.Op}</a></td>${engines.map(e => cell(r, e)).join('')}</tr>${asyncRow(r)}`).join('')}
       </tbody></table></div>${rows.length ? '' : '<p class="muted">no commit of this mode has been measured yet</p>'}`;
     bindMetricTabs(viewOps);
@@ -876,7 +880,7 @@
     const d = await get('/api/pr/' + n);
     repo = d.Repo;
     const m = METRICS[metric];
-    const chips = sums => engineTotals(sums).map(x => `<span class="chip" title="geomean over ${x.N} operations (${x.Cycles && !x.Engine.endsWith('Async') ? 'cycles' : 'time'})">${x.Engine} <b>${pct(x.Geomean, 1)}</b></span>`).join('') || '<span class="muted">-</span>';
+    const chips = sums => engineTotals(sums).map(x => `<span class="chip" title="geomean over ${x.N} operations (${x.Cycles && !x.Engine.endsWith('Async') ? 'cycles' : 'time'})">${engName(x.Engine)} <b>${pct(x.Geomean, 1)}</b></span>`).join('') || '<span class="muted">-</span>';
     const measured = d.Rows.filter(r => r.Job && r.Job.State === 'done');
     const leaves = [...new Set(measured.flatMap(r => r.Results.map(x => x.Object + '/' + x.Op)))].sort((a, b) => { const [ao, ap] = a.split('/'), [bo, bp] = b.split('/'); return rank(OBJECTS, ao) - rank(OBJECTS, bo) || rank(OPS, ap) - rank(OPS, bp); });
     let leaf = leaves.includes(prLeaf) ? prLeaf : '';
@@ -919,7 +923,7 @@
     chart('prc', {
       type: 'line',
       data: { labels: xs.map(r => short(r.SHA).slice(0, 7)), datasets: engines.filter(e => prMode === 'rel' || metricFor(m, e) === m).map((e, i) => ({
-        label: e + (metricFor(m, e) !== m && leaf ? ' (time)' : ''), borderColor: COLORS[rank(ENGINES, e) % COLORS.length], backgroundColor: COLORS[rank(ENGINES, e) % COLORS.length], tension: 0, pointRadius: 4, spanGaps: true,
+        label: engName(e) + (metricFor(m, e) !== m && leaf ? ' (time)' : ''), borderColor: COLORS[rank(ENGINES, e) % COLORS.length], backgroundColor: COLORS[rank(ENGINES, e) % COLORS.length], tension: 0, pointRadius: 4, spanGaps: true,
         data: xs.map(r => value(r, e)) })) },
       options: { responsive: true, maintainAspectRatio: false, animation: false,
         onClick: (ev, els) => { if (els.length) { const r = xs[els[0].index]; if (r.Job) location.hash = `#/job/${r.Job.ID}`; } },
@@ -937,12 +941,12 @@
     app.innerHTML = `<h1><span class="mono">${object} / ${op}</span>${objInfo(object)}</h1>
       <div class="cards">${v.Engines.map((e, i) => {
         const l = v.Latest[e], t = v.Trends[e], n = v.Noise[e];
-        return `<div class="card"><h3><i class="legend"><i style="background:${COLORS[i]}"></i></i>${e}</h3><div class="big">${fmtNs(l.Ns.Head)}</div><div class="sub">${fmtBytes(l.Bytes.Head)} · ${fmtNum(l.Allocs.Head)} allocs/op · latest head (job <a href="#/job/${l.JobID}">#${l.JobID}</a>)</div>${t && t.N >= 3 ? `<div class="sub">master trend ${pct(t.SlopePct30d, 1)} / 30d over ${t.N} points (R² ${t.R2.toFixed(2)}), projected ${fmtNs(t.Projected30d)}</div>` : ''}${n ? `<div class="sub">noise floor p95 |Δ| ${n.toFixed(2)}%</div>` : ''}</div>`;
+        return `<div class="card"><h3><i class="legend"><i style="background:${COLORS[i]}"></i></i>${engName(e)}</h3><div class="big">${fmtNs(l.Ns.Head)}</div><div class="sub">${fmtBytes(l.Bytes.Head)} · ${fmtNum(l.Allocs.Head)} allocs/op · latest head (job <a href="#/job/${l.JobID}">#${l.JobID}</a>)</div>${t && t.N >= 3 ? `<div class="sub">master trend ${pct(t.SlopePct30d, 1)} / 30d over ${t.N} points (R² ${t.R2.toFixed(2)}), projected ${fmtNs(t.Projected30d)}</div>` : ''}${n ? `<div class="sub">noise floor p95 |Δ| ${n.toFixed(2)}%</div>` : ''}</div>`;
       }).join('')}</div>
       <div class="toolbar">${metricTabs()}<span class="muted">master history: head value of every ${esc(main)} job, newest right</span></div>
       <div class="chart h300"><canvas id="hc"></canvas></div>
       <h2>Every job</h2>
-      <table><thead><tr><th>Job</th><th>Kind</th><th>Branch</th><th>Head</th><th>Base</th>${v.Engines.map(e => `<th class="grp">${e}</th>`).join('')}</tr></thead><tbody>
+      <table><thead><tr><th>Job</th><th>Kind</th><th>Branch</th><th>Head</th><th>Base</th>${v.Engines.map(e => `<th class="grp">${engName(e)}</th>`).join('')}</tr></thead><tbody>
       ${v.History.map(row => `<tr><td><a href="#/job/${row.Job.ID}">#${row.Job.ID}</a></td><td><span class="chip ${row.Job.Kind}">${row.Job.Kind}</span></td><td class="mono">${esc(row.Job.Branch)}</td><td>${commitLink(row.Job.HeadSHA)}</td><td>${commitLink(row.Job.BaseSHA)}</td>${v.Engines.map(e => {
         const r = row.Results[e];
         if (!r) return '<td class="grp muted">-</td>';
@@ -953,7 +957,7 @@
     destroyCharts();
     const pts = v.History.slice().reverse().filter(row => row.Job.Branch === main && row.Job.Kind !== 'noise' && row.Job.Finished);
     const datasets = v.Engines.map((e, i) => ({
-      label: e, borderColor: COLORS[i], backgroundColor: COLORS[i], pointRadius: 3, borderWidth: 1.5, tension: 0.1, spanGaps: true,
+      label: engName(e), borderColor: COLORS[i], backgroundColor: COLORS[i], pointRadius: 3, borderWidth: 1.5, tension: 0.1, spanGaps: true,
       data: pts.map(row => row.Results[e] ? { x: when(row.Job.Finished), y: row.Results[e][m.key].Head, j: row.Job } : null).filter(Boolean),
     }));
     chart('hc', {
