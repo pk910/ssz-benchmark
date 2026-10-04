@@ -500,16 +500,20 @@
     series.slice().sort((a, b) => b.mid - a.mid).forEach(sr => { const g = groups[groups.length - 1]; if (g && g[0].mid / sr.mid <= 5) g.push(sr); else groups.push([sr]); });
     const fmt = useNs ? fmtNs : fmtNum;
     document.getElementById('repoCharts').innerHTML = groups.map((g, i) => `<div class="chart" style="height:${200 + 14 * g.length}px"><canvas id="rc${i}"></canvas></div>`).join('');
+    // The charts stand below each other: the axis and the legend take
+    // the same width in each, so that the commits line up.
+    const sameWidths = { id: 'sameWidths', beforeInit(c) { const fit = c.legend.fit; c.legend.fit = function () { fit.call(this); this.width = 200; }; } };
     groups.forEach((g, i) => chart('rc' + i, {
       type: 'line',
+      plugins: [sameWidths],
       data: { labels: chain.map(c => short(c.SHA).slice(0, 8)), datasets: g.map(sr => { const color = COLORS[series.indexOf(sr) % COLORS.length]; return { label: sr.op, n: sr.n, data: sr.data, borderColor: color, backgroundColor: color, pointRadius: 3, pointHoverRadius: 5, borderWidth: 1.5, tension: 0 }; }) },
       options: {
         responsive: true, maintainAspectRatio: false, animation: false,
         interaction: { mode: 'index', intersect: false },
-        scales: { x: { ticks: { maxRotation: 0, autoSkip: true, display: i === groups.length - 1 } }, y: { ticks: { callback: val => fmt(val) }, title: { display: true, text: useNs ? 'time per call' : 'cycles per call' } } },
+        scales: { x: { ticks: { maxRotation: 0, autoSkip: true, display: i === groups.length - 1 } }, y: { afterFit: axis => { axis.width = 96; }, ticks: { callback: val => fmt(val) }, title: { display: true, text: useNs ? 'time per call' : 'cycles per call' } } },
         onClick: (ev, els) => { if (els.length) location.hash = commitHref(v.Name, chain[els[0].index].SHA); },
         plugins: {
-          legend: { position: 'right', labels: { boxWidth: 12 } },
+          legend: { position: 'right', align: 'start', labels: { boxWidth: 12 } },
           tooltip: { callbacks: { title: items => { const c = chain[items[0].dataIndex]; return `${short(c.SHA)} ${(c.Desc || '').replace(/^[0-9a-f]{7,12} /, '').slice(0, 70)}`; }, label: ctx => { const prev = ctx.dataIndex > 0 ? ctx.dataset.data[ctx.dataIndex - 1] : 0; return `${ctx.dataset.label}: ${fmt(ctx.raw)}${prev ? ` (${pct((ctx.raw / prev - 1) * 100, 1)} against the commit before)` : ''} · ${ctx.dataset.n} type${ctx.dataset.n === 1 ? '' : 's'}`; } } },
         },
       },
