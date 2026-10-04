@@ -398,7 +398,8 @@
     });
   }
 
-  const unmeasured = M => !M || (M.Base === 0 && M.Head === 0);
+  // A further figure is measured when runs reported it, also at zero.
+  const unmeasured = M => !M || (M.Loose ? !M.Runs : M.Base === 0 && M.Head === 0);
   function cellDelta(r, m, jobID, label) {
     const tab = m;
     m = metricFor(m, r.Engine, r);
