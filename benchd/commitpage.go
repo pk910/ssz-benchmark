@@ -181,9 +181,17 @@ func (w *webServer) apiCommit(rw http.ResponseWriter, req *http.Request) {
 	sub, sha := subjectByName(parts[0]), parts[1]
 	harness := w.db.harnessOf(sub.Name, sha)
 	head, jobs, err := w.db.commitRuns(sub.Name, sha, harness)
-	if err != nil || len(jobs) == 0 {
-		http.NotFound(rw, req)
+	if err != nil {
+		http.Error(rw, err.Error(), http.StatusInternalServerError)
 		return
+	}
+	if len(jobs) == 0 {
+		// Nothing measured (yet): the jobs that have the commit as their
+		// head, whatever became of them.
+		jobs, _ = w.db.scanJobs(w.db.db.Query(`SELECT `+jobColumns+` FROM jobs WHERE subject = ? AND head_sha = ? ORDER BY id DESC LIMIT 20`, sub.Name, sha))
+		if jobs == nil {
+			jobs = []*job{}
+		}
 	}
 	// The commits offered as a base: the bases its own jobs compared it
 	// with, the library's release and main head, and for a release the one

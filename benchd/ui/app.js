@@ -838,8 +838,8 @@
           <div class="sub">${d.Base ? (d.NoBase ? '<span class="worse">this base has no runs with this harness version: the values stand alone</span>' : `${commitLink(d.Base, d.Subject)} · ${d.BaseRuns} job${d.BaseRuns === 1 ? '' : 's'} measured it. Runs of both commits are paired by layout seed; a seed only one of them was run under does not count.`) : 'no base chosen'}</div></div>
       </div>
       <div class="toolbar">${metricTabs(true)}<div class="tabs" id="modeTabs"${oneSided ? ' style="display:none"' : ''}><button data-mode="rel" class="${chartMode === 'rel' ? 'active' : ''}">change in %</button><button data-mode="abs" class="${chartMode === 'abs' ? 'active' : ''}">measured values</button></div>${mode === 'abs' ? `<label class="check"><input type="checkbox" id="chartLibs" ${chartLibs ? 'checked' : ''}> with the other libraries</label>` : ''}</div>
-      ${sectionsHTML(mxs, m, mode, null, d.Subject)}
-      <h2>Jobs that measured this commit</h2>${jobRows(d.Jobs)}
+      ${measured.length ? sectionsHTML(mxs, m, mode, null, d.Subject) : '<p class="muted">Nothing is measured of this commit yet: no job of it has finished.</p>'}
+      <h2>${measured.length ? 'Jobs that measured this commit' : 'Jobs of this commit'}</h2>${jobRows(d.Jobs)}
       ${d.BaseJobs.length ? `<h2>Jobs that measured the base</h2>${jobRows(d.BaseJobs)}` : ''}`;
     bindMetricTabs(again);
     destroyCharts();
