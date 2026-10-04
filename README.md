@@ -333,8 +333,15 @@ measures its head, and its base when it has one.
 One page (`benchd/ui`, embedded; Chart.js vendored) over the JSON API, hash
 routes:
 
-- `#/` dashboard: running job with progress, the queue in execution order,
-  finished jobs with the time ratio per engine.
+- `#/` overview, with two tabs: the running job with progress, the queue
+  in execution order and the newest finished jobs; and `#/jobs`, every
+  job with filters.
+- `#/repos`: every library with its repository, its targets and the five
+  newest measured commits of its main branch. `#/repo/<library>`: all of
+  them, each with the change per engine against the commit before it
+  (from the pooled values of both, within one harness version), and a
+  chart with one line per operation: its change since the oldest commit
+  shown, a dot per commit.
 - `#/job/<id>`: per object a delta chart (bars = 95% intervals, ticks =
   means) and a matrix operations × engines, each cell base → head with the
   delta and its interval; a metric switch (time / memory / allocations)

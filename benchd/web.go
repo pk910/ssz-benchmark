@@ -83,6 +83,8 @@ func (w *webServer) handler() (http.Handler, error) {
 	mux.HandleFunc("/api/job/", w.apiJob)
 	mux.HandleFunc("/api/ops", w.apiOps)
 	mux.HandleFunc("/api/commit/", w.apiCommit)
+	mux.HandleFunc("/api/repos", w.apiRepos)
+	mux.HandleFunc("/api/repo/", w.apiRepos)
 	mux.HandleFunc("/api/op/", w.apiOp)
 	mux.HandleFunc("/api/compare", w.apiCompare)
 	mux.HandleFunc("/api/pr/", w.apiPR)

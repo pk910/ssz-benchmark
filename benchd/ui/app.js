@@ -345,6 +345,10 @@
       }).join('') + '</tbody></table>';
   }
 
+  // The overview has two tabs: the state of the machine with the newest
+  // jobs, and every job.
+  const overviewTabs = active => `<h1>Overview</h1><div class="toolbar"><div class="tabs">${[['#/', 'Overview'], ['#/jobs', 'All jobs']].map(([href, label]) => `<a href="${href}" class="${label === active ? 'active' : ''}">${label}</a>`).join('')}</div></div>`;
+
   async function viewDash() {
     const d = await get('/api/dashboard');
     repo = d.Repo;
@@ -364,7 +368,7 @@
     const noise = d.Noise.Jobs
       ? `<div class="big">${d.Noise.MedianAbs.toFixed(2)}% <span class="muted">median</span> · ${d.Noise.P95Abs.toFixed(2)}% <span class="muted">p95</span></div><div class="sub">|Δ time| of identical binaries over ${d.Noise.Jobs} self-comparison jobs · <a href="#/noise">per operation</a></div>`
       : '<div class="big">not measured yet</div><div class="sub">master vs master runs every 6 hours and in the idle rotation</div>';
-    app.innerHTML = `<h1>Dashboard</h1>
+    app.innerHTML = `${overviewTabs('Overview')}
       <div class="cards">
         ${runners}
         <div class="card"><h3>Queue</h3><div class="big">${s.Queued}</div><div class="sub">jobs waiting · ${s.Active} running</div></div>
@@ -387,7 +391,80 @@
     const subjects = [...new Set(all.map(j => j.Subject))].sort((a, b) => (a !== 'dynamic-ssz') - (b !== 'dynamic-ssz') || a.localeCompare(b));
     const repos = ['', ...subjects].map(r => `<a href="${link(kind, r)}" class="chip ${r === repoSel ? 'commit' : ''}">${r ? esc((subjectRepos[r] || r).replace('https://github.com/', '')) + (subjects.filter(x => subjectRepos[x] === subjectRepos[r]).length > 1 ? ` (${esc(r)})` : '') : 'all repositories'}</a>`).join(' ');
     const jobs = rows.filter(r => { const j = r.Job; return (!kind || kindsOf(j).includes(kind)) && (!repoSel || j.Subject === repoSel) && (!sha || j.HeadSHA === sha || j.BaseSHA === sha); });
-    app.innerHTML = `<h1>Jobs</h1><div class="toolbar">${kinds}</div><div class="toolbar">${repos}</div>${sha ? `<p class="note">Jobs that measured commit <span class="mono">${esc(sha.slice(0, 12))}</span> as head or base. <a href="#/jobs">all jobs</a></p>` : ''}${jobRows(jobs, { summaries: true })}`;
+    app.innerHTML = `${overviewTabs('All jobs')}<div class="toolbar">${kinds}</div><div class="toolbar">${repos}</div>${sha ? `<p class="note">Jobs that measured commit <span class="mono">${esc(sha.slice(0, 12))}</span> as head or base. <a href="#/jobs">all jobs</a></p>` : ''}${jobRows(jobs, { summaries: true })}`;
+  }
+
+  /* ---------- repositories ---------- */
+  // stepChips: how a commit changed each engine against the commit before
+  // it on the branch.
+  const stepChips = (c, first) => !c.Compared
+    ? `<span class="muted">${c.State !== 'done' ? esc(c.State) : first ? 'first measured commit' : 'no values comparable with the commit before'}</span>`
+    : `<div class="chips">${c.Engines.map(e => `<span class="chip ${Math.abs(e.Geomean) < 0.5 ? '' : e.Geomean < 0 ? 'better' : 'worse'}" title="against the commit before: geomean over ${e.N} operations (cycles, else time); ${e.Faster} faster and ${e.Slower} slower by 1% or more">${esc(engName(e.Engine).replace(/^dynamic-ssz /, ''))} <b>${pct(e.Geomean, 1)}</b>${e.Faster || e.Slower ? ` <span class="moved">${e.Faster ? `<span class="better">▼${e.Faster}</span>` : ''}${e.Slower ? `<span class="worse">▲${e.Slower}</span>` : ''}</span>` : ''}</span>`).join('')}</div>`;
+  const repoCommits = (v, commits) => !commits.length ? `<p class="muted">${v.Branch ? 'no commit of the main branch measured yet' : 'a fixed version: no branch is followed'}</p>`
+    : `<table class="commits"><thead><tr><th>Commit</th><th>Description</th><th>Change against the commit before <span class="muted" style="text-transform:none">(per engine)</span></th><th class="num">Runs</th><th>Measured</th></tr></thead><tbody>${commits.map((c, i) =>
+      `<tr><td>${commitLink(c.SHA, v.Name)}</td><td><span class="muted desc" style="display:inline-block;vertical-align:bottom">${esc(c.Desc).replace(/^[0-9a-f]{7,12} /, '')}</span></td><td>${stepChips(c, i === commits.length - 1 && commits.length === v.Total)}</td><td class="num">${c.Runs || ''}</td><td class="muted">${c.Measured ? when(c.Measured * 1000) : esc(c.State)} · <a href="#/jobs?repo=${encodeURIComponent(v.Name)}&sha=${c.SHA}">${c.Jobs} job${c.Jobs === 1 ? '' : 's'}</a></td></tr>`).join('')}</tbody></table>`;
+  const repoTargets = v => (v.Targets || []).map(t => `<span class="chip">${esc(t.Name)} <b>${esc(t.Label)}</b></span> ${commitLink(t.SHA, v.Name)}`).join(' &nbsp; ');
+  const repoTitle = v => `${esc(v.Name)} <span class="muted small">${repoLink(v.Name)}</span>`;
+
+  async function viewRepos() {
+    const repos = await get('/api/repos');
+    app.innerHTML = `<h1>Repositories</h1><p class="note">Every measured library with the newest commits of its main branch. A row compares a commit with the one before it, over everything measured of both.</p>` +
+      repos.map(v => `<section class="repo"><h2><a href="#/repo/${encodeURIComponent(v.Name)}">${esc(v.Name)}</a> <span class="muted small">${repoLink(v.Name)}</span></h2>
+        <div class="toolbar">${repoTargets(v)}</div>${repoCommits(v, v.Commits)}
+        <p class="note"><a href="#/repo/${encodeURIComponent(v.Name)}">${v.Total > v.Commits.length ? `view all ${v.Total} commits` : 'repository page'} →</a></p></section>`).join('');
+  }
+
+  async function viewRepo(name) {
+    const v = await get('/api/repo/' + encodeURIComponent(name));
+    if (v.Error) throw new Error(v.Error);
+    // Oldest first for the chart; a line is the running product of an
+    // operation's changes, starting at the oldest commit shown.
+    const chain = v.Commits.slice().reverse();
+    const engines = sortEngines([...new Set((v.Leaves || []).map(l => l.Engine))]);
+    let engine = localStorage.getItem('repoEngine');
+    if (!engines.includes(engine)) engine = engines[0];
+    const useNs = localStorage.getItem('repoMetric') === 'ns';
+    const tabs = (id, items, cur) => `<div class="tabs" id="${id}">${items.map(([k, label]) => `<button data-k="${k}" class="${k === cur ? 'active' : ''}">${esc(label)}</button>`).join('')}</div>`;
+    app.innerHTML = `<h1>${repoTitle(v)}</h1>
+      <div class="toolbar">${repoTargets(v)}<span class="muted">${v.Total} measured commit${v.Total === 1 ? '' : 's'} of ${esc(v.Branch || 'the main branch')}</span></div>
+      ${engines.length && chain.length > 1 ? `<div class="toolbar">${tabs('repoEngine', engines.map(e => [e, engName(e)]), engine)}${tabs('repoMetric', [['cycles', 'Cycles'], ['ns', 'Time']], useNs ? 'ns' : 'cycles')}<span class="muted">one line per operation: change since the oldest commit shown, a dot per commit; colour by object</span></div>
+      <div class="chart" style="height:420px"><canvas id="rc"></canvas></div>` : ''}
+      <h2>Commits <span class="muted small">newest first</span></h2>${repoCommits(v, v.Commits)}`;
+    const bind = (id, key) => document.querySelectorAll(`#${id} button`).forEach(b => b.onclick = () => { localStorage.setItem(key, b.dataset.k); viewRepo(name); });
+    bind('repoEngine', 'repoEngine'); bind('repoMetric', 'repoMetric');
+    destroyCharts();
+    if (!engines.length || chain.length < 2) return;
+    const objects = [...new Set(v.Leaves.map(l => l.Object))].sort((a, b) => rank(OBJECTS, a) - rank(OBJECTS, b));
+    const datasets = [];
+    v.Leaves.forEach((l, k) => {
+      if (l.Engine !== engine) return;
+      // Async engines have no cycle counts of one thread: time.
+      const col = useNs || engine.endsWith('Async') ? 0 : 1;
+      let level = 1, any = false;
+      const data = chain.map((c, i) => {
+        if (i === 0) return 0;
+        const r = c.Steps && c.Steps[k] ? (c.Steps[k][col] || c.Steps[k][0]) : 0;
+        if (r > 0) { level *= r; any = true; }
+        return (level - 1) * 100;
+      });
+      if (!any) return;
+      const color = COLORS[objects.indexOf(l.Object) % COLORS.length];
+      datasets.push({ label: `${l.Object} / ${l.Op}`, object: l.Object, data, borderColor: color + '99', backgroundColor: color, pointRadius: 2.5, pointHoverRadius: 5, borderWidth: 1, tension: 0 });
+    });
+    chart('rc', {
+      type: 'line',
+      data: { labels: chain.map(c => short(c.SHA).slice(0, 8)), datasets },
+      options: {
+        responsive: true, maintainAspectRatio: false, animation: false,
+        interaction: { mode: 'nearest', intersect: false },
+        scales: { x: { ticks: { maxRotation: 0, autoSkip: true } }, y: { ticks: { callback: val => pct(val, 0) }, title: { display: true, text: `${useNs || engine.endsWith('Async') ? 'time' : 'cycles'} per op, change since ${short(chain[0].SHA).slice(0, 8)}` } } },
+        onClick: (ev, els) => { if (els.length) location.hash = commitHref(v.Name, chain[els[0].index].SHA); },
+        plugins: {
+          legend: { labels: { boxWidth: 12, generateLabels: () => objects.filter(o => datasets.some(d => d.object === o)).map(o => ({ text: o, fillStyle: COLORS[objects.indexOf(o) % COLORS.length], strokeStyle: 'transparent', fontColor: Chart.defaults.color })) }, onClick: () => {} },
+          tooltip: { callbacks: { title: items => { const c = chain[items[0].dataIndex]; return `${short(c.SHA)} ${(c.Desc || '').replace(/^[0-9a-f]{7,12} /, '').slice(0, 70)}`; }, label: ctx => `${ctx.dataset.label}: ${pct(ctx.raw, 2)}` } },
+        },
+      },
+    });
   }
 
   /* job page: metric switch, delta charts, matrices */
@@ -1139,12 +1216,14 @@
     const [path, query] = hash.slice(1).split('?');
     const params = new URLSearchParams(query || '');
     const parts = path.split('/').filter(Boolean);
-    document.querySelectorAll('header nav a').forEach(a => a.classList.toggle('active', a.dataset.nav === (parts[0] || 'dash') || ((parts[0] === 'job' || parts[0] === 'pr') && a.dataset.nav === 'jobs') || (parts[0] === 'op' && a.dataset.nav === 'ops')));
+    document.querySelectorAll('header nav a').forEach(a => a.classList.toggle('active', a.dataset.nav === (parts[0] || 'dash') || (['jobs', 'job', 'pr'].includes(parts[0]) && a.dataset.nav === 'dash') || (['repo', 'commit'].includes(parts[0]) && a.dataset.nav === 'repos') || (parts[0] === 'op' && a.dataset.nav === 'ops')));
     try {
       if (parts.length === 0) { await viewDash(); scheduleRefresh(30000); }
       else if (parts[0] === 'jobs') await viewJobs(params.get('kind'));
       else if (parts[0] === 'job' && parts[2] === 'leaf') await viewLeaf(parts[1], parts[3], parts[4], parts.slice(5).join('/'));
       else if (parts[0] === 'job') await viewJob(parts[1]);
+      else if (parts[0] === 'repos') await viewRepos();
+      else if (parts[0] === 'repo') await viewRepo(decodeURIComponent(parts[1] || ''));
       else if (parts[0] === 'ops') await viewOps();
       else if (parts[0] === 'commit') await viewCommit(parts[1], parts[2], params);
       else if (parts[0] === 'op') await viewOp(parts[1], parts.slice(2).join('/'));

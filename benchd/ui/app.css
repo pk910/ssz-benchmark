@@ -156,3 +156,13 @@ table.facts tbody tr:hover td { background: none; }
 .chip.refine { background: none; border: 1px dashed var(--muted); color: var(--muted); }
 a.gh { margin-left: 4px; color: var(--muted); vertical-align: -1px; opacity: .7; }
 a.gh:hover { color: var(--fg); opacity: 1; }
+.tabs a { color: var(--muted); padding: 4px 11px; border-radius: 5px; font-weight: 600; text-decoration: none; }
+.tabs a.active { background: var(--card); color: var(--fg); box-shadow: 0 1px 2px rgba(0,0,0,.08); }
+section.repo { margin-bottom: 22px; }
+section.repo h2 { margin-bottom: 2px; }
+table.commits .chip .moved { margin-left: 3px; font-size: 10px; letter-spacing: .02em; }
+table.commits .chip .moved span + span { margin-left: 3px; }
+.chip.better { background: var(--ok-soft); color: var(--ok); }
+.chip.worse { background: var(--bad-soft); color: var(--bad); }
+.chip .moved .better { color: var(--ok); }
+.chip .moved .worse { color: var(--bad); }
