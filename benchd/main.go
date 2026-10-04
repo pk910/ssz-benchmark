@@ -90,7 +90,7 @@ func main() {
 	flag.StringVar(&cfg.ghInstallationID, "gh-installation-id", os.Getenv("GH_INSTALLATION_ID"), "installation id of the App on the repository (env GH_INSTALLATION_ID)")
 	flag.StringVar(&cfg.ghAppKey, "gh-app-key", os.Getenv("GH_APP_KEY"), "path of the App's private key (env GH_APP_KEY)")
 	flag.IntVar(&cfg.minPasses, "min-passes", 0, "passes a job runs at least, regardless of the budget (0: one per layout seed)")
-	flag.StringVar(&cfg.buildCPUs, "build-cpus", "", "cpus the builds of a job may use, e.g. 0-4 to include the benchmark cores, which are idle while a job builds (empty: the daemon's own cpus)")
+	flag.StringVar(&cfg.buildCPUs, "build-cpus", "", "cpus the builds of a job run on, e.g. the benchmark cores, which are idle while a job builds (empty: the daemon's own cpus)")
 	flag.BoolVar(&cfg.oneSided, "one-sided", false, "a job measures its head and takes the base from earlier runs of the base commit; the base is measured in the job only where a head run differs from the earlier one by more than -base-threshold, or none exists")
 	flag.Float64Var(&cfg.baseThreshold, "base-threshold", 1, "percent a head run may differ from the earlier run of the base before the base is measured in the job (with -one-sided)")
 	flag.BoolVar(&cfg.counterPairs, "counter-pairs", true, "count two further hardware counters in every run, alternating between two pairs by pass")

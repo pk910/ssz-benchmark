@@ -330,9 +330,10 @@ func (r *runner) runJob(ctx context.Context, j *job) bool {
 	return true
 }
 
-// building wraps a build command so that it may use the build cpus: no
+// building wraps a build command so that it runs on the build cpus: no
 // benchmark runs while a job builds, so its builds can have the benchmark
-// cores too. Without build cpus the command stays on the daemon's own.
+// cores and leave the shared ones alone. Without build cpus the command
+// stays on the daemon's own.
 func (r *runner) building(name string, args ...string) (string, []string, []string) {
 	if r.cfg.buildCPUs == "" {
 		return name, args, nil
