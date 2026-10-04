@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"math"
 	"math/rand/v2"
@@ -849,5 +850,19 @@ func TestCheckoutTags(t *testing.T) {
 	write("async.go", "package ssz\nfunc WithAsyncHashing(workers int) {}\n")
 	if s := (&side{tags: checkoutTags(dir)}); len(s.tags) != 0 || s.lacks("ReflectionAsync") || s.tagArgs() != nil {
 		t.Fatalf("tags %v", s.tags)
+	}
+}
+
+func TestFailedOps(t *testing.T) {
+	out := []byte("BenchmarkReal/Codegen/FuluState/UnmarshalReader   \t 1\t 370 ns/op\n" +
+		"--- FAIL: BenchmarkReal/Codegen/FuluState/UnmarshalReaderUnknown\n    bench.go:466: GenesisTime: unexpected end of SSZ\n" +
+		"--- FAIL: BenchmarkReal/Codegen/FuluState\n--- FAIL: BenchmarkReal/Codegen\n--- FAIL: BenchmarkReal\nFAIL\n")
+	failed := failedOps(out)
+	if len(failed) != 1 || failed["BenchmarkReal/Codegen/FuluState/UnmarshalReaderUnknown"] != "bench.go:466: GenesisTime: unexpected end of SSZ" {
+		t.Fatalf("failed %v", failed)
+	}
+	var as opsFailed
+	if !errors.As(fmt.Errorf("head: %w", failed), &as) || len(failedOps([]byte("panic: boom\nFAIL\n"))) != 0 {
+		t.Fatal("not recognised")
 	}
 }

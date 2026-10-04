@@ -246,6 +246,9 @@ measures its head, and its base when it has one.
   tag, and the engines that need it (the async ones) are left out of that
   job. A newer version that has the option is measured in full without
   any change here.
+- An operation that fails its own check on a release (that version
+  cannot do it on this payload) is left out of the release job with a
+  line in its log. On a commit job such a failure fails the job.
 - A harness change gives its jobs a new harness version, and runs of
   different versions are not combined. When a change did not touch what
   is measured, `curl localhost/admin/harness?subject=<library>` shows how

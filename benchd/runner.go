@@ -6,6 +6,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"log"
 	"math"
@@ -938,7 +939,7 @@ func (r *runner) measure(ctx context.Context, j *job, head, base *side, jobDir s
 				lines := 0
 				report := func() {
 					at := done + 1 + lines/max(1, len(order))
-					if g.leaves[0].Baseline {
+					if len(g.leaves) > 0 && g.leaves[0].Baseline {
 						at = done + 1 + lines
 					}
 					at = min(at, done+len(g.leaves))
@@ -952,30 +953,72 @@ func (r *runner) measure(ctx context.Context, j *job, head, base *side, jobDir s
 					sides = []*side{head}
 				}
 				bySide := map[*side][]sample{}
-				if stored != nil && len(sides) == 2 {
-					// One-sided: the head, then the base only where needed.
-					hs, err := r.measureGroup(ctx, j, head, seed, g.pkg, g.engine, g.object, g.leaves, iters, passes, seen, jobDir, logw)
-					if err != nil {
-						return passes, fmt.Errorf("head %s/%s seed %s: %w", g.engine, g.object, seed, err)
+				// An operation that fails its own check on a release is one
+				// that version of the library cannot do: it leaves the job,
+				// and the group is measured again without it.
+				dropped := func(side string, err error) bool {
+					// Only a release is measured in part: a commit that
+					// fails an operation fails its job.
+					var failed opsFailed
+					if j.Kind != kindRelease || !errors.As(err, &failed) {
+						return false
 					}
-					bs, err := r.baseFor(ctx, j, base, head, seed, g.pkg, g.engine, g.object, g.leaves, hs, stored, iters, passes, seen, jobDir, logw)
-					if err != nil {
-						return passes, fmt.Errorf("base %s/%s seed %s: %w", g.engine, g.object, seed, err)
-					}
-					bySide[head], bySide[base] = hs, bs
-				} else {
-					for _, s := range sides {
-						samples, err := r.measureGroup(ctx, j, s, seed, g.pkg, g.engine, g.object, g.leaves, iters, passes, seen, jobDir, logw)
-						if err != nil {
-							return passes, fmt.Errorf("%s %s/%s seed %s: %w", s.name, g.engine, g.object, seed, err)
+					kept := g.leaves[:0:0]
+					for _, l := range g.leaves {
+						if msg, bad := failed[l.name()]; bad {
+							logw("%s is left out: it fails on the %s (%s)", l.key(), side, msg)
+							continue
 						}
-						bySide[s] = samples
+						kept = append(kept, l)
 					}
+					if len(kept) == len(g.leaves) {
+						return false
+					}
+					g.leaves = kept
+					return true
 				}
-				if stored == nil && len(sides) == 2 {
-					if err := r.reconcile(ctx, j, base, head, seed, g.leaves, iters, passes, bySide[base], bySide[head], seen, jobDir, logw); err != nil {
-						return passes, fmt.Errorf("%s/%s seed %s: %w", g.engine, g.object, seed, err)
+			group:
+				for len(g.leaves) > 0 {
+					bySide = map[*side][]sample{}
+					if stored != nil && len(sides) == 2 {
+						// One-sided: the head, then the base only where needed.
+						hs, err := r.measureGroup(ctx, j, head, seed, g.pkg, g.engine, g.object, g.leaves, iters, passes, seen, jobDir, logw)
+						if dropped("head", err) {
+							continue group
+						}
+						if err != nil {
+							return passes, fmt.Errorf("head %s/%s seed %s: %w", g.engine, g.object, seed, err)
+						}
+						bs, err := r.baseFor(ctx, j, base, head, seed, g.pkg, g.engine, g.object, g.leaves, hs, stored, iters, passes, seen, jobDir, logw)
+						if dropped("base", err) {
+							continue group
+						}
+						if err != nil {
+							return passes, fmt.Errorf("base %s/%s seed %s: %w", g.engine, g.object, seed, err)
+						}
+						bySide[head], bySide[base] = hs, bs
+					} else {
+						for _, s := range sides {
+							samples, err := r.measureGroup(ctx, j, s, seed, g.pkg, g.engine, g.object, g.leaves, iters, passes, seen, jobDir, logw)
+							if dropped(s.name, err) {
+								continue group
+							}
+							if err != nil {
+								return passes, fmt.Errorf("%s %s/%s seed %s: %w", s.name, g.engine, g.object, seed, err)
+							}
+							bySide[s] = samples
+						}
 					}
+					if stored == nil && len(sides) == 2 {
+						err := r.reconcile(ctx, j, base, head, seed, g.leaves, iters, passes, bySide[base], bySide[head], seen, jobDir, logw)
+						if dropped("re-measured side", err) {
+							continue group
+						}
+						if err != nil {
+							return passes, fmt.Errorf("%s/%s seed %s: %w", g.engine, g.object, seed, err)
+						}
+					}
+					break
 				}
 				for _, s := range sides {
 					if err := r.store.addSamples(bySide[s]); err != nil {
@@ -1016,7 +1059,13 @@ func itersSpec(leaves []leaf, iters map[string]int) string {
 // whatever it shows.
 func (r *runner) measureGroup(ctx context.Context, j *job, s *side, seed, pkg, engine, object string, leaves []leaf, iters map[string]int, pass int, seen map[string][]float64, jobDir string, logw func(string, ...any)) ([]sample, error) {
 	logName := fmt.Sprintf("%s-p%d-%s-%s.txt", s.name, pass, seed, pkg)
-	pattern := benchRegex("BenchmarkReal/" + engine + "/" + object)
+	// The pattern names the operations, so that one the group no longer
+	// holds is not run.
+	ops := make([]string, len(leaves))
+	for i, l := range leaves {
+		ops[i] = regexp.QuoteMeta(l.Op)
+	}
+	pattern := benchRegex("BenchmarkReal/"+engine+"/"+object) + "/^(" + strings.Join(ops, "|") + ")$"
 	var got map[string]sample
 	// A run is repeated once when the hypervisor took too much of it, and
 	// up to three times when a thread started during an all-thread count.
@@ -1372,9 +1421,36 @@ func (r *runner) runBinary(ctx context.Context, s *side, pkg, seed, pattern, ben
 		_ = f.Close()
 	}
 	if err != nil {
+		if failed := failedOps(out.Bytes()); len(failed) > 0 {
+			return nil, steal, failed
+		}
 		return nil, steal, fmt.Errorf("%v: %s", err, trimOut(append(out.Bytes(), errb.Bytes()...)))
 	}
 	return out.Bytes(), steal, nil
+}
+
+// opsFailed are operations whose benchmark failed its own check (the
+// output does not equal the input, a root differs, the library returned
+// an error): this version of the library cannot do them on this payload.
+type opsFailed map[string]string // benchmark name -> its message
+
+func (f opsFailed) Error() string {
+	var parts []string
+	for name, msg := range f {
+		parts = append(parts, name+": "+msg)
+	}
+	sort.Strings(parts)
+	return "operations failed: " + strings.Join(parts, "; ")
+}
+
+var failLine = regexp.MustCompile(`(?m)^--- FAIL: (BenchmarkReal/[^/\s]+/[^/\s]+/[^/\s]+)\n\s+(.*)$`)
+
+func failedOps(out []byte) opsFailed {
+	failed := opsFailed{}
+	for _, m := range failLine.FindAllSubmatch(out, -1) {
+		failed[string(m[1])] = strings.TrimSpace(string(m[2]))
+	}
+	return failed
 }
 
 // benchLine is one parsed Go benchmark result line.
