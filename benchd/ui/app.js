@@ -224,9 +224,16 @@
   const repoLink = subject => { const url = subjectRepos[subject] || repo; return url ? `<a href="${url}" target="_blank" rel="noopener">${esc(url.replace('https://github.com/', ''))}</a>` : esc(subject || ''); };
   // refLabel is the branch or tag a job's commit was found under.
   const refLabel = j => esc(j.Branch) + prLink(j);
-  // commitLink links a commit in the repository of its library (ours when
-  // none is named).
-  const commitLink = (sha, subject) => !sha ? '<span class="muted">-</span>' : sha === 'baselines' ? '<span class="muted">reference libraries</span>' : `<a class="mono" href="${(subject && subjectRepos[subject]) || repo}/commit/${sha}" target="_blank" rel="noopener">${short(sha)}</a>`;
+  // commitLink links a commit to its page here, with a small mark that
+  // leads to the commit in the repository of its library (ours when none
+  // is named).
+  const GH_MARK = '<svg viewBox="0 0 16 16" width="11" height="11" aria-hidden="true"><path fill="currentColor" d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27s1.36.09 2 .27c1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.01 8.01 0 0 0 16 8c0-4.42-3.58-8-8-8z"/></svg>';
+  const commitLink = (sha, subject) => {
+    if (!sha) return '<span class="muted">-</span>';
+    if (sha === 'baselines') return '<span class="muted">reference libraries</span>';
+    const sub = subject || 'dynamic-ssz', url = subjectRepos[sub] || repo;
+    return `<a class="mono" href="#/commit/${sub}/${sha}" title="everything measured of this commit">${short(sha)}</a>${url ? `<a class="gh" href="${url}/commit/${sha}" target="_blank" rel="noopener" title="this commit on GitHub">${GH_MARK}</a>` : ''}`;
+  };
   const prLink = j => j.PR ? ` · <a href="${repo}/pull/${j.PR}" target="_blank" rel="noopener">PR #${j.PR}</a> <a href="#/pr/${j.PR}" title="every measured head of this pull request">history</a>` : '';
   const sortLeaf = (a, b) => rank(OBJECTS, a.Object) - rank(OBJECTS, b.Object) || a.Object.localeCompare(b.Object)
     || rank(OPS, a.Op) - rank(OPS, b.Op) || a.Op.localeCompare(b.Op) || rank(ENGINES, a.Engine) - rank(ENGINES, b.Engine);
@@ -789,7 +796,7 @@
     app.innerHTML = `<h1>Job #${j.ID} ${chip(j)}${d.Live ? '<span class="chip running">live</span>' : ''}</h1>
       ${live}
       <div class="cards">
-        <div class="card"><h3>Head <a href="${commitHref(j.Subject, j.HeadSHA)}" style="text-transform:none;letter-spacing:0;font-weight:400">all runs of this commit →</a></h3><div class="mono">${commitLink(j.HeadSHA, j.Subject)} ${esc(j.HeadDesc).replace(/^[0-9a-f]{7} /, '')}</div><div class="sub mono">${esc(j.Branch)}${prLink(j)}</div></div>
+        <div class="card"><h3>Head</h3><div class="mono">${commitLink(j.HeadSHA, j.Subject)} ${esc(j.HeadDesc).replace(/^[0-9a-f]{7} /, '')}</div><div class="sub mono">${esc(j.Branch)}${prLink(j)}</div></div>
         <div class="card"${j.BaseSHA ? '' : ' style="display:none"'}><h3>Base (${esc(j.BaseRef)})</h3><div class="mono">${commitLink(j.BaseSHA)} ${esc(j.BaseDesc).replace(/^[0-9a-f]{7} /, '')}</div>${j.BaseSHA !== j.HeadSHA ? `<div class="sub"><a href="${repo}/compare/${j.BaseSHA}...${j.HeadSHA}" target="_blank" rel="noopener">diff on GitHub</a></div>` : ''}</div>
         <div class="card"><h3>Measurement</h3><div class="mono">${j.Passes} passes${j.Seconds ? ', ' + dur(j.Seconds) : ''}${runs}</div><div class="sub">runner ${esc(j.Runner || '-')}</div><div class="sub">${esc(j.GoVersion)} · harness ${j.Harness}${d.Steal ? ` · ${d.Steal} steal ticks (wake-ups, within the limit)` : ' · no steal'}</div><div class="sub">queued ${when(j.Created)} · finished ${when(j.Finished)}</div></div>
         ${buildCard(d.Builds)}
@@ -934,7 +941,7 @@
     const asyncRow = r => Object.keys(r.Cells).some(e => e.endsWith('Async'))
       ? `<tr><td><span class="muted">${r.Object}</span></td><td class="mono muted">${r.Op} (async${(m.key === 'Cycles' || m.key === 'Instrs') ? ', all threads' : ''})</td>${engines.map(e => cell(r, e + 'Async')).join('')}</tr>` : '';
     const subjectChip = s => {
-      const link = /^[0-9a-f]{12,40}$/.test(s.SHA) ? `<a href="${s.Repo}/commit/${s.SHA}" target="_blank" rel="noopener" class="mono">${shortRef(s.SHA)}</a>` : `<span class="mono">${esc(s.SHA)}</span>`;
+      const link = commitLink(s.SHA, s.Name);
       const state = !s.Jobs ? ' · <span class="muted">not measured</span>' : ` · <a href="${commitHref(s.Name, s.SHA)}" title="everything measured of this commit">${s.Jobs} job${s.Jobs === 1 ? '' : 's'}, ${s.Runs} runs</a>`;
       const wanted = s.Wanted ? ` · <span class="worse" title="the target points to ${esc(s.Wanted)}, which is not measured yet or does not build; an older commit is shown">stale</span>` : '';
       return `<div class="card"><h3>${esc(s.Name)}${s.Target === 'fixed' ? ' <span class="muted" style="text-transform:none">(fixed version)</span>' : ''}</h3><div class="sub">${esc(s.Label)} · ${link}${state}${wanted}</div></div>`;

@@ -47,11 +47,12 @@ func (s *store) commitRuns(subject, sha, harness string) ([]sample, []*job, erro
 	return runs, used, nil
 }
 
-// harnessOf is the harness version of the newest finished job that had the
-// commit as its head.
+// harnessOf is the harness version of the newest finished job that
+// measured the commit, as its head when there is one.
 func (s *store) harnessOf(subject, sha string) string {
 	var harness string
-	_ = s.db.QueryRow(`SELECT harness FROM jobs WHERE state = ? AND subject = ? AND head_sha = ? ORDER BY id DESC LIMIT 1`, stateDone, subject, sha).Scan(&harness)
+	_ = s.db.QueryRow(`SELECT harness FROM jobs WHERE state = ? AND subject = ? AND (head_sha = ? OR base_sha = ?) ORDER BY (head_sha = ?) DESC, id DESC LIMIT 1`,
+		stateDone, subject, sha, sha, sha).Scan(&harness)
 	return harness
 }
 
