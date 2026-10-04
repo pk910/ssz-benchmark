@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
 	_ "modernc.org/sqlite"
@@ -166,6 +167,11 @@ type runnerInfo struct {
 type store struct {
 	db      *sql.DB
 	dataDir string
+
+	// The noise floor, kept until another noise job finishes.
+	nfMu  sync.Mutex
+	nfKey string
+	nf    noiseFloor
 }
 
 func openDB(path string) (*store, error) {

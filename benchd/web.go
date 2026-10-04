@@ -34,6 +34,7 @@ type webServer struct {
 	db      *store
 	sched   *scheduler // git access and job templates for the admin endpoint
 	runners *runnerAPI // the worker-facing API
+	pages   pageCache
 }
 
 func (w *webServer) handler() (http.Handler, error) {
@@ -691,7 +692,7 @@ type opHistoryRow struct {
 	Results map[string]*result
 }
 
-func (w *webServer) opView(object, op string, limit int) (opView, bool) {
+func (w *webServer) opView(object, op string, limit int, refs []result) (opView, bool) {
 	results, jobs, err := w.db.leafHistory(object, op, []string{kindCommit, kindRelease, kindNoise, kindBaseline}, limit)
 	if err != nil || len(results) == 0 {
 		return opView{}, false
@@ -721,7 +722,7 @@ func (w *webServer) opView(object, op string, limit int) (opView, bool) {
 	}
 	// The reference libraries' latest values do not depend on how far back
 	// the history reaches.
-	if refs, _ := w.baselineResults(false); len(refs) > 0 {
+	if len(refs) > 0 {
 		for i := range refs {
 			r := &refs[i]
 			if r.Object == object && r.Op == op && v.Latest[r.Engine] == nil {
@@ -771,7 +772,15 @@ func sortedBy(set map[string]bool, order []string) []string {
 }
 
 func (w *webServer) apiOps(rw http.ResponseWriter, req *http.Request) {
+	rows := w.pages.get(w.db.doneStamp(), "ops", w.buildOps)
+	w.writeJSON(rw, rows)
+}
+
+// buildOps assembles the operations page: per operation the newest value
+// of every engine and library and the main branch's trend.
+func (w *webServer) buildOps() any {
 	leaves, _ := w.db.leaves()
+	refs, _ := w.baselineResults(false)
 	type row struct {
 		Object, Op string
 		Engines    []string
@@ -780,13 +789,13 @@ func (w *webServer) apiOps(rw http.ResponseWriter, req *http.Request) {
 	}
 	rows := []row{}
 	for _, l := range leaves {
-		v, ok := w.opView(l[0], l[1], 200)
+		v, ok := w.opView(l[0], l[1], 200, refs)
 		if !ok {
 			continue
 		}
 		rows = append(rows, row{l[0], l[1], v.Engines, v.Latest, v.Trends})
 	}
-	w.writeJSON(rw, rows)
+	return rows
 }
 
 func (w *webServer) apiOp(rw http.ResponseWriter, req *http.Request) {
@@ -795,7 +804,8 @@ func (w *webServer) apiOp(rw http.ResponseWriter, req *http.Request) {
 		http.NotFound(rw, req)
 		return
 	}
-	v, ok := w.opView(parts[0], parts[1], 2000)
+	refs, _ := w.baselineResults(false)
+	v, ok := w.opView(parts[0], parts[1], 2000, refs)
 	if !ok {
 		http.NotFound(rw, req)
 		return
@@ -932,7 +942,7 @@ type noiseStat struct {
 	MedianAbs, P95Abs, MaxAbs, CV float64
 }
 
-func (w *webServer) noiseFloor() noiseFloor { return noiseFloorOf(w.db, w.cfg.name) }
+func (w *webServer) noiseFloor() noiseFloor { return w.db.noiseFloor(w.cfg.name) }
 
 // noiseFloorOf computes the noise floor from the finished noise jobs;
 // local names the controller machine, whose jobs feed the overall figures.
