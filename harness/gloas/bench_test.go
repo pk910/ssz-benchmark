@@ -13,6 +13,7 @@ import (
 
 	bench "benchkit"
 	"realbench/feat"
+	plain "realbench/plain/gloas"
 	"realbench/types/gloas"
 )
 
@@ -40,6 +41,10 @@ type engine struct {
 	name string
 	opts []ssz.DynSszOption
 	only map[string]bool // operations measured; nil = all
+	// plain: the engine runs on the plain types, the same definitions
+	// without generated methods, so that the library has nothing to
+	// delegate to and works by reflection alone, in every version of it.
+	plain bool
 }
 
 var htrOnly = map[string]bool{"HashTreeRoot": true}
@@ -47,19 +52,42 @@ var htrOnly = map[string]bool{"HashTreeRoot": true}
 // engines lists the engines the library version under test has (package
 // feat).
 func engines() []engine {
-	es := []engine{{name: "Codegen"}}
-	reflection, hasReflection := feat.Reflection()
-	async, hasAsync := feat.Async(3)
-	if hasReflection {
-		es = append(es, engine{name: "Reflection", opts: reflection})
-	}
-	if hasAsync {
-		es = append(es, engine{name: "CodegenAsync", opts: async, only: htrOnly})
-	}
-	if hasAsync && hasReflection {
-		es = append(es, engine{name: "ReflectionAsync", opts: append(append([]ssz.DynSszOption{}, reflection...), async...), only: htrOnly})
+	reflection := []ssz.DynSszOption{ssz.WithNoFastSsz()}
+	es := []engine{{name: "Codegen"}, {name: "Reflection", opts: reflection, plain: true}}
+	if async, ok := feat.Async(3); ok {
+		es = append(es, engine{name: "CodegenAsync", opts: async, only: htrOnly},
+			engine{name: "ReflectionAsync", opts: append(append([]ssz.DynSszOption{}, reflection...), async...), only: htrOnly, plain: true})
 	}
 	return es
+}
+
+// objects are the constructors of the benchmarked objects and the part of
+// each whose root is stored with the payload.
+type objects struct {
+	state, block, envelope        func() any
+	stateRoot, blockRoot, envRoot func(any) any
+}
+
+func (e engine) objects() objects {
+	same := func(v any) any { return v }
+	if e.plain {
+		return objects{
+			state:     func() any { return new(plain.GloasBeaconState) },
+			block:     func() any { return new(plain.GloasSignedBeaconBlock) },
+			envelope:  func() any { return new(plain.GloasSignedExecutionPayloadEnvelope) },
+			stateRoot: same,
+			blockRoot: func(v any) any { return v.(*plain.GloasSignedBeaconBlock).Message },
+			envRoot:   func(v any) any { return v.(*plain.GloasSignedExecutionPayloadEnvelope).Message },
+		}
+	}
+	return objects{
+		state:     func() any { return new(gloas.GloasBeaconState) },
+		block:     func() any { return new(gloas.GloasSignedBeaconBlock) },
+		envelope:  func() any { return new(gloas.GloasSignedExecutionPayloadEnvelope) },
+		stateRoot: same,
+		blockRoot: func(v any) any { return v.(*gloas.GloasSignedBeaconBlock).Message },
+		envRoot:   func(v any) any { return v.(*gloas.GloasSignedExecutionPayloadEnvelope).Message },
+	}
 }
 
 func (e engine) codec(ds *ssz.DynSsz, newObj func() any, hashTarget func(any) any) bench.Codec {
@@ -71,22 +99,23 @@ func (e engine) codec(ds *ssz.DynSsz, newObj func() any, hashTarget func(any) an
 func BenchmarkReal(b *testing.B) {
 	dir := filepath.Join(bench.DataDir(), "gloas")
 	for _, e := range engines() {
+		o := e.objects()
 		b.Run(e.name, func(b *testing.B) {
 			b.Run("GloasState", func(b *testing.B) {
 				ds := ssz.NewDynSsz(bench.LoadSpecs(filepath.Join(dir, "spec.json")), e.opts...)
-				bench.RunOne(b, e.codec(ds, func() any { return new(gloas.GloasBeaconState) }, func(v any) any { return v }), bench.LoadOne(dir, "state"))
+				bench.RunOne(b, e.codec(ds, o.state, o.stateRoot), bench.LoadOne(dir, "state"))
 			})
 			b.Run("GloasBlock", func(b *testing.B) {
 				ds := ssz.NewDynSsz(bench.LoadSpecs(filepath.Join(dir, "spec.json")), e.opts...)
-				bench.RunOne(b, e.codec(ds, func() any { return new(gloas.GloasSignedBeaconBlock) }, func(v any) any { return v.(*gloas.GloasSignedBeaconBlock).Message }), bench.LoadOne(dir, "block"))
+				bench.RunOne(b, e.codec(ds, o.block, o.blockRoot), bench.LoadOne(dir, "block"))
 			})
 			b.Run("GloasBlocks", func(b *testing.B) {
 				ds := ssz.NewDynSsz(bench.LoadSpecs(filepath.Join(dir, "spec.json")), e.opts...)
-				bench.RunSet(b, e.codec(ds, func() any { return new(gloas.GloasSignedBeaconBlock) }, func(v any) any { return v.(*gloas.GloasSignedBeaconBlock).Message }), bench.LoadSet(dir, "blocks"))
+				bench.RunSet(b, e.codec(ds, o.block, o.blockRoot), bench.LoadSet(dir, "blocks"))
 			})
 			b.Run("GloasEnvelope", func(b *testing.B) {
 				ds := ssz.NewDynSsz(bench.LoadSpecs(filepath.Join(dir, "spec.json")), e.opts...)
-				bench.RunOne(b, e.codec(ds, func() any { return new(gloas.GloasSignedExecutionPayloadEnvelope) }, func(v any) any { return v.(*gloas.GloasSignedExecutionPayloadEnvelope).Message }), bench.LoadOne(dir, "envelope"))
+				bench.RunOne(b, e.codec(ds, o.envelope, o.envRoot), bench.LoadOne(dir, "envelope"))
 			})
 		})
 	}

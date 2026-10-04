@@ -89,6 +89,7 @@ func (w *webServer) handler() (http.Handler, error) {
 	mux.HandleFunc("/webhook", w.webhook)
 	mux.HandleFunc("/api/noise", w.apiNoise)
 	mux.HandleFunc("/admin/queue", w.adminQueue)
+	mux.HandleFunc("/admin/harness", w.adminHarness)
 	mux.HandleFunc("/api/runners", w.apiRunners)
 	if w.runners != nil {
 		w.runners.register(mux)

@@ -843,10 +843,10 @@ func TestCheckoutTags(t *testing.T) {
 	write("options.go", "package ssz\nfunc WithNoFastSsz() {}\n")
 	write("options_test.go", "package ssz\nfunc WithAsyncHashing(n int) {}\n") // a test file does not count
 	s := &side{tags: checkoutTags(dir)}
-	if fmt.Sprint(s.tags) != "[noasync nodelegation]" || !s.lacks("CodegenAsync") || !s.lacks("Reflection") || s.lacks("Codegen") {
+	if fmt.Sprint(s.tags) != "[noasync]" || !s.lacks("CodegenAsync") || !s.lacks("ReflectionAsync") || s.lacks("Codegen") || s.lacks("Reflection") {
 		t.Fatalf("tags %v", s.tags)
 	}
-	write("async.go", "package ssz\nfunc WithAsyncHashing(workers int) {}\nfunc WithNoDelegation() {}\n")
+	write("async.go", "package ssz\nfunc WithAsyncHashing(workers int) {}\n")
 	if s := (&side{tags: checkoutTags(dir)}); len(s.tags) != 0 || s.lacks("ReflectionAsync") || s.tagArgs() != nil {
 		t.Fatalf("tags %v", s.tags)
 	}

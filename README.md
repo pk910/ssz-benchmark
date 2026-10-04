@@ -236,13 +236,21 @@ measures its head, and its base when it has one.
   sandbox (it fetches the library at that commit, runs that commit's
   generator with the Go toolchain it needs, and tidies the module), then
   links one binary per fork and seed.
-- Options of the library that not every version has (background hashing,
-  bypassing a type's generated methods) are used through the harness
-  package `feat`, each with a variant behind a build tag. When a checkout
-  lacks an option the runner builds with that tag, and the engines that
-  need it (the async ones, or the reflection ones) are left out of that
+- The reflection engines run on the plain types (`harness/plain`): the
+  same type definitions without generated methods, so that the library
+  has nothing to delegate to, in every version of it. The runner renews
+  that copy from `types/<fork>/types.go` at every build.
+- An option of the library that not every version has (background
+  hashing) is used through the harness package `feat`, with a variant
+  behind a build tag. When a checkout lacks it the runner builds with that
+  tag, and the engines that need it (the async ones) are left out of that
   job. A newer version that has the option is measured in full without
   any change here.
+- A harness change gives its jobs a new harness version, and runs of
+  different versions are not combined. When a change did not touch what
+  is measured, `curl localhost/admin/harness?subject=<library>` shows how
+  the same commits compare under the two versions, and a POST with
+  `from` and `to` takes the earlier version's jobs over into the newer.
 - A build that fails fails the job with its error; the commit is not
   tried again until the harness version changes or the target moves.
 - `baselines/gen.sh` is the offline step: it converts the harness types

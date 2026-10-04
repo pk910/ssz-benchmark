@@ -11,6 +11,7 @@ import (
 
 	bench "benchkit"
 	"realbench/feat"
+	plain "realbench/plain/fulu"
 	"realbench/types/fulu"
 )
 
@@ -54,11 +55,28 @@ func dynEngine(name string, opts ...ssz.DynSszOption) engine {
 	}
 }
 
-// asyncEngine measures the hash tree root with background subtree
-// reduction on the cores the benchmark cpuset provides; opts include the
-// library's option for it.
-func asyncEngine(name string, opts ...ssz.DynSszOption) engine {
-	e := dynEngine(name, opts...)
+// reflectionEngine runs on the plain types: the same definitions without
+// generated methods, so that the library has nothing to delegate to and
+// works by reflection alone, in every version of it.
+func reflectionEngine(name string, opts ...ssz.DynSszOption) engine {
+	opts = append([]ssz.DynSszOption{ssz.WithNoFastSsz()}, opts...)
+	return engine{
+		name: name,
+		state: func(specs map[string]any) bench.Codec {
+			ds := ssz.NewDynSsz(specs, opts...)
+			return dynCodec(ds, func() any { return new(plain.FuluBeaconState) }, func(v any) any { return v })
+		},
+		block: func(specs map[string]any) bench.Codec {
+			ds := ssz.NewDynSsz(specs, opts...)
+			return dynCodec(ds, func() any { return new(plain.ElectraSignedBeaconBlock) }, func(v any) any { return v.(*plain.ElectraSignedBeaconBlock).Message })
+		},
+	}
+}
+
+// hashOnly restricts an engine to the hash tree root: the async engines
+// measure it with background subtree reduction on the cores the benchmark
+// cpuset provides.
+func hashOnly(e engine) engine {
 	state, block := e.state, e.block
 	only := map[string]bool{"HashTreeRoot": true}
 	e.state = func(specs map[string]any) bench.Codec { c := state(specs); c.Only = only; return c }
@@ -69,17 +87,9 @@ func asyncEngine(name string, opts ...ssz.DynSszOption) engine {
 // engines lists the engines the library version under test has (package
 // feat).
 func engines() []engine {
-	es := []engine{dynEngine("Codegen")}
-	reflection, hasReflection := feat.Reflection()
-	async, hasAsync := feat.Async(3)
-	if hasReflection {
-		es = append(es, dynEngine("Reflection", reflection...))
-	}
-	if hasAsync {
-		es = append(es, asyncEngine("CodegenAsync", async...))
-	}
-	if hasAsync && hasReflection {
-		es = append(es, asyncEngine("ReflectionAsync", append(append([]ssz.DynSszOption{}, reflection...), async...)...))
+	es := []engine{dynEngine("Codegen"), reflectionEngine("Reflection")}
+	if async, ok := feat.Async(3); ok {
+		es = append(es, hashOnly(dynEngine("CodegenAsync", async...)), hashOnly(reflectionEngine("ReflectionAsync", async...)))
 	}
 	return es
 }

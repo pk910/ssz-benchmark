@@ -225,7 +225,6 @@ var libraryOptions = []struct {
 	lacks   func(engine string) bool
 }{
 	{"func WithAsyncHashing(", "noasync", func(e string) bool { return strings.HasSuffix(e, "Async") }},
-	{"func WithNoDelegation(", "nodelegation", func(e string) bool { return strings.HasPrefix(e, "Reflection") }},
 }
 
 // checkoutTags finds the options a checkout of the library lacks.
@@ -511,6 +510,14 @@ func (r *runner) buildHarness(ctx context.Context, s *side, logw func(string, ..
 	}
 	for _, pkg := range r.cfg.packages {
 		_ = os.Remove(filepath.Join(s.hdir, "types", pkg, "gen_ssz.go"))
+		// The plain types (for the reflection engines) are the same
+		// definitions without generated methods: the copy is renewed so
+		// that the two cannot differ.
+		if src, err := os.ReadFile(filepath.Join(s.hdir, "types", pkg, "types.go")); err == nil {
+			if err := os.WriteFile(filepath.Join(s.hdir, "plain", pkg, "types.go"), src, 0o644); err != nil {
+				return fmt.Errorf("plain types of %s: %w", pkg, err)
+			}
+		}
 	}
 	gomod := filepath.Join(s.hdir, "go.mod")
 	data, err := os.ReadFile(gomod)
