@@ -146,3 +146,8 @@ td.warn { color: var(--warn); font-weight: 600; }
 
 .chip.lib { background: #e6f4ea; color: #1b7a3d; }
 @media (prefers-color-scheme: dark) { .chip.lib { background: #15351f; color: #86e0a3; } }
+
+table.facts { width: auto; border: 0; margin: 2px 0 4px; background: none; }
+table.facts th, table.facts td { padding: 1px 14px 1px 0; border: 0; font-size: 12px; background: none; white-space: nowrap; }
+table.facts th { color: var(--muted); font-weight: 500; text-transform: none; letter-spacing: 0; }
+table.facts td.num, table.facts th.num { text-align: right; }

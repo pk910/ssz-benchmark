@@ -174,8 +174,12 @@
   function buildCard(builds) {
     const rows = buildRows(builds);
     if (!rows.length) return '';
-    const secs = rows[0].head.BuildSeconds;
-    return `<div class="card"><h3>Build <span class="muted" style="text-transform:none">(head, change against the base)</span></h3>${rows.map(x => `<div class="sub mono">${x.pkg}: code ${sizeDelta(x.head.TextBytes, x.base ? x.base.TextBytes : 0)} · binary ${sizeDelta(x.head.BinBytes, x.base ? x.base.BinBytes : 0)} · generated source ${sizeDelta(x.head.GenBytes, x.base ? x.base.GenBytes : 0)}</div>`).join('')}${secs > 0 ? `<div class="sub">generating and compiling the head took ${dur(secs)}</div>` : ''}</div>`;
+    const secs = rows[0].head.BuildSeconds, based = rows.some(x => x.base);
+    const cell = (x, f) => `<td class="num">${sizeDelta(x.head[f], x.base ? x.base[f] : 0)}</td>`;
+    return `<div class="card"><h3>Build${based ? ' <span class="muted" style="text-transform:none">(head, change against the base)</span>' : ''}</h3>
+      <table class="facts"><thead><tr><th>Package</th><th class="num" title="size of the compiled code (text section) of the benchmark binary">Code</th><th class="num" title="size of the benchmark binary">Binary</th><th class="num" title="size of the generated SSZ source">Generated</th></tr></thead><tbody>
+      ${rows.map(x => `<tr><td class="mono">${esc(x.pkg.replace(/^.*-/, ''))}</td>${cell(x, 'TextBytes')}${cell(x, 'BinBytes')}${cell(x, 'GenBytes')}</tr>`).join('')}
+      </tbody></table>${secs > 0 ? `<div class="sub">generated and compiled in ${dur(secs)}</div>` : ''}</div>`;
   }
   const ciText = m => `<span class="ci">[${pct(m.Lo, 1)}, ${pct(m.Hi, 1)}]</span>`;
   // kindsOf names what a job measures. A job of another library measures
