@@ -465,11 +465,6 @@ func (s *scheduler) tick(ctx context.Context) {
 	// The periodic noise job goes in first so its number matches its place
 	// in the queue on the first run.
 	s.scheduleNoise()
-	remote := time.Since(s.lastTargetPoll) >= s.cfg.targetPoll
-	if remote {
-		s.lastTargetPoll = time.Now()
-	}
-	s.pollTargets(ctx, remote)
 	if n, err := s.db.seenCount(); err == nil && n == 0 {
 		s.bootstrap(branches)
 	}
@@ -518,6 +513,14 @@ func (s *scheduler) tick(ctx context.Context) {
 		}
 	}
 	s.enqueueForkPRs(ctx)
+	// The targets come after the commits of the mirrored library are
+	// queued: a new head of its main branch has its commit job by now and
+	// needs no second one as a target.
+	remote := time.Since(s.lastTargetPoll) >= s.cfg.targetPoll
+	if remote {
+		s.lastTargetPoll = time.Now()
+	}
+	s.pollTargets(ctx, remote)
 	s.checks.syncOpen(ctx)
 }
 
