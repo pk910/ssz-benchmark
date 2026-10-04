@@ -66,7 +66,7 @@ func (s *store) updateCommitValue(subject, sha, harness, runner string) error {
 		}
 		newest = max(newest, x.id)
 		for _, sm := range samples {
-			if sm.isDiag() || (sm.Side == "head" && x.head != sha) || (sm.Side == "base" && x.base != sha) {
+			if sm.isDiag() || sm.fromJob() != 0 || (sm.Side == "head" && x.head != sha) || (sm.Side == "base" && x.base != sha) {
 				continue
 			}
 			k := leaf{Engine: sm.Engine, Object: sm.Object, Op: sm.Op}

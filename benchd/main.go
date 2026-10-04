@@ -44,6 +44,8 @@ type config struct {
 	ghAppKey         string
 	libPoll          time.Duration
 	counterPairs     bool    // count a rotating pair of further hardware counters in every run
+	oneSided         bool    // measure the base of a commit job only where an earlier run of it does not agree with the head
+	baseThreshold    float64 // percent a head run may differ from the earlier base run before the base is measured
 	outlierPct       float64 // re-measure a sample this far off the leaf's running median
 	target           time.Duration
 	poll             time.Duration
@@ -87,6 +89,8 @@ func main() {
 	flag.StringVar(&cfg.ghInstallationID, "gh-installation-id", os.Getenv("GH_INSTALLATION_ID"), "installation id of the App on the repository (env GH_INSTALLATION_ID)")
 	flag.StringVar(&cfg.ghAppKey, "gh-app-key", os.Getenv("GH_APP_KEY"), "path of the App's private key (env GH_APP_KEY)")
 	flag.IntVar(&cfg.minPasses, "min-passes", 0, "passes a job runs at least, regardless of the budget (0: one per layout seed)")
+	flag.BoolVar(&cfg.oneSided, "one-sided", false, "a job measures its head and takes the base from earlier runs of the base commit; the base is measured in the job only where a head run differs from the earlier one by more than -base-threshold, or none exists")
+	flag.Float64Var(&cfg.baseThreshold, "base-threshold", 1, "percent a head run may differ from the earlier run of the base before the base is measured in the job (with -one-sided)")
 	flag.BoolVar(&cfg.counterPairs, "counter-pairs", true, "count two further hardware counters in every run, alternating between two pairs by pass")
 	flag.Float64Var(&cfg.outlierPct, "outlier", 4, "a measurement whose cycles (or time without counters) deviate this many percent from the median of the leaf's earlier measurements on the same side is repeated once")
 	flag.DurationVar(&cfg.target, "target", 12*time.Minute, "measurement budget per job (passes are fitted to it)")

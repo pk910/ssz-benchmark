@@ -332,6 +332,7 @@ func openDB(path string) (*store, error) {
 		`ALTER TABLE samples ADD COLUMN instrs REAL NOT NULL DEFAULT 0`,
 		`ALTER TABLE samples ADD COLUMN extra TEXT NOT NULL DEFAULT ''`,
 		`ALTER TABLE jobs ADD COLUMN subject TEXT NOT NULL DEFAULT '` + subjectDynSSZ + `'`,
+		`ALTER TABLE jobs ADD COLUMN boot_id TEXT NOT NULL DEFAULT ''`,
 	}
 	for _, stmt := range migrations {
 		_, _ = db.Exec(stmt) // fails when the column exists
@@ -590,8 +591,8 @@ func (s *store) queuedCount() (int, error) {
 	return n, err
 }
 
-func (s *store) startJob(id int64, goVersion, harness string) error {
-	_, err := s.db.Exec(`UPDATE jobs SET state = ?, started = ?, go_version = ?, harness = ? WHERE id = ?`, stateRunning, time.Now().Unix(), goVersion, harness, id)
+func (s *store) startJob(id int64, goVersion, harness, boot string) error {
+	_, err := s.db.Exec(`UPDATE jobs SET state = ?, started = ?, go_version = ?, harness = ?, boot_id = ? WHERE id = ?`, stateRunning, time.Now().Unix(), goVersion, harness, boot, id)
 	return err
 }
 

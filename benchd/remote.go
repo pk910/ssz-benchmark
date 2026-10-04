@@ -131,6 +131,9 @@ func (s *remoteStore) resetSamples(id int64) error {
 	return s.call("POST", fmt.Sprintf("/runner/job/%d/reset", id), nil, nil)
 }
 
+// baseRuns: a worker measures both sides itself.
+func (s *remoteStore) baseRuns(*job, []string) (map[string]sample, error) { return nil, nil }
+
 func (s *remoteStore) addBuilds(facts []buildFact) error {
 	if len(facts) == 0 {
 		return nil

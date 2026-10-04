@@ -141,7 +141,7 @@ func TestPagesRender(t *testing.T) {
 		if _, err := db.claimJob(j, "ctl"); err != nil {
 			t.Fatal(err)
 		}
-		if err := db.startJob(j.ID, "go1.27", "deadbeef"); err != nil {
+		if err := db.startJob(j.ID, "go1.27", "deadbeef", ""); err != nil {
 			t.Fatal(err)
 		}
 		samples := syntheticSamples(j.ID)
@@ -224,7 +224,7 @@ func TestWriteDemoDB(t *testing.T) {
 		if _, err := db.claimJob(j, "pk-devbench"); err != nil {
 			t.Fatal(err)
 		}
-		if err := db.startJob(j.ID, "go1.27.0 linux/amd64", "deadbeefcafef00d"); err != nil {
+		if err := db.startJob(j.ID, "go1.27.0 linux/amd64", "deadbeefcafef00d", ""); err != nil {
 			t.Fatal(err)
 		}
 		var samples []sample
@@ -276,7 +276,7 @@ func TestWriteDemoDB(t *testing.T) {
 	j := &job{Kind: kindCommit, Branch: "master", HeadSHA: strings.Repeat("c", 40), HeadDesc: "ccccccc running change (#251)", BaseSHA: strings.Repeat("d", 40), BaseDesc: "ddddddd base", BaseRef: "master^", PR: 251}
 	_ = db.insertJob(j)
 	_, _ = db.claimJob(j, "pk-devbench")
-	_ = db.startJob(j.ID, "go1.27.0 linux/amd64", "deadbeefcafef00d")
+	_ = db.startJob(j.ID, "go1.27.0 linux/amd64", "deadbeefcafef00d", "")
 	_ = db.setRunnerStatus(liveStatus{Runner: "pk-devbench", JobID: j.ID, Phase: "pass 2 (round 1, seed 202): Codegen/FuluState/Marshal 5/158", Progress: progress{Pass: 2, Round: 1, Seed: "202", Leaf: 5, Leaves: 158, Passes: 1, Measured: 4 * time.Minute, LastPass: 3 * time.Minute, PlannedPasses: 4}, Started: time.Now().Add(-5 * time.Minute), Updated: time.Now(), LastFetch: time.Now(), Host: "pk-devbench", GoVersion: "go1.27.0"})
 	_ = db.putRunner(&runnerInfo{Name: "worker-2", State: runnerQualifying, FirstSeen: time.Now().Add(-time.Hour), LastSeen: time.Now(), Note: "check 1 failed (job 3): noise p95 2.10% above 1.50%", Checks: 1, NoiseMedian: 0.4, NoiseP95: 2.1, RatioGeomean: 1.02, RatioSpread: 3.1})
 	_ = db.setRunnerStatus(liveStatus{Runner: "worker-2", Updated: time.Now(), Host: "worker-2", GoVersion: "go1.27.0"})
@@ -602,5 +602,74 @@ func TestResolveTargetsLive(t *testing.T) {
 		if err != nil {
 			t.Fail()
 		}
+	}
+}
+
+func TestStoredBaseRuns(t *testing.T) {
+	db, err := openDB(filepath.Join(t.TempDir(), "t.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	boot := bootID()
+	if boot == "" {
+		t.Skip("no boot id on this system")
+	}
+	// An earlier job measured commit b1 as its head, on four seeds; seed
+	// 303 of one operation ran on a pathological layout.
+	prev := &job{Kind: kindCommit, Branch: "master", HeadSHA: "b1", BaseSHA: "b0", Runner: "box"}
+	if err := db.insertJob(prev); err != nil {
+		t.Fatal(err)
+	}
+	var samples []sample
+	for i, seed := range []string{"101", "202", "303", "404"} {
+		cycles := 1000.0
+		if seed == "303" {
+			cycles = 2800
+		}
+		samples = append(samples,
+			sample{JobID: prev.ID, Side: "head", Engine: "Codegen", Object: "Block", Op: "MarshalTo", Seed: seed, Pass: i, Iters: 1, Ns: cycles / 3, Cycles: cycles, Instrs: 5000},
+			sample{JobID: prev.ID, Side: "head", Engine: "Codegen", Object: "Block", Op: "Marshal", Seed: seed, Pass: i, Iters: 1, Ns: 700, Cycles: 2000, Instrs: 9000},
+			sample{JobID: prev.ID, Side: "base", Engine: "Codegen", Object: "Block", Op: "Marshal", Seed: seed, Pass: i, Iters: 1, Ns: 1, Cycles: 1, Instrs: 1})
+	}
+	if err := db.insertSamples(samples); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.db.Exec(`UPDATE jobs SET state = ?, harness = 'h', go_version = 'go1', boot_id = ?, finished = ? WHERE id = ?`, stateDone, boot, time.Now().Unix(), prev.ID); err != nil {
+		t.Fatal(err)
+	}
+	j := &job{ID: 99, Kind: kindCommit, Subject: subjectDynSSZ, HeadSHA: "h1", BaseSHA: "b1", Harness: "h", GoVersion: "go1", Runner: "box"}
+	runs, err := db.storedBaseRuns(j, []string{"101", "202", "303", "404"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(runs) != 7 {
+		t.Fatalf("%d runs, want 7 (eight of b1 as head, minus the pathological layout)", len(runs))
+	}
+	if _, ok := runs["Codegen/Block/MarshalTo|303"]; ok {
+		t.Fatal("the pathological layout serves as a base")
+	}
+	if sm := runs["Codegen/Block/Marshal|101"]; sm.Cycles != 2000 {
+		t.Fatalf("the base side of the earlier job was taken for b1: %+v", sm)
+	}
+	// Another harness version, Go version or boot has no usable runs.
+	for _, other := range []*job{
+		{ID: 99, Subject: subjectDynSSZ, BaseSHA: "b1", Harness: "h2", GoVersion: "go1", Runner: "box"},
+		{ID: 99, Subject: subjectDynSSZ, BaseSHA: "b1", Harness: "h", GoVersion: "go2", Runner: "box"},
+	} {
+		if runs, _ := db.storedBaseRuns(other, []string{"101"}); len(runs) != 0 {
+			t.Fatalf("runs of another environment are used: %d", len(runs))
+		}
+	}
+	if _, err := db.db.Exec(`UPDATE jobs SET boot_id = 'earlier-boot' WHERE id = ?`, prev.ID); err != nil {
+		t.Fatal(err)
+	}
+	if runs, _ := db.storedBaseRuns(j, []string{"101"}); len(runs) != 0 {
+		t.Fatalf("runs of an earlier boot are used: %d", len(runs))
+	}
+	// Runs taken from another job are not counted again as measurements.
+	note := baseNote([]sample{
+		{Side: "base", Extra: map[string]float64{"from": 7}}, {Side: "base", Extra: map[string]float64{"from": 7}}, {Side: "base"}, {Side: "head"}})
+	if !strings.Contains(note, "2 of 3 base runs") || !strings.Contains(note, "#7") {
+		t.Fatalf("note %q", note)
 	}
 }

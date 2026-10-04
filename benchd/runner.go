@@ -795,6 +795,19 @@ func (r *runner) measure(ctx context.Context, j *job, head, base *side, jobDir s
 	for _, l := range leaves {
 		r.jobLeaves[l.key()] = l
 	}
+	// The earlier runs of the base commit a one-sided job may use.
+	var stored map[string]sample
+	if r.cfg.oneSided && base != nil && base.sha != "" && j.Kind != kindLib {
+		j.GoVersion = r.goVersionCached
+		if stored, err = r.store.baseRuns(j, r.seeds); err != nil {
+			return 0, err
+		}
+		if stored == nil {
+			logw("one-sided: this runner measures both sides")
+		} else {
+			logw("one-sided: %d earlier runs of the base %s can stand in for measuring it", len(stored), base.sha[:12])
+		}
+	}
 	seen := map[string][]float64{} // leaf+side+seed -> cycles (or ns) of the kept measurements
 	for round := 0; ; round++ {
 		for i, seed := range r.seeds {
@@ -815,14 +828,27 @@ func (r *runner) measure(ctx context.Context, j *job, head, base *side, jobDir s
 					sides = []*side{head}
 				}
 				bySide := map[*side][]sample{}
-				for _, s := range sides {
-					samples, err := r.measureGroup(ctx, j, s, seed, g.pkg, g.engine, g.object, g.leaves, iters, passes, seen, jobDir, logw)
+				if stored != nil && len(sides) == 2 {
+					// One-sided: the head, then the base only where needed.
+					hs, err := r.measureGroup(ctx, j, head, seed, g.pkg, g.engine, g.object, g.leaves, iters, passes, seen, jobDir, logw)
 					if err != nil {
-						return passes, fmt.Errorf("%s %s/%s seed %s: %w", s.name, g.engine, g.object, seed, err)
+						return passes, fmt.Errorf("head %s/%s seed %s: %w", g.engine, g.object, seed, err)
 					}
-					bySide[s] = samples
+					bs, err := r.baseFor(ctx, j, base, head, seed, g.pkg, g.engine, g.object, g.leaves, hs, stored, iters, passes, seen, jobDir, logw)
+					if err != nil {
+						return passes, fmt.Errorf("base %s/%s seed %s: %w", g.engine, g.object, seed, err)
+					}
+					bySide[head], bySide[base] = hs, bs
+				} else {
+					for _, s := range sides {
+						samples, err := r.measureGroup(ctx, j, s, seed, g.pkg, g.engine, g.object, g.leaves, iters, passes, seen, jobDir, logw)
+						if err != nil {
+							return passes, fmt.Errorf("%s %s/%s seed %s: %w", s.name, g.engine, g.object, seed, err)
+						}
+						bySide[s] = samples
+					}
 				}
-				if len(sides) == 2 {
+				if stored == nil && len(sides) == 2 {
 					if err := r.reconcile(ctx, j, base, head, seed, g.leaves, iters, passes, bySide[base], bySide[head], seen, jobDir, logw); err != nil {
 						return passes, fmt.Errorf("%s/%s seed %s: %w", g.engine, g.object, seed, err)
 					}

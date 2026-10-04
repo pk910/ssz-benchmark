@@ -151,7 +151,7 @@ func TestCheckReporter(t *testing.T) {
 	if _, err := db.claimJob(second, "ctl"); err != nil {
 		t.Fatal(err)
 	}
-	if err := db.startJob(second.ID, "go1.27", "deadbeef"); err != nil {
+	if err := db.startJob(second.ID, "go1.27", "deadbeef", ""); err != nil {
 		t.Fatal(err)
 	}
 	second, _ = db.getJob(second.ID)

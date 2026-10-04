@@ -26,6 +26,9 @@ type jobStore interface {
 	resetSamples(id int64) error
 	addSamples(samples []sample) error
 	addBuilds(facts []buildFact) error
+	// baseRuns returns earlier runs of the job's base commit that can
+	// stand in for measuring it, keyed "engine/object/op|seed".
+	baseRuns(j *job, seeds []string) (map[string]sample, error)
 	finish(id int64, passes int, errText string, seconds float64) error
 	interrupted(id int64) error
 }
@@ -131,7 +134,13 @@ func (s *localStore) claim(runner string) (*job, error) {
 }
 
 func (s *localStore) started(id int64, goVersion, harness string) error {
-	err := s.db.startJob(id, goVersion, harness)
+	// A job of this machine records the boot it ran in: runs of another
+	// boot are not compared across jobs.
+	boot := ""
+	if j, _ := s.db.getJob(id); j != nil && (j.Runner == s.local || j.Runner == "") {
+		boot = bootID()
+	}
+	err := s.db.startJob(id, goVersion, harness, boot)
 	s.checks.syncJob(id)
 	return err
 }
@@ -165,6 +174,9 @@ func (s *localStore) setBenchIters(l leaf, n int) error   { return s.db.setBench
 func (s *localStore) resetSamples(id int64) error         { return s.db.deleteSamples(id) }
 func (s *localStore) addSamples(samples []sample) error   { return s.db.insertSamples(samples) }
 func (s *localStore) addBuilds(facts []buildFact) error   { return s.db.insertBuilds(facts) }
+func (s *localStore) baseRuns(j *job, seeds []string) (map[string]sample, error) {
+	return s.db.storedBaseRuns(j, seeds)
+}
 func (s *localStore) interrupted(id int64) error {
 	err := s.db.requeueJob(id)
 	s.checks.syncJob(id)
@@ -231,6 +243,12 @@ func (s *localStore) finish(id int64, passes int, errText string, seconds float6
 		note := fmt.Sprintf("run %d of this pair: results pooled over %d runs", len(ids)+1, len(ids)+1)
 		if j.Note != "" {
 			note = j.Note + "; " + note
+		}
+		_ = s.db.setJobNote(id, note)
+	}
+	if note := baseNote(samples); note != "" {
+		if cur, _ := s.db.getJob(id); cur != nil && cur.Note != "" {
+			note = cur.Note + "; " + note
 		}
 		_ = s.db.setJobNote(id, note)
 	}
