@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"crypto/hmac"
 	"crypto/sha256"
@@ -42,17 +43,38 @@ func (w *webServer) handler() (http.Handler, error) {
 	if err != nil {
 		return nil, err
 	}
+	// The page names its script and stylesheet with a version taken from
+	// their content, so that a browser never runs a script of an earlier
+	// deploy against the current API.
+	index, _ := fs.ReadFile(ui, "index.html")
+	sum := sha256.New()
+	for _, name := range []string{"app.js", "app.css"} {
+		data, _ := fs.ReadFile(ui, name)
+		sum.Write(data)
+	}
+	version := hex.EncodeToString(sum.Sum(nil))[:12]
+	for _, name := range []string{"/ui/app.js", "/ui/app.css"} {
+		index = bytes.ReplaceAll(index, []byte(`"`+name+`"`), []byte(`"`+name+`?v=`+version+`"`))
+	}
+	files := http.StripPrefix("/ui/", http.FileServer(http.FS(ui)))
 	mux := http.NewServeMux()
-	mux.Handle("/ui/", http.StripPrefix("/ui/", http.FileServer(http.FS(ui))))
+	mux.HandleFunc("/ui/", func(rw http.ResponseWriter, req *http.Request) {
+		// A versioned file never changes; anything else is checked again.
+		if req.URL.Query().Get("v") != "" {
+			rw.Header().Set("Cache-Control", "public, max-age=31536000, immutable")
+		} else {
+			rw.Header().Set("Cache-Control", "no-cache")
+		}
+		files.ServeHTTP(rw, req)
+	})
 	mux.HandleFunc("/", func(rw http.ResponseWriter, req *http.Request) {
 		if req.URL.Path != "/" {
 			http.NotFound(rw, req)
 			return
 		}
 		rw.Header().Set("Content-Type", "text/html; charset=utf-8")
-		rw.Header().Set("Cache-Control", "no-cache")
-		data, _ := fs.ReadFile(ui, "index.html")
-		_, _ = rw.Write(data)
+		rw.Header().Set("Cache-Control", "no-store")
+		_, _ = rw.Write(index)
 	})
 	mux.HandleFunc("/raw/", w.handleRaw)
 	mux.HandleFunc("/api/status", w.apiStatus)
