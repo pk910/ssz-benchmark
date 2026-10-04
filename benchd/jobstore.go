@@ -198,6 +198,11 @@ func (s *localStore) seedsFor(j *job) []string {
 // machine; a qualification noise job then decides the worker's state.
 func (s *localStore) finish(id int64, passes int, errText string, seconds float64) error {
 	defer s.checks.syncJob(id)
+	defer func() {
+		if err := s.db.packSamples(id); err != nil {
+			log.Printf("job %d: pack samples: %v", id, err)
+		}
+	}()
 	j, err := s.db.getJob(id)
 	if err != nil || j == nil {
 		return fmt.Errorf("job %d: %v", id, err)

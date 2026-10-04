@@ -200,22 +200,11 @@ func openDB(path string) (*store, error) {
 			instrs REAL NOT NULL DEFAULT 0
 		)`,
 		`CREATE INDEX IF NOT EXISTS samples_job ON samples(job_id, engine, object, op)`,
-		`CREATE TABLE IF NOT EXISTS results (
-			job_id INTEGER NOT NULL,
-			engine TEXT NOT NULL,
-			object TEXT NOT NULL,
-			op TEXT NOT NULL,
-			baseline INTEGER NOT NULL,
-			n INTEGER NOT NULL,
-			iters INTEGER NOT NULL,
-			steal INTEGER NOT NULL,
-			ns_base REAL, ns_head REAL, ns_med_base REAL, ns_med_head REAL, ns_cv_base REAL, ns_cv_head REAL, ns_delta REAL, ns_med_delta REAL, ns_lo REAL, ns_hi REAL, ns_p REAL, ns_dmin REAL, ns_dmax REAL, ns_hmin REAL, ns_hmax REAL, ns_pmed REAL, ns_pspread REAL, ns_pagree REAL, ns_pn REAL, ns_pq1 REAL, ns_pq3 REAL, ns_hq1 REAL, ns_hq3 REAL,
-			b_base REAL, b_head REAL, b_med_base REAL, b_med_head REAL, b_cv_base REAL, b_cv_head REAL, b_delta REAL, b_med_delta REAL, b_lo REAL, b_hi REAL, b_p REAL, b_dmin REAL, b_dmax REAL, b_hmin REAL, b_hmax REAL, b_pmed REAL, b_pspread REAL, b_pagree REAL, b_pn REAL, b_pq1 REAL, b_pq3 REAL, b_hq1 REAL, b_hq3 REAL,
-			a_base REAL, a_head REAL, a_med_base REAL, a_med_head REAL, a_cv_base REAL, a_cv_head REAL, a_delta REAL, a_med_delta REAL, a_lo REAL, a_hi REAL, a_p REAL, a_dmin REAL, a_dmax REAL, a_hmin REAL, a_hmax REAL, a_pmed REAL, a_pspread REAL, a_pagree REAL, a_pn REAL, a_pq1 REAL, a_pq3 REAL, a_hq1 REAL, a_hq3 REAL,
-			c_base REAL, c_head REAL, c_med_base REAL, c_med_head REAL, c_cv_base REAL, c_cv_head REAL, c_delta REAL, c_med_delta REAL, c_lo REAL, c_hi REAL, c_p REAL, c_dmin REAL, c_dmax REAL, c_hmin REAL, c_hmax REAL, c_pmed REAL, c_pspread REAL, c_pagree REAL, c_pn REAL, c_pq1 REAL, c_pq3 REAL, c_hq1 REAL, c_hq3 REAL,
-			i_base REAL, i_head REAL, i_med_base REAL, i_med_head REAL, i_cv_base REAL, i_cv_head REAL, i_delta REAL, i_med_delta REAL, i_lo REAL, i_hi REAL, i_p REAL, i_dmin REAL, i_dmax REAL, i_hmin REAL, i_hmax REAL, i_pmed REAL, i_pspread REAL, i_pagree REAL, i_pn REAL, i_pq1 REAL, i_pq3 REAL, i_hq1 REAL, i_hq3 REAL,
-			PRIMARY KEY (job_id, engine, object, op)
+		`CREATE TABLE IF NOT EXISTS job_samples (
+			job_id INTEGER PRIMARY KEY,
+			data BLOB NOT NULL
 		)`,
+		resultsSchema("results"),
 		`CREATE INDEX IF NOT EXISTS results_leaf ON results(object, op, engine, job_id)`,
 		`CREATE TABLE IF NOT EXISTS job_checks (
 			job_id INTEGER PRIMARY KEY,
@@ -278,16 +267,6 @@ func openDB(path string) (*store, error) {
 		`ALTER TABLE samples ADD COLUMN cycles REAL NOT NULL DEFAULT 0`,
 		`ALTER TABLE samples ADD COLUMN instrs REAL NOT NULL DEFAULT 0`,
 	}
-	for _, prefix := range []string{"c_", "i_"} {
-		for _, col := range []string{"base", "head", "med_base", "med_head", "cv_base", "cv_head", "delta", "med_delta", "lo", "hi", "p"} {
-			migrations = append(migrations, `ALTER TABLE results ADD COLUMN `+prefix+col+` REAL NOT NULL DEFAULT 0`)
-		}
-	}
-	for _, prefix := range []string{"ns_", "b_", "a_", "c_", "i_"} {
-		for _, col := range []string{"dmin", "dmax", "hmin", "hmax", "pmed", "pspread", "pagree", "pn", "pq1", "pq3", "hq1", "hq3"} {
-			migrations = append(migrations, `ALTER TABLE results ADD COLUMN `+prefix+col+` REAL NOT NULL DEFAULT 0`)
-		}
-	}
 	for _, stmt := range migrations {
 		_, _ = db.Exec(stmt) // fails when the column exists
 	}
@@ -325,12 +304,6 @@ func (s *store) refreshResults(key string) error {
 			prev, err := s.samplesFor(id)
 			if err != nil {
 				return err
-			}
-			if len(prev) == 0 {
-				// The samples of an earlier run are gone (retention): the
-				// stored results rest on more than can be recomputed.
-				pooled = nil
-				break
 			}
 			pooled = append(pooled, prev...)
 		}
@@ -786,7 +759,17 @@ func (s *store) deleteSamples(jobID int64) error {
 	return err
 }
 
+// samplesFor returns the single runs of a job: its rows while it runs, its
+// blob once it is packed.
 func (s *store) samplesFor(jobID int64) ([]sample, error) {
+	out, err := s.sampleRows(jobID)
+	if err != nil || len(out) > 0 {
+		return out, err
+	}
+	return s.sampleBlob(jobID)
+}
+
+func (s *store) sampleRows(jobID int64) ([]sample, error) {
 	rows, err := s.db.Query(`SELECT job_id, side, engine, object, op, seed, pass, iters, ns, bytes, allocs, steal, cycles, instrs FROM samples WHERE job_id = ? ORDER BY object, op, engine, pass, seed, side`, jobID)
 	if err != nil {
 		return nil, err
@@ -803,19 +786,49 @@ func (s *store) samplesFor(jobID int64) ([]sample, error) {
 	return out, rows.Err()
 }
 
-const resultColumns = `job_id, engine, object, op, baseline, n, iters, steal,
-	ns_base, ns_head, ns_med_base, ns_med_head, ns_cv_base, ns_cv_head, ns_delta, ns_med_delta, ns_lo, ns_hi, ns_p, ns_dmin, ns_dmax, ns_hmin, ns_hmax, ns_pmed, ns_pspread, ns_pagree, ns_pn, ns_pq1, ns_pq3, ns_hq1, ns_hq3,
-	b_base, b_head, b_med_base, b_med_head, b_cv_base, b_cv_head, b_delta, b_med_delta, b_lo, b_hi, b_p, b_dmin, b_dmax, b_hmin, b_hmax, b_pmed, b_pspread, b_pagree, b_pn, b_pq1, b_pq3, b_hq1, b_hq3,
-	a_base, a_head, a_med_base, a_med_head, a_cv_base, a_cv_head, a_delta, a_med_delta, a_lo, a_hi, a_p, a_dmin, a_dmax, a_hmin, a_hmax, a_pmed, a_pspread, a_pagree, a_pn, a_pq1, a_pq3, a_hq1, a_hq3,
-	c_base, c_head, c_med_base, c_med_head, c_cv_base, c_cv_head, c_delta, c_med_delta, c_lo, c_hi, c_p, c_dmin, c_dmax, c_hmin, c_hmax, c_pmed, c_pspread, c_pagree, c_pn, c_pq1, c_pq3, c_hq1, c_hq3,
-	i_base, i_head, i_med_base, i_med_head, i_cv_base, i_cv_head, i_delta, i_med_delta, i_lo, i_hi, i_p, i_dmin, i_dmax, i_hmin, i_hmax, i_pmed, i_pspread, i_pagree, i_pn, i_pq1, i_pq3, i_hq1, i_hq3`
+// The results table holds, per metric, the values the pages across jobs
+// read. The remaining statistics of a metric are computed from the job's
+// samples when its page is opened (fullResults).
+var (
+	metricPrefixes = []string{"ns_", "b_", "a_", "c_", "i_"}
+	metricColumns  = []string{"base", "head", "cv_base", "cv_head", "delta", "dmin", "dmax", "pmed", "pspread", "pagree", "pn"}
+	resultColumns  = func() string {
+		cols := []string{"job_id", "engine", "object", "op", "baseline", "n", "iters", "steal"}
+		for _, p := range metricPrefixes {
+			for _, c := range metricColumns {
+				cols = append(cols, p+c)
+			}
+		}
+		return strings.Join(cols, ", ")
+	}()
+)
+
+func resultsSchema(table string) string {
+	var b strings.Builder
+	b.WriteString(`CREATE TABLE IF NOT EXISTS ` + table + ` (
+			job_id INTEGER NOT NULL,
+			engine TEXT NOT NULL,
+			object TEXT NOT NULL,
+			op TEXT NOT NULL,
+			baseline INTEGER NOT NULL,
+			n INTEGER NOT NULL,
+			iters INTEGER NOT NULL,
+			steal INTEGER NOT NULL,`)
+	for _, p := range metricPrefixes {
+		for _, c := range metricColumns {
+			b.WriteString("\n\t\t\t" + p + c + " REAL NOT NULL DEFAULT 0,")
+		}
+	}
+	b.WriteString("\n\t\t\tPRIMARY KEY (job_id, engine, object, op)\n\t\t)")
+	return b.String()
+}
 
 func metricArgs(m *metric) []any {
-	return []any{&m.Base, &m.Head, &m.MedBase, &m.MedHead, &m.CVBase, &m.CVHead, &m.Delta, &m.MedDelta, &m.Lo, &m.Hi, &m.P, &m.DMin, &m.DMax, &m.HMin, &m.HMax, &m.PMed, &m.PSpread, &m.PAgree, &m.PN, &m.PQ1, &m.PQ3, &m.HQ1, &m.HQ3}
+	return []any{&m.Base, &m.Head, &m.CVBase, &m.CVHead, &m.Delta, &m.DMin, &m.DMax, &m.PMed, &m.PSpread, &m.PAgree, &m.PN}
 }
 
 func metricValues(m metric) []any {
-	return []any{m.Base, m.Head, m.MedBase, m.MedHead, m.CVBase, m.CVHead, m.Delta, m.MedDelta, m.Lo, m.Hi, m.P, m.DMin, m.DMax, m.HMin, m.HMax, m.PMed, m.PSpread, m.PAgree, m.PN, m.PQ1, m.PQ3, m.HQ1, m.HQ3}
+	return []any{m.Base, m.Head, m.CVBase, m.CVHead, m.Delta, m.DMin, m.DMax, m.PMed, m.PSpread, m.PAgree, m.PN}
 }
 
 func (s *store) replaceResults(jobID int64, results []result) error {
@@ -827,7 +840,7 @@ func (s *store) replaceResults(jobID int64, results []result) error {
 		tx.Rollback()
 		return err
 	}
-	stmt, err := tx.Prepare(`INSERT INTO results(` + resultColumns + `) VALUES(` + strings.TrimSuffix(strings.Repeat("?,", 123), ",") + `)`)
+	stmt, err := tx.Prepare(`INSERT INTO results(` + resultColumns + `) VALUES(` + strings.TrimSuffix(strings.Repeat("?,", 8+len(metricPrefixes)*len(metricColumns)), ",") + `)`)
 	if err != nil {
 		tx.Rollback()
 		return err
@@ -869,6 +882,8 @@ func scanResults(rows *sql.Rows, err error) ([]result, error) {
 	return out, rows.Err()
 }
 
+// resultsFor returns the stored results of a job: the values kept per
+// metric, without the statistics that fullResults computes.
 func (s *store) resultsFor(jobID int64) ([]result, error) {
 	return scanResults(s.db.Query(`SELECT `+resultColumns+` FROM results WHERE job_id = ? ORDER BY object, op, engine`, jobID))
 }

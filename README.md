@@ -304,9 +304,10 @@ lists every runner with its state.
   module cache only grows with new dependencies.
 - Job logs (`/srv/benchd/jobs/<id>`) are gzipped when the job finishes
   (about 55 KB per job) and kept; the UI serves them as plain text.
-- The database keeps jobs and results. The single-run samples of a job
-  are deleted two years after it finished (`-sample-retention`); its leaf
-  pages then show the results without the single runs.
+- The database keeps, per job and operation, the values the pages
+  across jobs read. The single runs of a finished job are one gzipped
+  blob (`job_samples`); the job page computes its detailed statistics
+  from it. A running job has its samples as rows until it finishes.
 
 ## GitHub integration
 

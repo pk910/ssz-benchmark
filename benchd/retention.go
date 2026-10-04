@@ -2,14 +2,12 @@ package main
 
 import (
 	"compress/gzip"
-	"context"
 	"io"
 	"log"
 	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
-	"time"
 )
 
 // compressJobLogs gzips every plain file of a job's log directory and
@@ -101,34 +99,5 @@ func serveJobFile(rw http.ResponseWriter, req *http.Request, path string) {
 	if f, err := os.Open(path); err == nil {
 		_, _ = io.Copy(rw, f)
 		f.Close()
-	}
-}
-
-// pruneSamples deletes the single-run samples of jobs that finished before
-// the given time. The jobs and their results stay.
-func (s *store) pruneSamples(before time.Time) (int64, error) {
-	res, err := s.db.Exec(`DELETE FROM samples WHERE job_id IN (SELECT id FROM jobs WHERE finished IS NOT NULL AND finished < ? AND state IN (?, ?))`,
-		before.Unix(), stateDone, stateFailed)
-	if err != nil {
-		return 0, err
-	}
-	return res.RowsAffected()
-}
-
-// retentionLoop prunes the samples older than the retention once a day.
-func retentionLoop(ctx context.Context, db *store, retention time.Duration) {
-	if retention <= 0 {
-		return
-	}
-	for {
-		if n, err := db.pruneSamples(time.Now().Add(-retention)); err != nil {
-			log.Printf("prune samples: %v", err)
-		} else if n > 0 {
-			log.Printf("pruned %d samples of jobs finished more than %s ago", n, retention)
-		}
-		sleepCtx(ctx, 24*time.Hour)
-		if ctx.Err() != nil {
-			return
-		}
 	}
 }

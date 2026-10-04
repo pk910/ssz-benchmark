@@ -360,7 +360,7 @@ func (w *webServer) apiJob(rw http.ResponseWriter, req *http.Request) {
 			samples, _ := w.db.samplesFor(j.ID)
 			results = summarize(samples)
 		} else {
-			results, _ = w.db.resultsFor(j.ID)
+			results, _ = w.db.fullResults(j)
 		}
 		if results == nil {
 			results = []result{}
@@ -385,7 +385,7 @@ func (w *webServer) apiJob(rw http.ResponseWriter, req *http.Request) {
 				}
 			}
 			results = own
-			refs, id := w.baselineResults()
+			refs, id := w.baselineResults(true)
 			have := map[string]bool{}
 			for _, r := range results {
 				have[joinKey(r.Engine, r.Object, r.Op)] = true
@@ -658,11 +658,15 @@ func stepResults(prev, cur []result) []result {
 }
 
 // baselineResults returns the results of the newest finished baseline job
-// and its id.
-func (w *webServer) baselineResults() ([]result, int64) {
+// and its id; with full, including the statistics the job page shows.
+func (w *webServer) baselineResults(full bool) ([]result, int64) {
 	j, err := w.db.lastDoneJobOfKind(kindBaseline)
 	if err != nil || j == nil {
 		return nil, 0
+	}
+	if full {
+		results, _ := w.db.fullResults(j)
+		return results, j.ID
 	}
 	results, _ := w.db.resultsFor(j.ID)
 	return results, j.ID
@@ -713,7 +717,7 @@ func (w *webServer) opView(object, op string, limit int) (opView, bool) {
 	}
 	// The reference libraries' latest values do not depend on how far back
 	// the history reaches.
-	if refs, _ := w.baselineResults(); len(refs) > 0 {
+	if refs, _ := w.baselineResults(false); len(refs) > 0 {
 		for i := range refs {
 			r := &refs[i]
 			if r.Object == object && r.Op == op && v.Latest[r.Engine] == nil {

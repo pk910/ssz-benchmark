@@ -383,26 +383,68 @@ func TestJobLogCompression(t *testing.T) {
 	}
 }
 
-func TestPruneSamples(t *testing.T) {
-	db, err := openDB(filepath.Join(t.TempDir(), "t.db"))
+func TestSampleBlobAndMigration(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "t.db")
+	db, err := openDB(path)
 	if err != nil {
 		t.Fatal(err)
 	}
-	now := time.Now()
-	for id, finished := range map[int64]time.Time{1: now.Add(-800 * 24 * time.Hour), 2: now.Add(-time.Hour)} {
-		if _, err := db.db.Exec(`INSERT INTO jobs (id, kind, state, head_sha, base_sha, created, finished) VALUES (?, 'commit', 'done', 'h', 'b', ?, ?)`, id, finished.Unix(), finished.Unix()); err != nil {
-			t.Fatal(err)
-		}
-		if _, err := db.db.Exec(`INSERT INTO samples (job_id, side, engine, object, op, seed, pass, iters, ns, bytes, allocs) VALUES (?, 'head', 'e', 'o', 'p', '1', 0, 1, 1, 0, 0)`, id); err != nil {
-			t.Fatal(err)
+	j := &job{Kind: kindCommit, State: stateQueued, HeadSHA: "h", BaseSHA: "b"}
+	if err := db.insertJob(j); err != nil {
+		t.Fatal(err)
+	}
+	var samples []sample
+	for pass := 0; pass < 4; pass++ {
+		for _, side := range []string{"base", "head"} {
+			samples = append(samples, sample{JobID: j.ID, Side: side, Engine: "Codegen", Object: "Block", Op: "Marshal", Seed: fmt.Sprint(101 + pass), Pass: pass, Iters: 10, Ns: 100 + float64(pass), Cycles: 400, Instrs: 900})
 		}
 	}
-	n, err := db.pruneSamples(now.Add(-2 * 365 * 24 * time.Hour))
-	if err != nil || n != 1 {
-		t.Fatalf("pruned %d, %v", n, err)
+	if err := db.insertSamples(samples); err != nil {
+		t.Fatal(err)
 	}
-	var left int64
-	if err := db.db.QueryRow(`SELECT job_id FROM samples`).Scan(&left); err != nil || left != 2 {
-		t.Fatalf("left job %d, %v", left, err)
+	full := summarize(samples)
+	if err := db.replaceResults(j.ID, full); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.finishJob(j.ID, stateDone, 4, "", 1); err != nil {
+		t.Fatal(err)
+	}
+	// A database from before the layout change has the wide results table
+	// and the samples of finished jobs as rows.
+	if _, err := db.db.Exec(`ALTER TABLE results ADD COLUMN ns_lo REAL NOT NULL DEFAULT 0`); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.migrateStorage(path); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(path + ".before-blobs"); err != nil {
+		t.Fatalf("no copy of the database: %v", err)
+	}
+	var n int
+	if err := db.db.QueryRow(`SELECT count(*) FROM pragma_table_info('results') WHERE name = 'ns_lo'`).Scan(&n); err != nil || n != 0 {
+		t.Fatalf("results still wide: %d, %v", n, err)
+	}
+	if rows, _ := db.sampleRows(j.ID); len(rows) != 0 {
+		t.Fatalf("%d sample rows left", len(rows))
+	}
+	got, err := db.samplesFor(j.ID)
+	if err != nil || len(got) != len(samples) {
+		t.Fatalf("samples from the blob: %d, %v", len(got), err)
+	}
+	stored, err := db.resultsFor(j.ID)
+	if err != nil || len(stored) != 1 || stored[0].Ns.PMed != full[0].Ns.PMed || stored[0].Ns.Head != full[0].Ns.Head {
+		t.Fatalf("stored results %+v, %v", stored, err)
+	}
+	if stored[0].Ns.HQ3 != 0 {
+		t.Fatal("stored results carry job-page statistics")
+	}
+	done, _ := db.getJob(j.ID)
+	again, err := db.fullResults(done)
+	if err != nil || len(again) != 1 || again[0].Ns != full[0].Ns || again[0].Cycles != full[0].Cycles {
+		t.Fatalf("full results differ: %+v vs %+v (%v)", again, full, err)
+	}
+	// Migrating again changes nothing.
+	if err := db.migrateStorage(path); err != nil {
+		t.Fatal(err)
 	}
 }
