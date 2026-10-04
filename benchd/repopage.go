@@ -1,6 +1,7 @@
 package main
 
 import (
+	"fmt"
 	"math"
 	"net/http"
 	"sort"
@@ -54,13 +55,19 @@ type repoView struct {
 	Name, Repo string
 	Branch     string // of the master target; empty without one
 	Targets    []repoTarget
-	Total      int // commits listed of the main branch
+	Total      int // commits of the main branch
+	PageSize   int
 	Measured   int // of them measured
 	Commits    []repoCommit
 	Leaves     []leaf `json:",omitempty"`
 }
 
-func (w *webServer) repoView(sub *subject, limit int, steps bool) (*repoView, error) {
+// repoPage is how many commits a page of a library's history holds.
+const repoPage = 200
+
+// repoView builds the page of a library: limit commits from offset on,
+// with the per-operation steps when steps is set.
+func (w *webServer) repoView(sub *subject, offset, limit int, steps bool) (*repoView, error) {
 	v := &repoView{Name: sub.Name, Repo: sub.Repo, Commits: []repoCommit{}}
 	rows, err := w.db.db.Query(`SELECT name, label, sha FROM targets WHERE subject = ?`, sub.Name)
 	if err != nil {
@@ -133,7 +140,7 @@ func (w *webServer) repoView(sub *subject, limit int, steps bool) (*repoView, er
 		sort.Slice(found, func(a, b int) bool { return first[found[a].SHA] > first[found[b].SHA] })
 		commits = found
 	}
-	v.Total = len(commits)
+	v.Total, v.PageSize = len(commits), repoPage
 
 	// The pooled values of every commit, per harness version.
 	type hv struct {
@@ -267,7 +274,7 @@ func (w *webServer) repoView(sub *subject, limit int, steps bool) (*repoView, er
 		sort.Slice(v.Leaves, func(a, b int) bool {
 			return leafLess(v.Leaves[a].Object, v.Leaves[a].Op, v.Leaves[a].Engine, v.Leaves[b].Object, v.Leaves[b].Op, v.Leaves[b].Engine)
 		})
-		for i := range commits {
+		for i := offset; i < min(len(commits), offset+limit); i++ {
 			if perCommit[i] == nil {
 				continue
 			}
@@ -278,9 +285,8 @@ func (w *webServer) repoView(sub *subject, limit int, steps bool) (*repoView, er
 			}
 		}
 	}
-	if limit > 0 && len(commits) > limit {
-		commits = commits[:limit]
-	}
+	offset = min(offset, len(commits))
+	commits = commits[offset:min(len(commits), offset+limit)]
 	if commits != nil {
 		v.Commits = commits
 	}
@@ -294,7 +300,7 @@ func (w *webServer) apiRepos(rw http.ResponseWriter, req *http.Request) {
 		w.writeJSON(rw, w.pages.get(stamp, "repos", func() any {
 			out := []*repoView{}
 			for i := range subjects {
-				if v, err := w.repoView(&subjects[i], 5, false); err == nil {
+				if v, err := w.repoView(&subjects[i], 0, 5, false); err == nil {
 					out = append(out, v)
 				}
 			}
@@ -307,8 +313,10 @@ func (w *webServer) apiRepos(rw http.ResponseWriter, req *http.Request) {
 		http.NotFound(rw, req)
 		return
 	}
-	w.writeJSON(rw, w.pages.get(stamp, "repo|"+name, func() any {
-		v, err := w.repoView(sub, 200, true)
+	page, _ := strconv.Atoi(req.URL.Query().Get("page"))
+	page = max(page, 1)
+	w.writeJSON(rw, w.pages.get(stamp, fmt.Sprintf("repo|%s|%d", name, page), func() any {
+		v, err := w.repoView(sub, (page-1)*repoPage, repoPage, true)
 		if err != nil {
 			return map[string]string{"Error": err.Error()}
 		}

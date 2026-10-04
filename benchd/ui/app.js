@@ -427,8 +427,12 @@
         <p class="note"><a href="#/repo/${encodeURIComponent(v.Name)}">${v.Total > v.Commits.length ? 'view all commits' : 'repository page'} →</a></p></section>`).join('');
   }
 
-  async function viewRepo(name) {
-    const v = await get('/api/repo/' + encodeURIComponent(name));
+  async function viewRepo(name, page) {
+    page = Math.max(1, parseInt(page, 10) || 1);
+    const v = await get(`/api/repo/${encodeURIComponent(name)}?page=${page}`);
+    const pages = Math.max(1, Math.ceil(v.Total / v.PageSize));
+    const pageHref = p => `#/repo/${encodeURIComponent(name)}${p > 1 ? '?page=' + p : ''}`;
+    const pager = pages < 2 ? '' : `<div class="toolbar pager">${page > 1 ? `<a class="chip" href="${pageHref(page - 1)}">← newer</a>` : ''}${Array.from({ length: pages }, (_, i) => i + 1).filter(p => p === 1 || p === pages || Math.abs(p - page) <= 2).map((p, i, shown) => `${i && p - shown[i - 1] > 1 ? '<span class="muted">…</span>' : ''}<a class="chip ${p === page ? 'commit' : ''}" href="${pageHref(p)}">${p}</a>`).join('')}${page < pages ? `<a class="chip" href="${pageHref(page + 1)}">older →</a>` : ''}<span class="muted">commits ${(page - 1) * v.PageSize + 1}–${(page - 1) * v.PageSize + v.Commits.length} of ${v.Total}</span></div>`;
     if (v.Error) throw new Error(v.Error);
     // Oldest first for the chart; a line is the running product of an
     // operation's changes, starting at the oldest commit shown.
@@ -439,11 +443,11 @@
     const useNs = localStorage.getItem('repoMetric') === 'ns';
     const tabs = (id, items, cur) => `<div class="tabs" id="${id}">${items.map(([k, label]) => `<button data-k="${k}" class="${k === cur ? 'active' : ''}">${esc(label)}</button>`).join('')}</div>`;
     app.innerHTML = `<h1>${repoTitle(v)}</h1>
-      <div class="toolbar">${repoTargets(v)}<span class="muted">${v.Commits.length < v.Total ? `the newest ${v.Commits.length} of ` : ''}${v.Total} commit${v.Total === 1 ? '' : 's'} of ${esc(v.Branch || 'the main branch')}, ${v.Measured} measured</span></div>
-      ${engines.length && chain.length > 1 ? `<div class="toolbar">${tabs('repoEngine', engines.map(e => [e, engName(e)]), engine)}${tabs('repoMetric', [['cycles', 'Cycles'], ['ns', 'Time']], useNs ? 'ns' : 'cycles')}<span class="muted">one line per operation: change since the oldest commit shown, a dot per measured commit; colour by object</span></div>
+      <div class="toolbar">${repoTargets(v)}<span class="muted">${v.Total} commit${v.Total === 1 ? '' : 's'} of ${esc(v.Branch || 'the main branch')}, ${v.Measured} measured</span></div>
+      ${engines.length && chain.length > 1 ? `<div class="toolbar">${tabs('repoEngine', engines.map(e => [e, engName(e)]), engine)}${tabs('repoMetric', [['cycles', 'Cycles'], ['ns', 'Time']], useNs ? 'ns' : 'cycles')}<span class="muted">one line per operation: change since the oldest measured commit of this page, a dot per measured commit; colour by object</span></div>
       <div class="chart" style="height:420px"><canvas id="rc"></canvas></div>` : ''}
-      <h2>Commits <span class="muted small">newest first</span></h2>${repoCommits(v, v.Commits)}`;
-    const bind = (id, key) => document.querySelectorAll(`#${id} button`).forEach(b => b.onclick = () => { localStorage.setItem(key, b.dataset.k); viewRepo(name); });
+      <h2>Commits <span class="muted small">newest first</span></h2>${pager}${repoCommits(v, v.Commits)}${pager}`;
+    const bind = (id, key) => document.querySelectorAll(`#${id} button`).forEach(b => b.onclick = () => { localStorage.setItem(key, b.dataset.k); viewRepo(name, page); });
     bind('repoEngine', 'repoEngine'); bind('repoMetric', 'repoMetric');
     destroyCharts();
     if (!engines.length || chain.length < 2) return;
@@ -1236,7 +1240,7 @@
       else if (parts[0] === 'job' && parts[2] === 'leaf') await viewLeaf(parts[1], parts[3], parts[4], parts.slice(5).join('/'));
       else if (parts[0] === 'job') await viewJob(parts[1]);
       else if (parts[0] === 'repos') await viewRepos();
-      else if (parts[0] === 'repo') await viewRepo(decodeURIComponent(parts[1] || ''));
+      else if (parts[0] === 'repo') await viewRepo(decodeURIComponent(parts[1] || ''), params.get('page'));
       else if (parts[0] === 'ops') await viewOps();
       else if (parts[0] === 'commit') await viewCommit(parts[1], parts[2], params);
       else if (parts[0] === 'op') await viewOp(parts[1], parts.slice(2).join('/'));

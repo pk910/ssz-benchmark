@@ -16,9 +16,6 @@ import (
 // commits on the branch itself, a merge as one commit without the commits
 // it brought in. The repository pages list it, measured or not.
 
-// historyLen is how many of the newest commits of a branch are kept.
-const historyLen = 300
-
 type branchCommit struct {
 	SHA       string
 	Committed int64
@@ -26,10 +23,10 @@ type branchCommit struct {
 	Tags      []string
 }
 
-// branchLog reads the newest commits on a branch of a local repository,
-// following first parents only.
+// branchLog reads the commits on a branch of a local repository, newest
+// first, following first parents only.
 func branchLog(ctx context.Context, gitDir, ref string) ([]branchCommit, error) {
-	out, err := exec.CommandContext(ctx, "git", "-C", gitDir, "log", "--first-parent", "-n", strconv.Itoa(historyLen),
+	out, err := exec.CommandContext(ctx, "git", "-C", gitDir, "log", "--first-parent",
 		"--decorate-refs=refs/tags", "--format=%H%x09%ct%x09%D%x09%s", ref, "--").Output()
 	if err != nil {
 		return nil, fmt.Errorf("log of %s: %w", ref, err)

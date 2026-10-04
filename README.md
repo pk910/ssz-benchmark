@@ -337,13 +337,13 @@ routes:
   in execution order and the newest finished jobs; and `#/jobs`, every
   job with filters.
 - `#/repos`: every library with its repository, its targets and the five
-  newest commits of its main branch. `#/repo/<library>`: the newest 200,
-  each with its age, its tags and, when measured, the change per engine
+  newest commits of its main branch. `#/repo/<library>`: all of them,
+  200 a page, each with its age, its tags and, when measured, the change per engine
   against the measured commit before it (from the pooled values of both,
   within one harness version), and a chart with one line per operation:
-  its change since the oldest measured commit shown, a dot per measured
+  its change since the oldest measured commit of the page, a dot per measured
   commit. The list is the history of the branch as the repository has it
-  (`branch_commits`, the newest 300): the commits on the branch itself, a
+  (`branch_commits`, in full): the commits on the branch itself, a
   merge as one commit. The target poller renews it, from the mirror or,
   for the other libraries, from a fetch of the branch's commits without
   their files into `work/history/<library>.git`. Commits without a
