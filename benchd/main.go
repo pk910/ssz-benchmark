@@ -187,8 +187,8 @@ func main() {
 		if err := db.migrateStorage(filepath.Join(cfg.dataDir, "benchd.db")); err != nil {
 			log.Fatalf("storage migration: %v", err)
 		}
-		// The reference job is gone; one still waiting is not run.
-		if _, err := db.db.Exec(`UPDATE jobs SET state = ?, error = 'replaced by the jobs of the single libraries' WHERE kind = ? AND state = ?`, stateSkipped, kindBaseline, stateQueued); err != nil {
+		// The reference job is gone: one that never ran is removed.
+		if _, err := db.db.Exec(`DELETE FROM jobs WHERE kind = ? AND state IN (?, ?)`, kindBaseline, stateQueued, stateSkipped); err != nil {
 			log.Fatal(err)
 		}
 		if err := db.backfillCommitValues(); err != nil {
