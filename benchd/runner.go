@@ -330,8 +330,40 @@ func (r *runner) runJob(ctx context.Context, j *job) bool {
 	return true
 }
 
+// building wraps a build command so that it may use the build cpus: no
+// benchmark runs while a job builds, so its builds can have the benchmark
+// cores too. Without build cpus the command stays on the daemon's own.
+func (r *runner) building(name string, args ...string) (string, []string, []string) {
+	if r.cfg.buildCPUs == "" {
+		return name, args, nil
+	}
+	return "taskset", append([]string{"-c", r.cfg.buildCPUs, name}, args...), []string{"GOMAXPROCS=" + strconv.Itoa(cpuCount(r.cfg.buildCPUs))}
+}
+
+// cpuCount counts the cpus of a list like "0-4" or "0,1,3".
+func cpuCount(list string) int {
+	n := 0
+	for _, part := range strings.Split(list, ",") {
+		lo, hi, isRange := strings.Cut(strings.TrimSpace(part), "-")
+		a, err := strconv.Atoi(lo)
+		if err != nil {
+			continue
+		}
+		b := a
+		if isRange {
+			if b, err = strconv.Atoi(hi); err != nil || b < a {
+				continue
+			}
+		}
+		n += b - a + 1
+	}
+	return max(n, 1)
+}
+
 func (r *runner) goCmd(ctx context.Context, dir string, args ...string) *exec.Cmd {
-	cmd := r.sandboxed(ctx, true, r.cfg.goBin, args...)
+	name, args, env := r.building(r.cfg.goBin, args...)
+	cmd := r.sandboxed(ctx, true, name, args...)
+	cmd.Env = append(cmd.Env, env...)
 	cmd.Dir = dir
 	// No version-control stamping: the checkout belongs to the daemon's git,
 	// which the sandbox user may not query, and the stamp is of no use here.
@@ -499,9 +531,10 @@ func (r *runner) buildAdapter(ctx context.Context, s *side, lib *subject, logw f
 	}
 	libDir := filepath.Join(s.hdir, "baselines", lib.Adapter)
 	// The recipe picks the Go toolchain its generator needs itself.
-	gen := r.sandboxed(ctx, true, "bash", "generate.sh", s.sha)
+	name, args, env := r.building("bash", "generate.sh", s.sha)
+	gen := r.sandboxed(ctx, true, name, args...)
 	gen.Dir = libDir
-	gen.Env = append(gen.Env, "GOTOOLCHAIN=auto")
+	gen.Env = append(append(gen.Env, env...), "GOTOOLCHAIN=auto")
 	if err := runLogged(gen); err != nil {
 		return fmt.Errorf("generate: %w", err)
 	}

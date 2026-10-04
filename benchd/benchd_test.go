@@ -701,3 +701,11 @@ func TestResultLines(t *testing.T) {
 		t.Fatalf("%d result lines, output %q", n, buf.String())
 	}
 }
+
+func TestCPUCount(t *testing.T) {
+	for list, want := range map[string]int{"0-4": 5, "0,1,3": 3, "2": 1, "0-1, 4-5": 4, "": 1} {
+		if got := cpuCount(list); got != want {
+			t.Errorf("cpuCount(%q) = %d, want %d", list, got, want)
+		}
+	}
+}
