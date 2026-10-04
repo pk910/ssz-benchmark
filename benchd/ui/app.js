@@ -1012,7 +1012,7 @@
     const a = params.get('a') || '', b = params.get('b') || '';
     const d = await get(`/api/compare?a=${encodeURIComponent(a)}&b=${encodeURIComponent(b)}`);
     const m = curMetric(false);
-    const key = { ns: ['Ns', 'NsDelta'], cycles: ['Cycles', 'CyclesDelta'], instrs: ['Instrs', 'InstrsDelta'], bytes: ['Bytes', 'BytesDelta'], allocs: ['Allocs', 'AllocsDelta'] }[metric];
+    const key = { ns: ['Ns', 'NsDelta'], cycles: ['Cycles', 'CyclesDelta'], instrs: ['Instrs', 'InstrsDelta'], bytes: ['Bytes', 'BytesDelta'], allocs: ['Allocs', 'AllocsDelta'] }[METRICS[metric] && !METRICS[metric].extra ? metric : 'cycles'];
     let body = '';
     if (a && b) {
       if (d.AJob && d.BJob) {
