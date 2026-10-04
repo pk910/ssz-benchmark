@@ -540,6 +540,7 @@ func (r *runner) buildAdapter(ctx context.Context, s *side, lib *subject, logw f
 	if err := os.WriteFile(filepath.Join(s.hdir, "ok"), []byte(strings.Join(built, " ")), 0o644); err != nil {
 		return err
 	}
+	writeBuildNote(s.hdir, time.Since(start).Seconds())
 	logw("%s built at %s in %s (%s)", lib.Name, s.sha, time.Since(start).Round(time.Second), strings.Join(built, ", "))
 	return nil
 }

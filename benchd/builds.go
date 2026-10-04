@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strings"
 )
 
 // buildFact describes what one side of a job was built into, per harness
@@ -61,13 +62,34 @@ func buildFacts(jobID int64, s *side) []buildFact {
 			}
 			ef.Close()
 		}
-		if info, err := os.Stat(filepath.Join(s.hdir, "types", pkg, "gen_ssz.go")); err == nil {
-			f.GenBytes = info.Size()
-		}
+		f.GenBytes = generatedBytes(s.hdir, pkg)
 		facts = append(facts, f)
 	}
 	sort.Slice(facts, func(a, b int) bool { return facts[a].Pkg < facts[b].Pkg })
 	return facts
+}
+
+// generatedBytes is the size of the generated SSZ source of a package:
+// types/<pkg>/gen_ssz.go of a harness package, or the generated files of
+// an adapter's fork (package "<adapter>-<fork>").
+func generatedBytes(hdir, pkg string) int64 {
+	if info, err := os.Stat(filepath.Join(hdir, "types", pkg, "gen_ssz.go")); err == nil {
+		return info.Size()
+	}
+	adapter, fork, ok := strings.Cut(pkg, "-")
+	if !ok {
+		return 0
+	}
+	var total int64
+	for _, pattern := range []string{"encoding_gen.go", "gen_*.go"} {
+		files, _ := filepath.Glob(filepath.Join(hdir, "baselines", adapter, fork, pattern))
+		for _, file := range files {
+			if info, err := os.Stat(file); err == nil {
+				total += info.Size()
+			}
+		}
+	}
+	return total
 }
 
 func (s *store) insertBuilds(facts []buildFact) error {
