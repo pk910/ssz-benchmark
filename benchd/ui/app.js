@@ -402,7 +402,7 @@
         const x = r[m.key].Head / ref[m.key].Head;
         return `<span class="${x < 0.95 ? 'better' : x > 1.05 ? 'worse' : 'muted'}">${engName(e.replace('Async', ''))} ${x.toFixed(2)}×</span>`;
       }).filter(Boolean).join(' ');
-      const line = `<div class="ref"><span class="muted">${b.replace('Async', ' async')}${m !== mAll ? ' (time)' : ''}</span><b>${m.fmt(ref[m.key].Head)}</b><span class="ours">${ours}</span></div>`;
+      const line = `<div class="ref"><span class="muted">${ENGINE_LABELS[b] || b.replace('Async', ' async')}${m !== mAll ? ' (time)' : ''}</span><b>${m.fmt(ref[m.key].Head)}</b><span class="ours">${ours}</span></div>`;
       m = mAll;
       return line;
     }).filter(Boolean).join('');
