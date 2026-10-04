@@ -153,7 +153,7 @@ func (w *webServer) buildOps(mode string) any {
 			rows[k].Cells[v.Engine] = c
 		}
 	}
-	p.Engines = sortedBy(engines, engineOrder)
+	p.Engines = append([]string{}, sortedBy(engines, engineOrder)...)
 	for _, r := range rows {
 		p.Rows = append(p.Rows, *r)
 	}

@@ -823,10 +823,10 @@
 
   async function viewOps() {
     const d = await get('/api/ops?mode=' + opsMode);
-    const rows = d.Rows, m = METRICS[metric];
+    const rows = d.Rows || [], m = METRICS[metric];
     // One column per engine or library; its async variant has a row of
     // its own below the operation it runs.
-    const all = sortEngines([...new Set(d.Engines.map(e => e.replace(/Async$/, '')))]);
+    const all = sortEngines([...new Set((d.Engines || []).map(e => e.replace(/Async$/, '')))]);
     const engines = all.filter(e => !opsHidden.has(e));
     const cell = (r, e) => {
       const c = r.Cells[e];
@@ -852,7 +852,7 @@
       <div class="toolbar chips" id="engsel">${all.map(e => `<a href="#" data-e="${e}" class="chip ${opsHidden.has(e) ? '' : 'commit'}" title="show or hide this column">${e}</a>`).join(' ')}<a href="#" data-e="*" class="chip">all</a><a href="#" data-e="-" class="chip">ours only</a></div>
       <div style="overflow-x:auto"><table><thead><tr><th>Object</th><th>Operation</th>${engines.map(e => `<th class="grp">${e}</th>`).join('')}</tr></thead><tbody>
       ${rows.map((r, i) => `<tr><td>${i > 0 && rows[i - 1].Object === r.Object ? `<span class="muted">${r.Object}</span>` : objName(r.Object)}</td><td class="mono"><a href="#/op/${r.Object}/${r.Op}">${r.Op}</a></td>${engines.map(e => cell(r, e)).join('')}</tr>${asyncRow(r)}`).join('')}
-      </tbody></table></div>`;
+      </tbody></table></div>${rows.length ? '' : '<p class="muted">no commit of this mode has been measured yet</p>'}`;
     bindMetricTabs(viewOps);
     document.querySelectorAll('#opsMode button').forEach(b => b.onclick = () => { opsMode = b.dataset.mode; localStorage.setItem('opsMode', opsMode); viewOps(); });
     document.querySelectorAll('#engsel a').forEach(a => a.onclick = (ev => {
