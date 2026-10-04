@@ -152,3 +152,4 @@ table.facts th, table.facts td { padding: 1px 14px 1px 0; border: 0; font-size: 
 table.facts th { color: var(--muted); font-weight: 500; text-transform: none; letter-spacing: 0; }
 table.facts td.num, table.facts th.num { text-align: right; }
 table.facts tbody tr:hover td { background: none; }
+#metricTabsMore button { font-size: 11px; }

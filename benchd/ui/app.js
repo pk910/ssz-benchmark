@@ -63,7 +63,29 @@
     instrs: { key: 'Instrs', label: 'Instructions', unit: 'instrs/op', fmt: fmtNum },
     bytes: { key: 'Bytes', label: 'Memory', unit: 'B/op', fmt: fmtBytes },
     allocs: { key: 'Allocs', label: 'Allocations', unit: 'allocs/op', fmt: fmtNum },
+    // The further figures of a run (its Extra values). They exist on the
+    // job page and the page of one operation of a job only: each is
+    // measured in some of the passes, so it has a median per side and no
+    // per-pass statistics.
+    brmiss: { key: 'XBrMiss', extra: 'br-miss', label: 'Branch misses', unit: 'branch misses/op', fmt: fmtNum },
+    festall: { key: 'XFeStall', extra: 'fe-stall', label: 'Frontend stalls', unit: 'stalled frontend cycles/op', fmt: fmtNum },
+    l1d: { key: 'XL1d', extra: 'l1d-miss', label: 'L1d misses', unit: 'L1 data misses/op', fmt: fmtNum },
+    l2: { key: 'XL2', extra: 'l2-miss', label: 'L2 misses', unit: 'L2 data misses/op', fmt: fmtNum },
+    retained: { key: 'XRetained', extra: 'retained', label: 'Kept alive', unit: 'B the result keeps alive', fmt: fmtBytes },
+    stack: { key: 'XStack', extra: 'stack', label: 'Stack', unit: 'B of stack beyond 32 KiB', fmt: fmtBytes },
   };
+  // curMetric is the metric of the active tab; a page without the further
+  // figures shows cycles while one of them is selected.
+  const curMetric = extras => { const cur = METRICS[localStorage.getItem('metric') || 'cycles']; return cur && (extras || !cur.extra) ? cur : METRICS.cycles; };
+  // withExtras gives a result a metric for each further figure: the
+  // medians of the two sides and their difference.
+  function withExtras(r) {
+    Object.values(METRICS).filter(m => m.extra).forEach(m => {
+      const x = r.Extra && r.Extra[m.extra];
+      r[m.key] = { Base: x ? x.Base || 0 : 0, Head: x ? x.Head : 0, Delta: x && x.Base > 0 ? (x.Head - x.Base) / x.Base * 100 : 0, PN: 0, PMed: 0, PAgree: 0, PSpread: 0, DMin: 0, DMax: 0, CVBase: 0, CVHead: 0, Runs: x ? x.N : 0, Loose: true };
+    });
+    return r;
+  }
   let metric = localStorage.getItem('metric') || 'cycles';
   // The job charts show the change in percent, or the measured values.
   let chartMode = localStorage.getItem('chartMode') === 'abs' ? 'abs' : 'rel';
@@ -134,7 +156,9 @@
   // change: the operation's noise floor, or twice the standard error of
   // the per-pass deltas when the layouts scattered this pair more.
   const bandOf = (m, key) => Math.max(floorOf(key), m.PN > 1 ? 2 * m.PSpread / Math.sqrt(m.PN) : 0);
-  const sig = (m, key) => Math.abs(delta(m)) > bandOf(m, key) && (!(m.PN > 0) || m.PAgree >= Math.ceil(0.75 * m.PN));
+  // A further figure (Loose) has no per-pass statistics and repeats within
+  // a few percent: it counts as changed from 10%.
+  const sig = (m, key) => m.Loose ? Math.abs(delta(m)) >= 10 : Math.abs(delta(m)) > bandOf(m, key) && (!(m.PN > 0) || m.PAgree >= Math.ceil(0.75 * m.PN));
   function cls(m, key) {
     if (!sig(m, key)) return 'same';
     const strong = Math.abs(delta(m)) >= 5 ? ' strong' : '';
@@ -263,13 +287,14 @@
     charts.push(c);
     return c;
   }
-  function metricTabs(onChange) {
-    return `<div class="tabs" id="metricTabs">${Object.entries(METRICS).map(([k, m]) => `<button data-m="${k}" class="${k === metric ? 'active' : ''}">${m.label}</button>`).join('')}</div>`;
+  function metricTabs(extras) {
+    const cur = curMetric(extras);
+    const tab = ([k, m]) => `<button data-m="${k}" class="${m === cur ? 'active' : ''}" title="${m.unit}">${m.label}</button>`;
+    const all = Object.entries(METRICS);
+    return `<div class="tabs" id="metricTabs">${all.filter(([, m]) => !m.extra).map(tab).join('')}</div>${extras ? `<div class="tabs" id="metricTabsMore" title="measured in some of the passes: the median per side">${all.filter(([, m]) => m.extra).map(tab).join('')}</div>` : ''}`;
   }
   function bindMetricTabs(rerender) {
-    const t = document.getElementById('metricTabs');
-    if (!t) return;
-    t.querySelectorAll('button').forEach(b => b.onclick = () => { metric = b.dataset.m; localStorage.setItem('metric', metric); rerender(); });
+    document.querySelectorAll('#metricTabs button, #metricTabsMore button').forEach(b => b.onclick = () => { metric = b.dataset.m; localStorage.setItem('metric', metric); rerender(); });
   }
 
   /* ---------- live header ---------- */
@@ -731,7 +756,8 @@
     const d = await get('/api/job/' + id);
     repo = d.Repo;
     leafNoise = (d.Noise && d.Noise.PerLeaf) || {};
-    const j = d.Job, m = METRICS[metric];
+    const j = d.Job, m = curMetric(true);
+    d.Results.forEach(withExtras);
     const mxs = buildMatrices(d.Results);
     // A one-sided job has values only: its charts show them, never deltas.
     const measured = mxs.filter(mx => !mx.unsupported);
@@ -750,7 +776,7 @@
         <div class="card"${oneSided ? ' style="display:none"' : ''}><h3>Ratio per engine <span class="muted" style="text-transform:none">(cycles when counted, else time)</span></h3><div class="chips">${engineTotals(d.Summaries || []).map(x => `<span class="chip" title="geomean of head/base ${x.Cycles ? 'cycles' : 'time'} over ${x.N} operations of every object">${engName(x.Engine)} <b>${pct(x.Geomean, 1)}</b></span>`).join('') || '<span class="muted">-</span>'}</div><details class="small" style="margin-top:6px"><summary>per object</summary><div class="chips" style="margin-top:4px">${(d.Summaries || []).map(x => `<span class="chip">${engName(x.Engine)}·${x.Object} <b>${pct(x.Geomean, 1)}</b></span>`).join('')}</div></details></div>
       </div>
       ${j.Note ? `<p class="note">${esc(j.Note)}</p>` : ''}${mxs.some(mx => mx.baselines.length) ? `<p class="note">Other libraries: their pooled values at their latest release, measured by their own jobs on the same machine and payload (see <a href="#/ops">Operations</a>). They cannot hash Gloas objects unless they implement progressive merkleization.</p>` : ''}${j.Error ? `<pre class="err">${esc(j.Error)}</pre>` : ''}
-      <div class="toolbar">${metricTabs()}<div class="tabs" id="modeTabs"${oneSided ? ' style="display:none"' : ''}><button data-mode="rel" class="${mode === 'rel' ? 'active' : ''}" title="charts show head against base in percent">change in %</button><button data-mode="abs" class="${mode === 'abs' ? 'active' : ''}" title="charts show the measured values">measured values</button></div>${mode === 'abs' ? `<label class="check"><input type="checkbox" id="chartLibs" ${chartLibs ? 'checked' : ''}> with the other libraries</label>` : ''}${oneSided ? `<span class="muted">${m.label} ${m.unit} of this commit, measured on its own (nothing to compare against)</span>` : ''}<span class="muted"${oneSided ? ' style="display:none"' : ''}>${m.label} ${m.unit}: base → head and Δ per engine and operation. Δ is the median over the passes. Green/red: a change (outside the band, most passes agree); bold: |Δ| ≥ 5%; grey: no change. Click a bar or cell for every sample.</span></div>
+      <div class="toolbar">${metricTabs(true)}<div class="tabs" id="modeTabs"${oneSided ? ' style="display:none"' : ''}><button data-mode="rel" class="${mode === 'rel' ? 'active' : ''}" title="charts show head against base in percent">change in %</button><button data-mode="abs" class="${mode === 'abs' ? 'active' : ''}" title="charts show the measured values">measured values</button></div>${mode === 'abs' ? `<label class="check"><input type="checkbox" id="chartLibs" ${chartLibs ? 'checked' : ''}> with the other libraries</label>` : ''}${oneSided ? `<span class="muted">${m.label} ${m.unit} of this commit, measured on its own (nothing to compare against)</span>` : ''}<span class="muted"${oneSided ? ' style="display:none"' : ''}>${m.label} ${m.unit}: base → head and Δ per engine and operation. Δ is the median over the passes. Green/red: a change (outside the band, most passes agree); bold: |Δ| ≥ 5%; grey: no change. Click a bar or cell for every sample.</span></div>
       ${mxs.map((mx, i) => { if (mx.unsupported) return `<h2>${objName(mx.obj)}</h2><p class="muted">not supported: ${esc(d.Subject || 'this library')} cannot express this object, so the job has no measurement of it</p>`; const bars = mode === 'abs' ? absRowBars(mx, m) : mx.engines.length, rows = chartRows(mx, m, mode === 'abs').length; return `<h2>${objName(mx.obj)}</h2><div class="chart" style="height:${rows * Math.max(30, bars * 14 + 8) + 80}px"><canvas id="dc${i}"></canvas></div><p class="note">${mode === 'abs' ? `One bar per engine${chartLibs ? ' and reference library' : ''} per operation, in measured ${m.label.toLowerCase()}: the thick body is the middle half of the single runs' values and the thin line reaches to the lowest and the highest run, the white tick and the number are their mean, the grey tick on our own engines is the base's mean. The axis is logarithmic because the operations of one object span several orders of magnitude, so a bar is short when the runs agree.${chartLibs ? ' Paler bars are the other libraries, from the latest reference job.' : ''}` : `One candle per engine (colours in the legend) per operation. The thick body is the middle half of the per-pass ${m.label.toLowerCase()} deltas (each pass links head and base with another function layout and measures them minutes apart), the thin line reaches to the lowest and the highest pass, the white tick and the number are the median. A single pass far off shows as a long thin line and leaves the body and the scale alone; an arrow head means the line continues beyond the chart. The grey band behind each row is what does not count as a change there: the operation's noise floor on this machine, widened where the passes scatter. A result is a change when its median lies outside the band and at least three quarters of the passes agree. The async engines have a row of their own below the operation they run, in the colour of their engine. On the counter tabs that row shows the cycles and instructions of all their threads together (the total work, not the latency), or time for a job measured before all threads were counted.`}</p>${matrixTable(mx, m, j.ID)}`; }).join('') || '<p class="muted">no results yet</p>'}
       ${d.Noise && d.Noise.Jobs ? `<p class="note">Noise floor over ${d.Noise.Jobs} self-comparisons: median |Δ time| ${d.Noise.MedianAbs.toFixed(2)}%, p95 ${d.Noise.P95Abs.toFixed(2)}%.</p>` : ''}
       <details><summary>Raw files</summary><p class="mono">${(d.Files || []).map(f => `<a href="/raw/${j.ID}/${f}" target="_blank">${f}</a>`).join(' · ')}</p></details>`;
@@ -765,7 +791,7 @@
 
   async function viewLeaf(id, engine, object, op) {
     const d = await get(`/api/job/${id}/leaf/${engine}/${object}/${op}`);
-    const r = d.Result, m = METRICS[metric];
+    const r = d.Result, m = curMetric(true);
     const samples = d.Samples.filter(s => !(s.Extra && s.Extra.diag));
     const diag = d.Samples.filter(s => s.Extra && s.Extra.diag);
     const X = r.Extra || {};
@@ -793,7 +819,7 @@
         ${memCard}
         <div class="card"><h3>Measurement</h3><div class="big">${r.N} × ${r.Iters}</div><div class="sub">measurements per side × iterations each${r.Steal ? ` · ${r.Steal} steal ticks (wake-ups)` : ''}</div></div>
       </div>
-      <div class="toolbar">${metricTabs()}<span class="muted">every sample, in measurement order (pass, seed, side); dashed lines are the side means</span></div>
+      <div class="toolbar">${metricTabs(true)}<span class="muted">every sample, in measurement order (pass, seed, side); dashed lines are the side means</span></div>
       <div class="chart h300"><canvas id="sc"></canvas></div>
       <table><thead><tr><th>Run</th><th>Side</th><th class="num">Pass</th><th>Seed</th><th class="num">Iterations</th><th class="num">Time</th><th class="num">Cycles</th><th class="num">Instrs</th><th class="num" title="cycles per instruction">Cyc/instr</th><th class="num" title="cycles per nanosecond: the clock rate the run saw. A run far from the others was throttled or disturbed.">GHz</th><th class="num">Memory</th><th class="num">Allocs</th><th class="num">Steal</th><th title="the two further counters of this pass, per op">Counters of the pass</th></tr></thead><tbody>
       ${samples.map(s => `<tr><td><a href="#/job/${s.JobID}">#${s.JobID}</a></td><td>${s.Side}</td><td class="num">${s.Pass + 1}</td><td class="mono">${s.Seed}</td><td class="num">${s.Iters}</td><td class="num">${fmtNs(s.Ns)}</td><td class="num">${s.Cycles ? fmtNum(s.Cycles) : '-'}</td><td class="num">${s.Instrs ? fmtNum(s.Instrs) : '-'}</td><td class="num">${s.Instrs && s.Cycles ? (s.Cycles / s.Instrs).toFixed(3) : '-'}</td><td class="num${offClock(s) ? ' warn' : ''}">${s.Cycles && s.Ns ? (s.Cycles / s.Ns).toFixed(3) : '-'}</td><td class="num">${fmtBytes(s.Bytes)}</td><td class="num">${fmtNum(s.Allocs)}</td><td class="num">${s.Steal}</td><td class="small mono">${pairText(s)}</td></tr>`).join('')}
@@ -805,14 +831,14 @@
       <p class="muted"><a href="#/op/${object}/${op}">history of this operation</a></p>`;
     bindMetricTabs(() => viewLeaf(id, engine, object, op));
     destroyCharts();
-    const val = s => s[m.key];
+    const val = s => m.extra ? (s.Extra || {})[m.extra] : s[m.key];
     const sides = ['base', 'head'];
     const datasets = sides.map((side, i) => ({
       label: side, type: 'scatter', pointRadius: 5, backgroundColor: COLORS[i] + 'cc', borderColor: COLORS[i],
-      data: samples.map((s, k) => s.Side === side ? { x: k + 1, y: val(s), s } : null).filter(Boolean),
+      data: samples.map((s, k) => s.Side === side && val(s) !== undefined ? { x: k + 1, y: val(s), s } : null).filter(Boolean),
     }));
     sides.forEach((side, i) => {
-      const vs = samples.filter(s => s.Side === side).map(val);
+      const vs = samples.filter(s => s.Side === side).map(val).filter(v => v !== undefined);
       if (!vs.length) return;
       const mean = vs.reduce((a, b) => a + b, 0) / vs.length;
       datasets.push({ label: side + ' mean', type: 'line', borderColor: COLORS[i], borderDash: [5, 4], borderWidth: 1, pointRadius: 0, data: [{ x: 1, y: mean }, { x: samples.length, y: mean }] });
@@ -836,7 +862,7 @@
 
   async function viewOps() {
     const d = await get('/api/ops?mode=' + opsMode);
-    const rows = d.Rows || [], m = METRICS[metric];
+    const rows = d.Rows || [], m = curMetric(false);
     // One column per engine or library; its async variant has a row of
     // its own below the operation it runs.
     const all = sortEngines([...new Set((d.Engines || []).map(e => e.replace(/Async$/, '')))]);
@@ -889,7 +915,7 @@
   async function viewPR(n) {
     const d = await get('/api/pr/' + n);
     repo = d.Repo;
-    const m = METRICS[metric];
+    const m = curMetric(false);
     const chips = sums => engineTotals(sums).map(x => `<span class="chip" title="geomean over ${x.N} operations (${x.Cycles && !x.Engine.endsWith('Async') ? 'cycles' : 'time'})">${engName(x.Engine)} <b>${pct(x.Geomean, 1)}</b></span>`).join('') || '<span class="muted">-</span>';
     const measured = d.Rows.filter(r => r.Job && r.Job.State === 'done');
     const leaves = [...new Set(measured.flatMap(r => r.Results.map(x => x.Object + '/' + x.Op)))].sort((a, b) => { const [ao, ap] = a.split('/'), [bo, bp] = b.split('/'); return rank(OBJECTS, ao) - rank(OBJECTS, bo) || rank(OPS, ap) - rank(OPS, bp); });
@@ -946,7 +972,7 @@
 
   async function viewOp(object, op) {
     const v = await get(`/api/op/${object}/${op}`);
-    const m = METRICS[metric];
+    const m = curMetric(false);
     const main = (await get('/api/status')).MainBranch;
     app.innerHTML = `<h1><span class="mono">${object} / ${op}</span>${objInfo(object)}</h1>
       <div class="cards">${v.Engines.map((e, i) => {
@@ -985,7 +1011,7 @@
   async function viewCompare(params) {
     const a = params.get('a') || '', b = params.get('b') || '';
     const d = await get(`/api/compare?a=${encodeURIComponent(a)}&b=${encodeURIComponent(b)}`);
-    const m = METRICS[metric];
+    const m = curMetric(false);
     const key = { ns: ['Ns', 'NsDelta'], cycles: ['Cycles', 'CyclesDelta'], instrs: ['Instrs', 'InstrsDelta'], bytes: ['Bytes', 'BytesDelta'], allocs: ['Allocs', 'AllocsDelta'] }[metric];
     let body = '';
     if (a && b) {
@@ -1014,7 +1040,7 @@
 
   async function viewNoise() {
     const d = await get('/api/noise');
-    const m = METRICS[metric];
+    const m = curMetric(false);
     const st = r => r[m.key];
     let sortKey = 'leaf';
     const render = () => {
