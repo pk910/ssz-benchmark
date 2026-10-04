@@ -378,7 +378,7 @@
     const link = (k, r) => `#/jobs${k || r ? '?' + [k ? 'kind=' + k : '', r ? 'repo=' + encodeURIComponent(r) : ''].filter(Boolean).join('&') : ''}`;
     const kinds = ['', 'commit', 'release', 'noise'].map(k => `<a href="${link(k, repoSel)}" class="chip ${k === (kind || '') ? 'commit' : ''}">${k || 'all kinds'}</a>`).join(' ');
     const subjects = [...new Set(all.map(j => j.Subject))].sort((a, b) => (a !== 'dynamic-ssz') - (b !== 'dynamic-ssz') || a.localeCompare(b));
-    const repos = ['', ...subjects].map(r => `<a href="${link(kind, r)}" class="chip ${r === repoSel ? 'commit' : ''}">${r ? esc((subjectRepos[r] || r).replace('https://github.com/', '')) : 'all repositories'}</a>`).join(' ');
+    const repos = ['', ...subjects].map(r => `<a href="${link(kind, r)}" class="chip ${r === repoSel ? 'commit' : ''}">${r ? esc((subjectRepos[r] || r).replace('https://github.com/', '')) + (subjects.filter(x => subjectRepos[x] === subjectRepos[r]).length > 1 ? ` (${esc(r)})` : '') : 'all repositories'}</a>`).join(' ');
     const jobs = rows.filter(r => { const j = r.Job; return (!kind || kindsOf(j).includes(kind)) && (!repoSel || j.Subject === repoSel) && (!sha || j.HeadSHA === sha || j.BaseSHA === sha); });
     app.innerHTML = `<h1>Jobs</h1><div class="toolbar">${kinds}</div><div class="toolbar">${repos}</div>${sha ? `<p class="note">Jobs that measured commit <span class="mono">${esc(sha.slice(0, 12))}</span> as head or base. <a href="#/jobs">all jobs</a></p>` : ''}${jobRows(jobs, { summaries: true })}`;
   }
