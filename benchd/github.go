@@ -318,13 +318,13 @@ func (c *checkReporter) payload(j *job) (checkPayload, bool) {
 			return p, false
 		}
 		results := summarize(samples)
-		title, summary := renderCheck(j, results, c.db.noiseFloor(c.local), c.jobURL(j), fmt.Sprintf("provisional, %d pass(es) so far", passes))
+		title, summary := renderCheck(j, results, noiseFloorOf(c.db, c.local), c.jobURL(j), fmt.Sprintf("provisional, %d pass(es) so far", passes))
 		p.Output = &checkOutput{Title: title, Summary: summary}
 		return p, false
 	case stateDone:
 		p.Status, p.Conclusion = "completed", "neutral"
 		results, _ := c.db.resultsFor(j.ID)
-		title, summary := renderCheck(j, results, c.db.noiseFloor(c.local), c.jobURL(j), fmt.Sprintf("%d passes", j.Passes))
+		title, summary := renderCheck(j, results, noiseFloorOf(c.db, c.local), c.jobURL(j), fmt.Sprintf("%d passes", j.Passes))
 		p.Output = &checkOutput{Title: title, Summary: summary}
 		return p, true
 	case stateSkipped:

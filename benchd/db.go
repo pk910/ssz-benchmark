@@ -7,7 +7,6 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
-	"sync"
 	"time"
 
 	_ "modernc.org/sqlite"
@@ -167,11 +166,6 @@ type runnerInfo struct {
 type store struct {
 	db      *sql.DB
 	dataDir string
-
-	// The noise floor, kept until another noise job finishes.
-	nfMu  sync.Mutex
-	nfKey string
-	nf    noiseFloor
 }
 
 func openDB(path string) (*store, error) {
@@ -931,6 +925,68 @@ func scanResults(rows *sql.Rows, err error) ([]result, error) {
 // metric, without the statistics that fullResults computes.
 func (s *store) resultsFor(jobID int64) ([]result, error) {
 	return scanResults(s.db.Query(`SELECT `+resultColumns+` FROM results WHERE job_id = ? ORDER BY object, op, engine`, jobID))
+}
+
+// leafHistory lists the results of one object/op over finished jobs of the
+// kinds, newest first, for every engine.
+func (s *store) leafHistory(object, op string, kinds []string, limit int) ([]result, map[int64]*job, error) {
+	return s.leafHistoryOn(object, op, kinds, "", limit)
+}
+
+// leafHistoryOn is leafHistory restricted to one runner when given.
+func (s *store) leafHistoryOn(object, op string, kinds []string, runner string, limit int) ([]result, map[int64]*job, error) {
+	if len(kinds) == 0 {
+		return nil, nil, nil
+	}
+	args := []any{object, op, stateDone}
+	marks := make([]string, len(kinds))
+	for i, k := range kinds {
+		marks[i] = "?"
+		args = append(args, k)
+	}
+	runnerCond := ""
+	if runner != "" {
+		runnerCond = " AND j.runner = ?"
+		args = append(args, runner)
+	}
+	args = append(args, limit)
+	results, err := scanResults(s.db.Query(`SELECT `+resultColumns+` FROM results r JOIN jobs j ON j.id = r.job_id
+		WHERE r.object = ? AND r.op = ? AND j.state = ? AND j.kind IN (`+strings.Join(marks, ",")+`)`+runnerCond+`
+		ORDER BY r.job_id DESC LIMIT ?`, args...))
+	if err != nil {
+		return nil, nil, err
+	}
+	jobs := map[int64]*job{}
+	for _, r := range results {
+		if _, ok := jobs[r.JobID]; ok {
+			continue
+		}
+		jb, err := s.getJob(r.JobID)
+		if err != nil {
+			return nil, nil, err
+		}
+		jobs[r.JobID] = jb
+	}
+	return results, jobs, nil
+}
+
+// leaves lists every object/op combination with a result, in a fixed order.
+func (s *store) leaves() ([][2]string, error) {
+	rows, err := s.db.Query(`SELECT DISTINCT object, op FROM results`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out [][2]string
+	for rows.Next() {
+		var object, op string
+		if err := rows.Scan(&object, &op); err != nil {
+			return nil, err
+		}
+		out = append(out, [2]string{object, op})
+	}
+	sortLeaves(out)
+	return out, rows.Err()
 }
 
 func (s *store) benchIters() (map[string]int, error) {

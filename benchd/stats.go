@@ -4,6 +4,7 @@ import (
 	"math"
 	"sort"
 	"strings"
+	"time"
 )
 
 func mean(xs []float64) float64 {
@@ -389,6 +390,10 @@ func leafLess(o1, p1, e1, o2, p2, e2 string) bool {
 	return e1 < e2
 }
 
+func sortLeaves(xs [][2]string) {
+	sort.Slice(xs, func(i, j int) bool { return leafLess(xs[i][0], xs[i][1], "", xs[j][0], xs[j][1], "") })
+}
+
 // sortLeafList orders leaves engine-major so a pass walks one engine's
 // objects and operations in sequence (state loads stay grouped).
 func sortLeafList(xs []leaf) {
@@ -434,6 +439,44 @@ func geomeanOf(results []result, pick func(result) metric) float64 {
 		return 0
 	}
 	return (math.Exp(s/float64(n)) - 1) * 100
+}
+
+// trendFit is a line through (time, value) points: the relative slope per
+// 30 days, the projected value 30 days past the last point, and R².
+type trendFit struct {
+	SlopePct30d  float64
+	Projected30d float64
+	R2           float64
+	N            int
+}
+
+func fitTrend(times []time.Time, values []float64) trendFit {
+	n := len(values)
+	if n < 3 {
+		return trendFit{N: n}
+	}
+	t0 := times[0]
+	xs := make([]float64, n)
+	for i := range times {
+		xs[i] = times[i].Sub(t0).Hours() / 24
+	}
+	mx, my := mean(xs), mean(values)
+	sxx, sxy, syy := 0.0, 0.0, 0.0
+	for i := range xs {
+		sxx += (xs[i] - mx) * (xs[i] - mx)
+		sxy += (xs[i] - mx) * (values[i] - my)
+		syy += (values[i] - my) * (values[i] - my)
+	}
+	if sxx == 0 || my == 0 {
+		return trendFit{N: n}
+	}
+	slope := sxy / sxx
+	intercept := my - slope*mx
+	r2 := 0.0
+	if syy > 0 {
+		r2 = sxy * sxy / (sxx * syy)
+	}
+	return trendFit{SlopePct30d: slope * 30 / my * 100, Projected30d: intercept + slope*(xs[n-1]+30), R2: r2, N: n}
 }
 
 func joinKey(parts ...string) string { return strings.Join(parts, "/") }
