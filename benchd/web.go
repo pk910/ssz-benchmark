@@ -82,6 +82,7 @@ func (w *webServer) handler() (http.Handler, error) {
 	mux.HandleFunc("/api/jobs", w.apiJobs)
 	mux.HandleFunc("/api/job/", w.apiJob)
 	mux.HandleFunc("/api/ops", w.apiOps)
+	mux.HandleFunc("/api/commit/", w.apiCommit)
 	mux.HandleFunc("/api/op/", w.apiOp)
 	mux.HandleFunc("/api/compare", w.apiCompare)
 	mux.HandleFunc("/api/pr/", w.apiPR)
@@ -393,7 +394,14 @@ func (w *webServer) apiJob(rw http.ResponseWriter, req *http.Request) {
 			samples, _ := w.db.samplesFor(j.ID)
 			results = summarize(samples)
 		} else {
-			results, _ = w.db.fullResults(j)
+			// A job's page shows what the job measured; the runs of all
+			// jobs of a commit are on the commit's page.
+			samples, _ := w.db.samplesFor(j.ID)
+			if len(samples) > 0 {
+				results = summarize(samples)
+			} else {
+				results, _ = w.db.resultsFor(j.ID)
+			}
 		}
 		if results == nil {
 			results = []result{}
@@ -405,9 +413,7 @@ func (w *webServer) apiJob(rw http.ResponseWriter, req *http.Request) {
 			steal += r.Steal
 		}
 		runs := []int64{}
-		if j.State == stateDone {
-			runs, _ = w.db.pairJobIDs(j.HeadSHA, j.BaseSHA, j.Harness, j.Runner)
-		}
+
 		// The pooled values of the other libraries stand next to every
 		// job's own results.
 		if j.Kind != kindBaseline {
@@ -447,11 +453,6 @@ func (w *webServer) apiJob(rw http.ResponseWriter, req *http.Request) {
 			return
 		}
 		ids := []int64{j.ID}
-		if j.State == stateDone {
-			if pair, err := w.db.pairJobIDs(j.HeadSHA, j.BaseSHA, j.Harness, j.Runner); err == nil && len(pair) > 0 {
-				ids = pair
-			}
-		}
 		samples := []sample{}
 		for _, id := range ids {
 			all, _ := w.db.samplesFor(id)

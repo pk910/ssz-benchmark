@@ -104,6 +104,8 @@ func (sub *subject) weight() float64 {
 	return sub.Weight
 }
 
+func strconvI(n int64) string { return strconv.FormatInt(n, 10) }
+
 // splitTrim splits a list and drops empty parts.
 func splitTrim(s, sep string) []string {
 	var out []string

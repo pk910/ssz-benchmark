@@ -66,31 +66,6 @@ func (s *store) sampleBlob(jobID int64) ([]sample, error) {
 	return out, json.Unmarshal(raw, &out)
 }
 
-// fullResults computes every statistic of a finished job from its samples,
-// pooled with the earlier runs of the same pair as when it finished. A job
-// without samples has its stored results only.
-func (s *store) fullResults(j *job) ([]result, error) {
-	pooled, err := s.samplesFor(j.ID)
-	if err != nil {
-		return nil, err
-	}
-	if len(pooled) == 0 {
-		return s.resultsFor(j.ID)
-	}
-	ids, _ := s.pairJobIDs(j.HeadSHA, j.BaseSHA, j.Harness, j.Runner)
-	for _, id := range ids {
-		if id >= j.ID {
-			continue
-		}
-		prev, err := s.samplesFor(id)
-		if err != nil {
-			return nil, err
-		}
-		pooled = append(pooled, prev...)
-	}
-	return summarize(pooled), nil
-}
-
 // migrateStorage brings a database to the current layout: results without
 // the per-job statistics columns, and the samples of every job that is not
 // running packed into blobs. It copies the database file first.

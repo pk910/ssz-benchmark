@@ -454,7 +454,7 @@
       const tds = mx.engines.map(e => {
         const r = mx.cells[e + '/' + op], ra = mx.cells[e + 'Async/' + op];
         if (mx.oneSided) {
-          const one = (x, label) => { const xm = metricFor(m, x.Engine, x); return `<a href="#/job/${jobID}/leaf/${engName(x.Engine)}/${x.Object}/${x.Op}">${label ? `<span class="muted small">${label}${xm !== m ? ' (time)' : ''}</span> ` : ''}${cellAbs(x, xm)}</a>`; };
+          const one = (x, label) => { const xm = metricFor(m, x.Engine, x), body = `${label ? `<span class="muted small">${label}${xm !== m ? ' (time)' : ''}</span> ` : ''}${cellAbs(x, xm)}`; return jobID ? `<a href="#/job/${jobID}/leaf/${x.Engine}/${x.Object}/${x.Op}">${body}</a>` : body; };
           return `<td class="grp cell">${r ? one(r) : '<span class="muted">-</span>'}${ra ? one(ra, 'async') : ''}</td>`;
         }
         return `<td class="grp cell">${r ? cellDelta(r, m, jobID) : '<span class="muted">-</span>'}${ra ? cellDelta(ra, m, jobID, 'async') : ''}</td>`;
@@ -760,6 +760,15 @@
     };
   }
 
+  // sectionsHTML renders one section per object: its chart and its table.
+  // drawSections draws the charts once the page is in place.
+  function sectionsHTML(mxs, m, mode, jobID, subject) {
+    return mxs.map((mx, i) => { if (mx.unsupported) return `<h2>${objName(mx.obj)}</h2><p class="muted">not supported: ${esc(subject || 'this library')} cannot express this object, so the job has no measurement of it</p>`; const bars = mode === 'abs' ? absRowBars(mx, m) : mx.engines.length, rows = chartRows(mx, m, mode === 'abs').length; return `<h2>${objName(mx.obj)}</h2><div class="chart" style="height:${rows * Math.max(30, bars * 14 + 8) + 80}px"><canvas id="dc${i}"></canvas></div><p class="note">${mode === 'abs' ? `One bar per engine${chartLibs ? ' and reference library' : ''} per operation, in measured ${m.label.toLowerCase()}: the thick body is the middle half of the single runs' values and the thin line reaches to the lowest and the highest run, the white tick and the number are their mean, the grey tick on our own engines is the base's mean. The axis is logarithmic because the operations of one object span several orders of magnitude, so a bar is short when the runs agree.${chartLibs ? ' Paler bars are the other libraries, from the latest reference job.' : ''}` : `One candle per engine (colours in the legend) per operation. The thick body is the middle half of the per-pass ${m.label.toLowerCase()} deltas (each pass links head and base with another function layout and measures them minutes apart), the thin line reaches to the lowest and the highest pass, the white tick and the number are the median. A single pass far off shows as a long thin line and leaves the body and the scale alone; an arrow head means the line continues beyond the chart. The grey band behind each row is what does not count as a change there: the operation's noise floor on this machine, widened where the passes scatter. A result is a change when its median lies outside the band and at least three quarters of the passes agree. The async engines have a row of their own below the operation they run, in the colour of their engine. On the counter tabs that row shows the cycles and instructions of all their threads together (the total work, not the latency), or time for a job measured before all threads were counted.`}</p>${matrixTable(mx, m, jobID)}`; }).join('') || '<p class="muted">no results yet</p>';
+  }
+  function drawSections(mxs, m, mode, jobID) {
+    mxs.forEach((mx, i) => mx.unsupported || chart('dc' + i, (mode === 'abs' ? absChartCfg : deltaChartCfg)(mx, m, jobID)));
+  }
+
   async function viewJob(id) {
     const d = await get('/api/job/' + id);
     repo = d.Repo;
@@ -773,11 +782,11 @@
     const mode = oneSided ? 'abs' : chartMode;
     const r = d.Runner, p = (r && r.Progress) || {};
     const live = d.Live ? `<div class="card wide"><div class="sub">${r ? esc(r.Runner) + ': ' + esc(r.Phase) : 'running on ' + esc(j.Runner) + ' (no live report yet)'}</div>${r && p.Leaves ? `<div class="bar"><div style="width:${r.Percent}%"></div></div><div class="sub">pass ${p.Pass}${p.PlannedPasses ? ' of ~' + p.PlannedPasses : ''} · leaf ${p.Leaf}/${p.Leaves} · ${dur(p.Measured / 1e9)} measured · running ${dur(r.Running)} · provisional results from the samples so far, refreshes every 20 s</div>` : ''}</div>` : '';
-    const runs = d.Runs && d.Runs.length > 1 ? ` · pooled over ${d.Runs.length} runs (${d.Runs.map(r => `<a href="#/job/${r}">#${r}</a>`).join(', ')})` : '';
+    const runs = '';
     app.innerHTML = `<h1>Job #${j.ID} ${chip(j)}${d.Live ? '<span class="chip running">live</span>' : ''}</h1>
       ${live}
       <div class="cards">
-        <div class="card"><h3>Head</h3><div class="mono">${commitLink(j.HeadSHA, j.Subject)} ${esc(j.HeadDesc).replace(/^[0-9a-f]{7} /, '')}</div><div class="sub mono">${esc(j.Branch)}${prLink(j)}</div></div>
+        <div class="card"><h3>Head <a href="${commitHref(j.Subject, j.HeadSHA)}" style="text-transform:none;letter-spacing:0;font-weight:400">all runs of this commit →</a></h3><div class="mono">${commitLink(j.HeadSHA, j.Subject)} ${esc(j.HeadDesc).replace(/^[0-9a-f]{7} /, '')}</div><div class="sub mono">${esc(j.Branch)}${prLink(j)}</div></div>
         <div class="card"${j.BaseSHA ? '' : ' style="display:none"'}><h3>Base (${esc(j.BaseRef)})</h3><div class="mono">${commitLink(j.BaseSHA)} ${esc(j.BaseDesc).replace(/^[0-9a-f]{7} /, '')}</div>${j.BaseSHA !== j.HeadSHA ? `<div class="sub"><a href="${repo}/compare/${j.BaseSHA}...${j.HeadSHA}" target="_blank" rel="noopener">diff on GitHub</a></div>` : ''}</div>
         <div class="card"><h3>Measurement</h3><div class="mono">${j.Passes} passes${j.Seconds ? ', ' + dur(j.Seconds) : ''}${runs}</div><div class="sub">runner ${esc(j.Runner || '-')}</div><div class="sub">${esc(j.GoVersion)} · harness ${j.Harness}${d.Steal ? ` · ${d.Steal} steal ticks (wake-ups, within the limit)` : ' · no steal'}</div><div class="sub">queued ${when(j.Created)} · finished ${when(j.Finished)}</div></div>
         ${buildCard(d.Builds)}
@@ -785,16 +794,50 @@
       </div>
       ${j.Note ? `<p class="note">${esc(j.Note)}</p>` : ''}${mxs.some(mx => mx.baselines.length) ? `<p class="note">Other libraries: their pooled values at their latest release, measured by their own jobs on the same machine and payload (see <a href="#/ops">Operations</a>). They cannot hash Gloas objects unless they implement progressive merkleization.</p>` : ''}${j.Error ? `<pre class="err">${esc(j.Error)}</pre>` : ''}
       <div class="toolbar">${metricTabs(true)}<div class="tabs" id="modeTabs"${oneSided ? ' style="display:none"' : ''}><button data-mode="rel" class="${mode === 'rel' ? 'active' : ''}" title="charts show head against base in percent">change in %</button><button data-mode="abs" class="${mode === 'abs' ? 'active' : ''}" title="charts show the measured values">measured values</button></div>${mode === 'abs' ? `<label class="check"><input type="checkbox" id="chartLibs" ${chartLibs ? 'checked' : ''}> with the other libraries</label>` : ''}${oneSided ? `<span class="muted">${m.label} ${m.unit} of this commit, measured on its own (nothing to compare against)</span>` : ''}<span class="muted"${oneSided ? ' style="display:none"' : ''}>${m.label} ${m.unit}: base → head and Δ per engine and operation. Δ is the median over the passes. Green/red: a change (outside the band, most passes agree); bold: |Δ| ≥ 5%; grey: no change. Click a bar or cell for every sample.</span></div>
-      ${mxs.map((mx, i) => { if (mx.unsupported) return `<h2>${objName(mx.obj)}</h2><p class="muted">not supported: ${esc(d.Subject || 'this library')} cannot express this object, so the job has no measurement of it</p>`; const bars = mode === 'abs' ? absRowBars(mx, m) : mx.engines.length, rows = chartRows(mx, m, mode === 'abs').length; return `<h2>${objName(mx.obj)}</h2><div class="chart" style="height:${rows * Math.max(30, bars * 14 + 8) + 80}px"><canvas id="dc${i}"></canvas></div><p class="note">${mode === 'abs' ? `One bar per engine${chartLibs ? ' and reference library' : ''} per operation, in measured ${m.label.toLowerCase()}: the thick body is the middle half of the single runs' values and the thin line reaches to the lowest and the highest run, the white tick and the number are their mean, the grey tick on our own engines is the base's mean. The axis is logarithmic because the operations of one object span several orders of magnitude, so a bar is short when the runs agree.${chartLibs ? ' Paler bars are the other libraries, from the latest reference job.' : ''}` : `One candle per engine (colours in the legend) per operation. The thick body is the middle half of the per-pass ${m.label.toLowerCase()} deltas (each pass links head and base with another function layout and measures them minutes apart), the thin line reaches to the lowest and the highest pass, the white tick and the number are the median. A single pass far off shows as a long thin line and leaves the body and the scale alone; an arrow head means the line continues beyond the chart. The grey band behind each row is what does not count as a change there: the operation's noise floor on this machine, widened where the passes scatter. A result is a change when its median lies outside the band and at least three quarters of the passes agree. The async engines have a row of their own below the operation they run, in the colour of their engine. On the counter tabs that row shows the cycles and instructions of all their threads together (the total work, not the latency), or time for a job measured before all threads were counted.`}</p>${matrixTable(mx, m, j.ID)}`; }).join('') || '<p class="muted">no results yet</p>'}
+      ${sectionsHTML(mxs, m, mode, j.ID, d.Subject)}
       ${d.Noise && d.Noise.Jobs ? `<p class="note">Noise floor over ${d.Noise.Jobs} self-comparisons: median |Δ time| ${d.Noise.MedianAbs.toFixed(2)}%, p95 ${d.Noise.P95Abs.toFixed(2)}%.</p>` : ''}
       <details><summary>Raw files</summary><p class="mono">${(d.Files || []).map(f => `<a href="/raw/${j.ID}/${f}" target="_blank">${f}</a>`).join(' · ')}</p></details>`;
     bindMetricTabs(() => viewJob(id));
     destroyCharts();
-    mxs.forEach((mx, i) => mx.unsupported || chart('dc' + i, (mode === 'abs' ? absChartCfg : deltaChartCfg)(mx, m, j.ID)));
+    drawSections(mxs, m, mode, j.ID);
     document.querySelectorAll('#modeTabs button').forEach(b => b.onclick = () => { chartMode = b.dataset.mode; localStorage.setItem('chartMode', chartMode); viewJob(id); });
     const libs = document.getElementById('chartLibs');
     if (libs) libs.onchange = () => { chartLibs = libs.checked; localStorage.setItem('chartLibs', chartLibs ? '1' : '0'); viewJob(id); };
     if (d.Live) scheduleRefresh(20000);
+  }
+
+  /* ---------- commit: every run of one commit against a chosen base ---------- */
+  const commitHref = (subject, sha, base) => `#/commit/${subject}/${sha}${base !== undefined && base !== null ? '?base=' + encodeURIComponent(base) : ''}`;
+  async function viewCommit(subject, sha, params) {
+    const baseSel = params.get('base');
+    const d = await get(`/api/commit/${subject}/${sha}` + (baseSel !== null ? '?base=' + encodeURIComponent(baseSel) : ''));
+    leafNoise = (d.Noise && d.Noise.PerLeaf) || {};
+    const m = curMetric(true);
+    d.Results.forEach(withExtras);
+    const mxs = buildMatrices(d.Results);
+    const measured = mxs.filter(mx => !mx.unsupported);
+    const oneSided = measured.length > 0 && measured.every(mx => mx.oneSided);
+    const mode = oneSided ? 'abs' : chartMode;
+    const again = () => viewCommit(subject, sha, params);
+    const options = [`<option value="none" ${d.Base ? '' : 'selected'}>nothing: the values of this commit alone</option>`]
+      .concat(d.Bases.map(b => `<option value="${b.SHA}" ${b.SHA === d.Base ? 'selected' : ''}>${esc(b.Label)} · ${shortRef(b.SHA)} · ${b.Runs ? b.Runs + ' job' + (b.Runs === 1 ? '' : 's') : 'not measured'}</option>`));
+    app.innerHTML = `<h1>Commit ${commitLink(d.SHA, d.Subject)} <span class="muted small">${repoLink(d.Subject)}</span></h1>
+      <div class="cards">
+        <div class="card"><h3>Commit</h3><div class="mono">${esc((d.Desc || '').replace(/^[0-9a-f]{7,12} /, ''))}</div><div class="sub">everything measured of this commit: ${d.Jobs.length} job${d.Jobs.length === 1 ? '' : 's'}, harness ${esc(d.Harness)}</div></div>
+        <div class="card"><h3>Compared against</h3><select id="commitBase">${options.join('')}</select>
+          <div class="sub">${d.Base ? (d.NoBase ? '<span class="worse">this base has no runs with this harness version: the values stand alone</span>' : `${commitLink(d.Base, d.Subject)} · ${d.BaseRuns} job${d.BaseRuns === 1 ? '' : 's'} measured it. Runs of both commits are paired by layout seed; a seed only one of them was run under does not count.`) : 'no base chosen'}</div></div>
+      </div>
+      <div class="toolbar">${metricTabs(true)}<div class="tabs" id="modeTabs"${oneSided ? ' style="display:none"' : ''}><button data-mode="rel" class="${chartMode === 'rel' ? 'active' : ''}">change in %</button><button data-mode="abs" class="${chartMode === 'abs' ? 'active' : ''}">measured values</button></div>${mode === 'abs' ? `<label class="check"><input type="checkbox" id="chartLibs" ${chartLibs ? 'checked' : ''}> with the other libraries</label>` : ''}</div>
+      ${sectionsHTML(mxs, m, mode, null, d.Subject)}
+      <h2>Jobs that measured this commit</h2>${jobRows(d.Jobs)}
+      ${d.BaseJobs.length ? `<h2>Jobs that measured the base</h2>${jobRows(d.BaseJobs)}` : ''}`;
+    bindMetricTabs(again);
+    destroyCharts();
+    drawSections(mxs, m, mode, null);
+    document.querySelectorAll('#modeTabs button').forEach(b => b.onclick = () => { chartMode = b.dataset.mode; localStorage.setItem('chartMode', chartMode); again(); });
+    const libs = document.getElementById('chartLibs');
+    if (libs) libs.onchange = () => { chartLibs = libs.checked; localStorage.setItem('chartLibs', chartLibs ? '1' : '0'); again(); };
+    document.getElementById('commitBase').onchange = ev => { location.hash = commitHref(subject, sha, ev.target.value); };
   }
 
   async function viewLeaf(id, engine, object, op) {
@@ -889,7 +932,7 @@
       ? `<tr><td><span class="muted">${r.Object}</span></td><td class="mono muted">${r.Op} (async${(m.key === 'Cycles' || m.key === 'Instrs') ? ', all threads' : ''})</td>${engines.map(e => cell(r, e + 'Async')).join('')}</tr>` : '';
     const subjectChip = s => {
       const link = /^[0-9a-f]{12,40}$/.test(s.SHA) ? `<a href="${s.Repo}/commit/${s.SHA}" target="_blank" rel="noopener" class="mono">${shortRef(s.SHA)}</a>` : `<span class="mono">${esc(s.SHA)}</span>`;
-      const state = !s.Jobs ? ' · <span class="muted">not measured</span>' : ` · <a href="#/jobs?sha=${s.SHA}" title="the jobs that measured this commit">${s.Jobs} job${s.Jobs === 1 ? '' : 's'}</a>, ${s.Runs} runs`;
+      const state = !s.Jobs ? ' · <span class="muted">not measured</span>' : ` · <a href="${commitHref(s.Name, s.SHA)}" title="everything measured of this commit">${s.Jobs} job${s.Jobs === 1 ? '' : 's'}, ${s.Runs} runs</a>`;
       const wanted = s.Wanted ? ` · <span class="worse" title="the target points to ${esc(s.Wanted)}, which is not measured yet or does not build; an older commit is shown">stale</span>` : '';
       return `<div class="card"><h3>${esc(s.Name)}${s.Target === 'fixed' ? ' <span class="muted" style="text-transform:none">(fixed version)</span>' : ''}</h3><div class="sub">${esc(s.Label)} · ${link}${state}${wanted}</div></div>`;
     };
@@ -1093,6 +1136,7 @@
       else if (parts[0] === 'job' && parts[2] === 'leaf') await viewLeaf(parts[1], parts[3], parts[4], parts.slice(5).join('/'));
       else if (parts[0] === 'job') await viewJob(parts[1]);
       else if (parts[0] === 'ops') await viewOps();
+      else if (parts[0] === 'commit') await viewCommit(parts[1], parts[2], params);
       else if (parts[0] === 'op') await viewOp(parts[1], parts.slice(2).join('/'));
       else if (parts[0] === 'compare') await viewCompare(params);
       else if (parts[0] === 'pr') await viewPR(parts[1]);

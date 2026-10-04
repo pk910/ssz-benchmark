@@ -440,9 +440,8 @@ func TestSampleBlobAndMigration(t *testing.T) {
 	if stored[0].Ns.HQ3 != 0 {
 		t.Fatal("stored results carry job-page statistics")
 	}
-	done, _ := db.getJob(j.ID)
-	again, err := db.fullResults(done)
-	if err != nil || len(again) != 1 || again[0].Ns != full[0].Ns || again[0].Cycles != full[0].Cycles {
+	again := summarize(got)
+	if len(again) != 1 || again[0].Ns != full[0].Ns || again[0].Cycles != full[0].Cycles {
 		t.Fatalf("full results differ: %+v vs %+v (%v)", again, full, err)
 	}
 	// Migrating again changes nothing.
@@ -808,5 +807,28 @@ func TestNoiseFromRepeatedRuns(t *testing.T) {
 	nf := noiseFloorOf(db, "box")
 	if nf.Jobs != 1 || math.Abs(nf.PerLeaf["Codegen/Block/Marshal"]-2) > 1e-9 {
 		t.Fatalf("noise floor %+v", nf)
+	}
+}
+
+func TestCompareCommits(t *testing.T) {
+	run := func(side, seed string, job int64, ns float64) sample {
+		return sample{JobID: job, Side: side, Engine: "Codegen", Object: "Block", Op: "Marshal", Seed: seed, Iters: 1, Ns: ns, Cycles: ns * 3, Instrs: 900}
+	}
+	// The head was run under two seed sets, seed 101 twice; the base under
+	// three, in other jobs and far more often.
+	head := []sample{run("head", "101", 1, 110), run("head", "101", 4, 112), run("head", "202", 1, 220), run("head", "1101", 3, 330)}
+	base := []sample{run("head", "101", 2, 100), run("base", "101", 1, 100), run("head", "202", 2, 200), run("head", "1101", 5, 300), run("head", "2101", 6, 999)}
+	rs := compareCommits(head, base)
+	if len(rs) != 1 || rs[0].Baseline || rs[0].Ns.PN != 3 {
+		t.Fatalf("results %+v", rs)
+	}
+	// Per seed: 111 against 100, 220 against 200, 330 against 300.
+	if math.Abs(rs[0].Ns.PMed-10) > 1e-9 || math.Abs(rs[0].Ns.DMax-11) > 1e-9 {
+		t.Fatalf("median %v, largest %v", rs[0].Ns.PMed, rs[0].Ns.DMax)
+	}
+	// Without base runs the head's values stand alone.
+	alone := compareCommits(head, nil)
+	if len(alone) != 1 || !alone[0].Baseline || alone[0].N != 3 {
+		t.Fatalf("alone %+v", alone)
 	}
 }

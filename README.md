@@ -341,6 +341,20 @@ routes:
   `BENCHD_DEMO_DB=<dir>/benchd.db` writes a synthetic database, then
   `benchd -web -data <dir> -listen 127.0.0.1:8099`.
 
+### Jobs and commits
+
+- A **job** page (`#/job/<id>`) shows what that job measured, nothing
+  else.
+- A **commit** page (`#/commit/<library>/<sha>`) shows everything measured
+  of one commit: the runs of every job of the same harness version that
+  had it on either side, compared with the runs of a base commit chosen on
+  the page. The default base is the base of the pull request the commit
+  was measured for; for a release the release before it; otherwise the
+  library's latest release. The runs of the two commits are paired by
+  layout seed (per seed the median of each side's runs); a seed only one
+  of them was run under has no pair. Refinement runs of either commit
+  sharpen the page of every commit compared with it.
+
 ## Processes
 
 Two processes from one binary, two units:
