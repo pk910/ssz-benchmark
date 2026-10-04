@@ -358,11 +358,13 @@
       const asyncEngines = sortEngines([...new Set(own.filter(r => r.Engine.endsWith('Async')).map(r => r.Engine))]);
       const baselines = sortEngines([...new Set(rs.filter(r => r.Other).map(r => r.Engine))]);
       const oneSided = own.length > 0 && own.every(r => r.Baseline);
-      const ops = [...new Set(rs.map(r => r.Op))].sort((a, b) => rank(OPS, a) - rank(OPS, b) || a.localeCompare(b));
+      const ops = [...new Set(own.map(r => r.Op))].sort((a, b) => rank(OPS, a) - rank(OPS, b) || a.localeCompare(b));
       const cells = {};
       rs.forEach(r => cells[r.Engine + '/' + r.Op] = r);
       return { obj, engines, asyncEngines, baselines, ops, cells, oneSided };
-    });
+      // An object the job did not measure has no section, whatever the
+      // other libraries measured of it.
+    }).filter(mx => mx.engines.length || mx.asyncEngines.length);
   }
 
   const unmeasured = M => !M || (M.Base === 0 && M.Head === 0);
