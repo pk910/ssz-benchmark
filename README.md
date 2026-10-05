@@ -310,6 +310,10 @@ measures its head, and its base when it has one.
   job and the pair's results are recomputed from all runs pooled (the
   fixed iteration counts make the samples compatible), so every rerun
   tightens the intervals of that comparison and spreads it over time.
+- A refinement run gives way: when a job that is no refinement waits and
+  the run is less than half through, it stops between two groups of
+  benchmarks, its runs so far are dropped and it ends as skipped with a
+  note; the waiting job starts at once. Past the half it finishes first.
 - Other libraries: see "Libraries and targets". What each can express:
 
   | library | Fulu state | Fulu block(s) | Gloas block(s), envelope | Gloas state |

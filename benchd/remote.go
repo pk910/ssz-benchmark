@@ -152,6 +152,10 @@ func (s *remoteStore) finish(id int64, passes int, errText string, seconds float
 	return s.call("POST", fmt.Sprintf("/runner/job/%d/finish", id), map[string]any{"Passes": passes, "Error": errText, "Seconds": seconds}, nil)
 }
 
+// A worker does not stop a refinement run for a waiting job.
+func (s *remoteStore) waiting(string) (int64, error)   { return 0, nil }
+func (s *remoteStore) giveWay(int64, int64, int) error { return nil }
+
 func (s *remoteStore) interrupted(id int64) error {
 	return s.call("POST", fmt.Sprintf("/runner/job/%d/interrupted", id), nil, nil)
 }

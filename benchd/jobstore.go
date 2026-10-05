@@ -31,6 +31,11 @@ type jobStore interface {
 	baseRuns(j *job, seeds []string) (map[string]sample, error)
 	finish(id int64, passes int, errText string, seconds float64) error
 	interrupted(id int64) error
+	// waiting returns a queued job that is no refinement and that the
+	// runner could take (0: none); giveWay ends a refinement run that
+	// stops for it, without results.
+	waiting(runner string) (int64, error)
+	giveWay(id, to int64, percent int) error
 }
 
 // Runner (machine) states.
@@ -177,6 +182,21 @@ func (s *localStore) addBuilds(facts []buildFact) error   { return s.db.insertBu
 func (s *localStore) baseRuns(j *job, seeds []string) (map[string]sample, error) {
 	return s.db.storedBaseRuns(j, seeds)
 }
+func (s *localStore) waiting(runner string) (int64, error) {
+	var id int64
+	err := s.db.db.QueryRow(`SELECT coalesce((SELECT id FROM jobs WHERE state = ? AND refinement = 0 AND (runner = '' OR runner = ?) ORDER BY priority DESC, id LIMIT 1), 0)`, stateQueued, runner).Scan(&id)
+	return id, err
+}
+
+func (s *localStore) giveWay(id, to int64, percent int) error {
+	if _, err := s.db.db.Exec(`DELETE FROM samples WHERE job_id = ?`, id); err != nil {
+		return err
+	}
+	_, err := s.db.db.Exec(`UPDATE jobs SET state = ?, finished = ?, note = ? WHERE id = ? AND state = ?`,
+		stateSkipped, time.Now().Unix(), fmt.Sprintf("refinement run stopped at %d%% for job #%d", percent, to), id, stateRunning)
+	return err
+}
+
 func (s *localStore) interrupted(id int64) error {
 	err := s.db.requeueJob(id)
 	s.checks.syncJob(id)

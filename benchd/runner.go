@@ -373,6 +373,15 @@ func (r *runner) runJob(ctx context.Context, j *job) bool {
 	}
 
 	passes, err := r.measure(ctx, j, head, base, jobDir, logw)
+	var way gaveWay
+	if errors.As(err, &way) {
+		logw("refinement run stopped at %d%%: job #%d waits", way.percent, way.to)
+		if err := r.store.giveWay(j.ID, way.to, way.percent); err != nil {
+			logw("give way: %v", err)
+		}
+		r.setPhase(nil, "")
+		return true
+	}
 	if err != nil {
 		return fail(fmt.Errorf("measure: %w", err))
 	}
@@ -875,6 +884,7 @@ func (r *runner) measure(ctx context.Context, j *job, head, base *side, jobDir s
 		pkg, engine, object string
 		leaves              []leaf
 	}
+	var waitChecked time.Time
 	var groups []*group
 	byKey := map[string]*group{}
 	for _, l := range leaves {
@@ -933,6 +943,17 @@ func (r *runner) measure(ctx context.Context, j *job, head, base *side, jobDir s
 			}
 			done := 0
 			for _, g := range groups {
+				// A refinement run that is less than half through gives
+				// way to a job that waits: its commits were measured
+				// before, the waiting job's were not.
+				if total := len(r.seeds) * len(leaves); j.Refinement && total > 0 && time.Since(waitChecked) > 20*time.Second {
+					waitChecked = time.Now()
+					if at := passes*len(leaves) + done; 2*at < total {
+						if id, err := r.store.waiting(r.name); err == nil && id != 0 {
+							return passes, gaveWay{to: id, percent: 100 * at / total}
+						}
+					}
+				}
 				// The position inside the group advances with every result
 				// line the benchmark process prints; a group with a base
 				// runs once per side.
@@ -1428,6 +1449,14 @@ func (r *runner) runBinary(ctx context.Context, s *side, pkg, seed, pattern, ben
 	}
 	return out.Bytes(), steal, nil
 }
+
+// gaveWay ends the measurement of a refinement run for a waiting job.
+type gaveWay struct {
+	to      int64
+	percent int
+}
+
+func (g gaveWay) Error() string { return fmt.Sprintf("stopped for job #%d", g.to) }
 
 // opsFailed are operations whose benchmark failed its own check (the
 // output does not equal the input, a root differs, the library returned

@@ -905,3 +905,41 @@ func TestBranchHistory(t *testing.T) {
 	}
 
 }
+
+func TestRefinementGivesWay(t *testing.T) {
+	db, err := openDB(filepath.Join(t.TempDir(), "t.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	st := &localStore{db: db, local: "ctl"}
+	refine := &job{Kind: kindCommit, Subject: subjectDynSSZ, HeadSHA: "a", Refinement: true}
+	if err := db.insertJob(refine); err != nil {
+		t.Fatal(err)
+	}
+	// Another refinement run that waits is no reason to stop.
+	if id, err := st.waiting("ctl"); err != nil || id != 0 {
+		t.Fatalf("waiting %d %v", id, err)
+	}
+	running, err := st.claim("ctl")
+	if err != nil || running == nil || running.ID != refine.ID {
+		t.Fatalf("claim %v %v", running, err)
+	}
+	real := &job{Kind: kindCommit, Subject: subjectDynSSZ, HeadSHA: "b", Priority: 1}
+	if err := db.insertJob(real); err != nil {
+		t.Fatal(err)
+	}
+	id, err := st.waiting("ctl")
+	if err != nil || id != real.ID {
+		t.Fatalf("waiting %d %v, want %d", id, err, real.ID)
+	}
+	if err := st.giveWay(refine.ID, id, 30); err != nil {
+		t.Fatal(err)
+	}
+	got, _ := db.getJob(refine.ID)
+	if got.State != stateSkipped || !strings.Contains(got.Note, "stopped at 30%") {
+		t.Fatalf("state %s note %q", got.State, got.Note)
+	}
+	if next, _ := st.claim("ctl"); next == nil || next.ID != real.ID {
+		t.Fatalf("next %v", next)
+	}
+}
