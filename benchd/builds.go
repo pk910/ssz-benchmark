@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strings"
 )
@@ -52,7 +53,7 @@ func buildFacts(jobID int64, s *side) []buildFact {
 		}
 		sort.Strings(names)
 		f := buildFact{JobID: jobID, Side: s.name, SHA: s.sha, Pkg: pkg, BuildSeconds: note.Seconds}
-		bin := seeds[names[0]]
+		bin := launcherTarget(seeds[names[0]])
 		if info, err := os.Stat(bin); err == nil {
 			f.BinBytes = info.Size()
 		}
@@ -117,4 +118,20 @@ func (s *store) buildsFor(jobID int64) ([]buildFact, error) {
 		out = append(out, f)
 	}
 	return out, rows.Err()
+}
+
+// launcherTarget resolves the launcher of an adapter of another language,
+// a small script that runs the built program, to that program: the first
+// absolute path in the script that exists. Any other file is itself.
+func launcherTarget(path string) string {
+	data, err := os.ReadFile(path)
+	if err != nil || len(data) < 2 || string(data[:2]) != "#!" {
+		return path
+	}
+	for _, m := range regexp.MustCompile(`"?(/[^"\s]+)"?`).FindAllStringSubmatch(string(data), -1) {
+		if info, err := os.Stat(m[1]); err == nil && !info.IsDir() && info.Mode()&0o111 != 0 {
+			return m[1]
+		}
+	}
+	return path
 }

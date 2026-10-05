@@ -26,6 +26,8 @@ if [ "$TARGET" != ui ]; then
 fi
 ssh "$BOX" "set -e
   mkdir -p /srv/benchd
+  # The adapters of other languages generate their types with Python.
+  command -v python3 >/dev/null || (apt-get install -y -q python3 >/dev/null 2>&1 && echo 'installed python3')
   install -m 755 /tmp/bench-irq-affinity /usr/local/sbin/bench-irq-affinity
   install -m 644 /tmp/benchd.service /etc/systemd/system/benchd.service
   install -m 644 /tmp/benchweb.service /etc/systemd/system/benchweb.service
