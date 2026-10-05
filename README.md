@@ -310,6 +310,13 @@ measures its head, and its base when it has one.
   job and the pair's results are recomputed from all runs pooled (the
   fixed iteration counts make the samples compatible), so every rerun
   tightens the intervals of that comparison and spreads it over time.
+- Idle time is planned ahead: when nothing waits, the refinement runs of
+  the next six hours are queued together (behind any job that arrives
+  meanwhile), so the queue shows what the machine will do. No run follows
+  one of the same commit, and none one of the same pull request or
+  library while another candidate is there: a commit that is far behind
+  catches up in turns with the others. A planned run whose commit is no
+  candidate any more when its turn comes is dropped.
 - A refinement run gives way: when a job that is no refinement waits and
   the run is less than half through, it stops between two groups of
   benchmarks, its runs so far are dropped and it goes back into the queue

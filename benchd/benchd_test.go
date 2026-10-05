@@ -770,6 +770,29 @@ func TestIdleWeights(t *testing.T) {
 	if j, _ := s.idleJob(); j == nil || j.HeadSHA == "k" {
 		t.Fatalf("an unmeasured target was picked: %+v", j)
 	}
+
+	// A new head of the pull request is far behind the others: planned
+	// ahead it catches up in turns with them, never twice in a row, and
+	// no run follows one of the same pull request or library.
+	s.prs.byHead["feature"] = pullRequest{Number: 7, HeadRef: "feature", HeadSHA: "p3", BaseRef: "master"}
+	done(&job{Kind: kindCommit, Branch: "feature", HeadSHA: "p3", BaseSHA: "m", PR: 7}, ownHash, time.Minute)
+	plan, err := s.idlePlan(idleHorizon)
+	if err != nil || len(plan) < 6 {
+		t.Fatalf("plan of %d runs: %v", len(plan), err)
+	}
+	prev, heads := &job{HeadSHA: "p3", PR: 7}, 0
+	for i, j := range plan {
+		if j.HeadSHA == prev.HeadSHA || idleGroup(j) == idleGroup(prev) {
+			t.Fatalf("run %d (%s) follows %s", i, j.HeadSHA, prev.HeadSHA)
+		}
+		if j.HeadSHA == "p3" {
+			heads++
+		}
+		prev = j
+	}
+	if heads < 2 {
+		t.Fatalf("the new head got %d of %d planned runs", heads, len(plan))
+	}
 }
 
 func TestNoiseFromRepeatedRuns(t *testing.T) {

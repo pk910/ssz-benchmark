@@ -499,6 +499,27 @@ func (s *store) claimJob(j *job, runner string) (*job, error) {
 	return s.getJob(j.ID)
 }
 
+// dropQueued removes a job that waits.
+func (s *store) dropQueued(id int64) error {
+	_, err := s.db.Exec(`DELETE FROM jobs WHERE id = ? AND state = ?`, id, stateQueued)
+	return err
+}
+
+// otherRefinement returns the next waiting refinement run of another
+// commit when j is of the commit that ran last; nil when j may run.
+func (s *store) otherRefinement(runner string, j *job) (*job, error) {
+	var last string
+	err := s.db.QueryRow(`SELECT coalesce((SELECT head_sha FROM jobs WHERE state = ? ORDER BY finished DESC, id DESC LIMIT 1), '')`, stateDone).Scan(&last)
+	if err != nil || last != j.HeadSHA {
+		return nil, err
+	}
+	other, err := scanJob(s.db.QueryRow(`SELECT `+jobColumns+` FROM jobs WHERE state = ? AND refinement = 1 AND head_sha != ? AND (runner = '' OR runner = ?) ORDER BY priority DESC, id LIMIT 1`, stateQueued, last, runner))
+	if err == sql.ErrNoRows {
+		return nil, nil
+	}
+	return other, err
+}
+
 // runningOrQueuedFor returns the job a runner holds or is assigned, if any.
 func (s *store) runningOrQueuedFor(runner string) (*job, error) {
 	j, err := scanJob(s.db.QueryRow(`SELECT `+jobColumns+` FROM jobs WHERE runner = ? AND state IN (?, ?) ORDER BY (state = ?) DESC, id LIMIT 1`, runner, stateRunning, stateQueued, stateRunning))

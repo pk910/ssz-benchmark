@@ -118,15 +118,36 @@ func (s *localStore) claim(runner string) (*job, error) {
 				<-s.sched.ready
 				continue
 			}
-			idle, err := s.sched.idleJob()
+			// Nothing waits: the refinement runs of the coming hours are
+			// queued together, behind any job that arrives meanwhile.
+			plan, err := s.sched.idlePlan(idleHorizon)
 			if err != nil {
 				return nil, err
 			}
-			idle.Runner = runner
-			if err := s.db.insertJob(idle); err != nil {
-				return nil, err
+			if len(plan) == 0 {
+				return nil, nil
 			}
-			j = idle
+			for _, idle := range plan {
+				idle.Runner = runner
+				idle.Priority = -1
+				if err := s.db.insertJob(idle); err != nil {
+					return nil, err
+				}
+			}
+			continue
+		}
+		if j.Refinement {
+			// A planned run whose commit is no candidate any more is
+			// dropped; one of the commit that ran last waits for another.
+			if !s.sched.stillCandidate(j) {
+				if err := s.db.dropQueued(j.ID); err != nil {
+					return nil, err
+				}
+				continue
+			}
+			if other, err := s.db.otherRefinement(runner, j); err == nil && other != nil {
+				j = other
+			}
 		}
 		claimed, err := s.db.claimJob(j, runner)
 		if err != nil {

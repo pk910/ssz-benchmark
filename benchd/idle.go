@@ -1,6 +1,7 @@
 package main
 
 import (
+	"database/sql"
 	"sort"
 	"time"
 )
@@ -8,8 +9,10 @@ import (
 // Idle time refines what was measured before. Every commit worth another
 // run is a candidate with a weight; the scheduler takes the candidate
 // with the fewest runs in the refinement window per unit of weight, among
-// equals the one whose library ran longest ago. A new commit has no runs
-// and comes first by itself; one that was run a lot waits for the others.
+// equals the one whose library ran longest ago, and never the commit that
+// ran just before. A commit with few runs gets its turns first, one that
+// was run a lot waits for the others. The runs are planned and queued for
+// some hours ahead (idlePlan).
 //
 // Weights: the head of an open pull request 8, and half for each of its
 // earlier heads below it (4, 2, 1, then none); a library's latest release
@@ -165,22 +168,67 @@ func splitList(s, sep string) []string {
 	return out
 }
 
-// idleJob picks the refinement run for an empty queue: the candidate with
-// the fewest runs in the window per unit of weight; among equals the one
-// whose library ran longest ago, and of that library the commit that ran
-// longest ago.
+// idleHorizon is how far ahead idle time is planned: the refinement runs
+// of that period are queued together, so that what the machine will do is
+// visible and no commit comes twice in a row.
+const idleHorizon = 6 * time.Hour
+
+// idleGroup is what two consecutive refinement runs should not share: the
+// pull request, or else the library.
+func idleGroup(j *job) string {
+	if j.PR != 0 {
+		return "pr/" + strconvI(int64(j.PR))
+	}
+	return j.Subject
+}
+
+// lastJob returns the job that ran last (or runs now).
+func (s *store) lastJob() (*job, error) {
+	j, err := scanJob(s.db.QueryRow(`SELECT `+jobColumns+` FROM jobs WHERE state IN (?, ?) ORDER BY coalesce(started, 0) DESC, id DESC LIMIT 1`, stateDone, stateRunning))
+	if err == sql.ErrNoRows {
+		return nil, nil
+	}
+	return j, err
+}
+
+// runSeconds is how long the last finished job of a commit took.
+func (s *store) runSeconds(subject, sha string) float64 {
+	var secs float64
+	_ = s.db.QueryRow(`SELECT coalesce((SELECT seconds FROM jobs WHERE subject = ? AND head_sha = ? AND state = ? ORDER BY id DESC LIMIT 1), 0)`, subject, sha, stateDone).Scan(&secs)
+	return secs
+}
+
+// idleJob picks the next refinement run.
 func (s *scheduler) idleJob() (*job, error) {
+	plan, err := s.idlePlan(0)
+	if err != nil || len(plan) == 0 {
+		return nil, err
+	}
+	return plan[0], nil
+}
+
+// idlePlan plans the refinement runs of the coming period (at least one
+// run). Each is the candidate with the fewest runs per unit of weight,
+// counting the runs in the window and those planned before it; among
+// equals the one whose library ran longest ago, and of that library the
+// commit that ran longest ago. No run follows one of the same commit, and
+// none one of the same pull request or library while another candidate
+// is there: a commit that is far behind catches up in turns with the
+// others, not in a row.
+func (s *scheduler) idlePlan(horizon time.Duration) ([]*job, error) {
 	cands, err := s.candidates()
 	if err != nil {
 		return nil, err
 	}
-	since := time.Now().Add(-refineWindow)
+	now := time.Now()
+	since := now.Add(-refineWindow)
 	type scored struct {
 		candidate
-		score      float64
+		runs       float64
 		last, self time.Time // last run of the library, and of the commit
+		took       time.Duration
 	}
-	var pool []scored
+	var pool []*scored
 	lastOf := map[string]time.Time{}
 	for _, c := range cands {
 		hash, err := subjectHash(s.cfg.harnessDir, c.sub)
@@ -195,29 +243,87 @@ func (s *scheduler) idleJob() (*job, error) {
 			// Its first job is still to come, or it does not build.
 			continue
 		}
-		last, ok := lastOf[c.sub.Name]
-		if !ok {
-			if last, err = s.db.lastRun(c.sub.Name); err != nil {
+		if _, ok := lastOf[c.sub.Name]; !ok {
+			last, err := s.db.lastRun(c.sub.Name)
+			if err != nil {
 				return nil, err
 			}
 			lastOf[c.sub.Name] = last
 		}
-		pool = append(pool, scored{c, float64(recent) / c.weight, last, self})
+		took := time.Duration(s.db.runSeconds(c.sub.Name, c.job.HeadSHA) * float64(time.Second))
+		if took <= 0 {
+			took = 20 * time.Minute
+		}
+		pool = append(pool, &scored{candidate: c, runs: float64(recent), self: self, took: took})
 	}
 	if len(pool) == 0 {
 		return nil, nil
 	}
-	sort.SliceStable(pool, func(a, b int) bool {
-		if pool[a].score != pool[b].score {
-			return pool[a].score < pool[b].score
+	prevSHA, prevGroup := "", ""
+	if last, err := s.db.lastJob(); err == nil && last != nil {
+		prevSHA, prevGroup = last.HeadSHA, idleGroup(last)
+	}
+	less := func(a, b *scored) bool {
+		if sa, sb := a.runs/a.weight, b.runs/b.weight; sa != sb {
+			return sa < sb
 		}
-		if !pool[a].last.Equal(pool[b].last) {
-			return pool[a].last.Before(pool[b].last)
+		if la, lb := lastOf[a.sub.Name], lastOf[b.sub.Name]; !la.Equal(lb) {
+			return la.Before(lb)
 		}
-		return pool[a].self.Before(pool[b].self)
-	})
-	j := pool[0].job
-	j.Note = "refinement run"
-	j.Refinement = true
-	return j, nil
+		return a.self.Before(b.self)
+	}
+	var plan []*job
+	var planned time.Duration
+	for len(plan) == 0 || (planned < horizon && len(plan) < 100) {
+		// The best of another pull request or library; else the best of
+		// another commit; the commit that ran last only when the machine
+		// would stand still otherwise.
+		var best *scored
+		for _, allow := range []func(*scored) bool{
+			func(c *scored) bool { return idleGroup(c.job) != prevGroup },
+			func(c *scored) bool { return c.job.HeadSHA != prevSHA },
+			func(c *scored) bool { return len(plan) == 0 },
+		} {
+			for _, c := range pool {
+				if allow(c) && (best == nil || less(c, best)) {
+					best = c
+				}
+			}
+			if best != nil {
+				break
+			}
+		}
+		if best == nil {
+			break
+		}
+		j := *best.job
+		j.Note = "refinement run"
+		j.Refinement = true
+		plan = append(plan, &j)
+		planned += best.took
+		at := now.Add(planned)
+		best.runs++
+		best.self, lastOf[best.sub.Name] = at, at
+		prevSHA, prevGroup = j.HeadSHA, idleGroup(&j)
+	}
+	return plan, nil
+}
+
+// stillCandidate reports whether a planned refinement run is still worth
+// running: its commit may have left the candidates since (a merged pull
+// request, a head that moved on).
+func (s *scheduler) stillCandidate(j *job) bool {
+	if s == nil {
+		return true
+	}
+	cands, err := s.candidates()
+	if err != nil {
+		return true
+	}
+	for _, c := range cands {
+		if c.sub.Name == j.Subject && c.job.HeadSHA == j.HeadSHA {
+			return true
+		}
+	}
+	return false
 }
