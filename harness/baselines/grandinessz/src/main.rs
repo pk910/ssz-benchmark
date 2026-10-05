@@ -78,7 +78,21 @@ pub fn allocs() -> (u64, u64) {
     (ALLOC_BYTES.load(Ordering::Relaxed), ALLOC_COUNT.load(Ordering::Relaxed))
 }
 
+/// glibc serves the big buffers of a state from fresh mappings and returns
+/// them to the kernel when they are dropped, so that every iteration
+/// faults its memory in again, where the Go runtime reuses the pages its
+/// collector freed. No mapping per allocation and no trimming of the
+/// heap: what an iteration frees stays mapped for the next one, as the
+/// kit's warm-up calls intend.
+fn keep_heap() {
+    let ok = unsafe { libc::mallopt(libc::M_MMAP_MAX, 0) == 1 && libc::mallopt(libc::M_TRIM_THRESHOLD, -1) == 1 };
+    if !ok {
+        eprintln!("mallopt failed: the heap may be returned to the kernel between iterations");
+    }
+}
+
 fn main() {
+    keep_heap();
     let args: Vec<String> = std::env::args().collect();
     let fork = args
         .iter()
