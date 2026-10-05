@@ -36,7 +36,7 @@
     querySelectorAll: sel => appEl.querySelectorAll(sel),
   };
   const liveEl = document.getElementById('live');
-  const OBJECTS = ['FuluState', 'FuluBlock', 'FuluBlocks', 'GloasState', 'GloasBlock', 'GloasBlocks', 'GloasEnvelope'];
+  const OBJECTS = ['FuluState', 'FuluBlock', 'FuluBlocks', 'FuluMinState', 'FuluMinBlock', 'GloasState', 'GloasBlock', 'GloasBlocks', 'GloasEnvelope', 'GloasMinState', 'GloasMinBlock'];
   const OPS = ['Unmarshal', 'UnmarshalReader', 'UnmarshalReaderUnknown', 'SizeSSZ', 'Marshal', 'MarshalTo', 'MarshalWriter', 'HashTreeRoot', 'GetTree'];
   // What each benchmark object is; shown on hover of the info mark next to
   // its name.
@@ -48,6 +48,10 @@
     GloasBlock: 'The extended block of FuluBlock converted to the Gloas layout (progressive lists, payload attestations, the execution payload replaced by its bid). Identical content where the two forks overlap.',
     GloasBlocks: 'The 32 real blocks of FuluBlocks converted to the Gloas layout. One iteration runs the operation on all 32 in sequence.',
     GloasEnvelope: 'The signed execution payload envelope that belongs to GloasBlock: in Gloas the execution payload travels separately from the beacon block. 1.9 MB, mostly transactions.',
+    FuluMinState: 'FuluState cut to the minimal preset, the same types with the minimal spec values: every eighth validator with its balance, participation and inactivity score (296,693 validators), the vectors at their minimal lengths (64 block roots, state roots, randao mixes and slashings), 32 eth1 votes, sync committees of 32, the pending partial withdrawals and consolidations capped at 64. Every spec value the types depend on differs from its compiled default here, which the mainnet objects never exercise. Three operations are measured on it: Unmarshal, Marshal and HashTreeRoot.',
+    FuluMinBlock: 'FuluBlock cut to the minimal preset: aggregation bits and attester slashing indices at the limit of a slot\'s committees (8,192), committee bits of 4, sync committee bits of 32, 4 withdrawals; everything else as in FuluBlock. Measured with the minimal spec values on Unmarshal, Marshal and HashTreeRoot.',
+    GloasMinState: 'FuluMinState converted to the Gloas layout, with the Gloas fields at their minimal sizes: a PTC window of 24 slots of 16, 16 builder pending payments, 64 slots of payload availability. Measured with the minimal spec values on Unmarshal, Marshal and HashTreeRoot.',
+    GloasMinBlock: 'FuluMinBlock converted to the Gloas layout, with payload attestations of 16 bits. Measured with the minimal spec values on Unmarshal, Marshal and HashTreeRoot.',
   };
   const objInfo = o => OBJECT_INFO[o] ? `<span class="info" tabindex="0" data-tip="${OBJECT_INFO[o].replace(/"/g, '&quot;')}">i</span>` : '';
   const objName = o => `${o}${objInfo(o)}`;

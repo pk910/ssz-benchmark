@@ -361,7 +361,7 @@ func summarize(samples []sample) []result {
 
 // Fixed display order of objects, operations and engines.
 var (
-	objectOrder = []string{"FuluState", "FuluBlock", "FuluBlocks", "GloasState", "GloasBlock", "GloasBlocks", "GloasEnvelope"}
+	objectOrder = []string{"FuluState", "FuluBlock", "FuluBlocks", "FuluMinState", "FuluMinBlock", "GloasState", "GloasBlock", "GloasBlocks", "GloasEnvelope", "GloasMinState", "GloasMinBlock"}
 	opOrder     = []string{"Unmarshal", "UnmarshalReader", "UnmarshalReaderUnknown", "SizeSSZ", "Marshal", "MarshalTo", "MarshalWriter", "HashTreeRoot", "GetTree"}
 	engineOrder = []string{"Codegen", "Reflection", "CodegenAsync", "ReflectionAsync", "FastSSZ", "FastSSZv1", "FastSSZv2", "PrysmSSZ", "KaralabeSSZ", "KaralabeSSZAsync"}
 )

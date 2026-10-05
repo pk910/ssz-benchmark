@@ -4,10 +4,15 @@
 // to the Gloas types (progressive lists and containers) so both shapes
 // hold identical content.
 //
-//	payload -state state-<slot>.ssz -block block-<slot>.ssz -blocks <dir> -spec spec.json -out <dir>
+//	payload -state state-<slot>.ssz -block block-<slot>.ssz -blocks <dir> -spec spec.json -out <dir> [-minimal <consensus-specs dir>]
 //
 // Output: <out>/fulu/{spec.json,state.ssz,state.root,block.ssz,block.root,blocks/NNN.ssz,NNN.root}
 // and <out>/gloas/{spec.json,state,block,blocks,envelope} plus meta.json.
+// With -minimal, the same objects cut to the minimal preset (minimal.go)
+// under <out>/fulu/minimal and <out>/gloas/minimal, each with its own
+// spec.json, plus meta-minimal.json. The mainnet output does not depend on
+// it: the minimal objects are derived after it is written, from the same
+// extended objects.
 package main
 
 import (
@@ -38,14 +43,16 @@ var gloasPreset = map[string]uint64{
 }
 
 func main() {
-	var stateFile, blockFile, blocksDir, specFile, outDir string
-	var pendingFill int
+	var stateFile, blockFile, blocksDir, specFile, outDir, minimalDir string
+	var pendingFill, minimalStep int
 	flag.StringVar(&stateFile, "state", "", "real beacon state (Fulu)")
 	flag.StringVar(&blockFile, "block", "", "real signed block (Electra/Fulu) to extend")
 	flag.StringVar(&blocksDir, "blocks", "", "directory with real block-<slot>.ssz files to take as the block set")
 	flag.StringVar(&specFile, "spec", "", "beacon API config/spec response")
 	flag.StringVar(&outDir, "out", "", "output directory")
 	flag.IntVar(&pendingFill, "pending", 65536, "entries in each pending list of the state")
+	flag.StringVar(&minimalDir, "minimal", "", "consensus-specs checkout; writes the payload cut to its minimal preset as well")
+	flag.IntVar(&minimalStep, "minimal-step", 8, "every n-th validator is kept in the minimal state")
 	flag.Parse()
 	if stateFile == "" || blockFile == "" || blocksDir == "" || specFile == "" || outDir == "" {
 		flag.Usage()
@@ -117,13 +124,13 @@ func main() {
 	writeSpec(filepath.Join(gloasDir, "spec.json"), specRaw)
 	log.Printf("converting to gloas")
 	gstate := toGloasState(state, active, specs, rng)
-	gblock, genv := toGloasBlock(ds, block, int(specs["MAX_PAYLOAD_ATTESTATIONS"].(uint64)), rng)
+	gblock, genv := toGloasBlock(ds, block, spec(specs, "MAX_PAYLOAD_ATTESTATIONS"), spec(specs, "PTC_SIZE"), rng)
 	log.Printf("encoding gloas state")
 	write(ds, filepath.Join(gloasDir, "state"), gstate, gstate)
 	write(ds, filepath.Join(gloasDir, "block"), gblock, gblock.Message)
 	write(ds, filepath.Join(gloasDir, "envelope"), genv, genv.Message)
 	for i, b := range realBlocks {
-		gb, _ := toGloasBlock(ds, b, 1, rng)
+		gb, _ := toGloasBlock(ds, b, 1, spec(specs, "PTC_SIZE"), rng)
 		write(ds, filepath.Join(gloasDir, "blocks", fmt.Sprintf("%03d", i)), gb, gb.Message)
 	}
 
@@ -152,6 +159,77 @@ func main() {
 	}
 	mj, _ := json.MarshalIndent(meta, "", "  ")
 	must(0, os.WriteFile(filepath.Join(outDir, "meta.json"), mj, 0o644))
+	fmt.Println(string(mj))
+
+	if minimalDir != "" {
+		writeMinimal(outDir, minimalDir, minimalStep, specRaw, state, block, realBlocks, rng)
+	}
+}
+
+// writeMinimal derives the minimal-preset payload from the extended
+// mainnet objects and writes it under <out>/<fork>/minimal.
+func writeMinimal(outDir, specsDir string, step int, mainnetRaw map[string]any, state *gloas.FuluBeaconState, block *gloas.ElectraSignedBeaconBlock, realBlocks []*gloas.ElectraSignedBeaconBlock, rng *rand.Rand) {
+	raw, specs, overrides := minimalSpecs(mainnetRaw, specsDir)
+	ds := dynssz.NewDynSsz(specs)
+	log.Printf("cutting to the minimal preset (every %d. validator)", step)
+	mstate := toMinimalState(state, specs, step)
+	mblock := toMinimalBlock(block, specs, step)
+	mblocks := make([]*gloas.ElectraSignedBeaconBlock, 0, len(realBlocks))
+	for _, b := range realBlocks {
+		mblocks = append(mblocks, toMinimalBlock(b, specs, step))
+	}
+
+	fuluDir := filepath.Join(outDir, "fulu", "minimal")
+	must(0, os.MkdirAll(filepath.Join(fuluDir, "blocks"), 0o755))
+	writeSpec(filepath.Join(fuluDir, "spec.json"), raw)
+	log.Printf("encoding minimal fulu state")
+	write(ds, filepath.Join(fuluDir, "state"), mstate, mstate)
+	write(ds, filepath.Join(fuluDir, "block"), mblock, mblock.Message)
+	for i, b := range mblocks {
+		write(ds, filepath.Join(fuluDir, "blocks", fmt.Sprintf("%03d", i)), b, b.Message)
+	}
+
+	gloasDir := filepath.Join(outDir, "gloas", "minimal")
+	must(0, os.MkdirAll(filepath.Join(gloasDir, "blocks"), 0o755))
+	writeSpec(filepath.Join(gloasDir, "spec.json"), raw)
+	log.Printf("converting the minimal objects to gloas")
+	active := activeValidators(mstate)
+	gstate := toGloasState(mstate, active, specs, rng)
+	gblock, genv := toGloasBlock(ds, mblock, spec(specs, "MAX_PAYLOAD_ATTESTATIONS"), spec(specs, "PTC_SIZE"), rng)
+	write(ds, filepath.Join(gloasDir, "state"), gstate, gstate)
+	write(ds, filepath.Join(gloasDir, "block"), gblock, gblock.Message)
+	write(ds, filepath.Join(gloasDir, "envelope"), genv, genv.Message)
+	for i, b := range mblocks {
+		gb, _ := toGloasBlock(ds, b, 1, spec(specs, "PTC_SIZE"), rng)
+		write(ds, filepath.Join(gloasDir, "blocks", fmt.Sprintf("%03d", i)), gb, gb.Message)
+	}
+
+	meta := map[string]any{
+		"preset":         "minimal",
+		"validator_step": step,
+		"validators":     len(mstate.Validators),
+		"spec_overrides": overrides,
+		"counts": map[string]int{
+			"block_roots":                 len(mstate.BlockRoots),
+			"randao_mixes":                len(mstate.RANDAOMixes),
+			"slashings":                   len(mstate.Slashings),
+			"eth1_data_votes":             len(mstate.ETH1DataVotes),
+			"sync_committee":              len(mstate.CurrentSyncCommittee.Pubkeys),
+			"proposer_lookahead":          len(mstate.ProposerLookahead),
+			"pending_deposits":            len(mstate.PendingDeposits),
+			"pending_partial_withdrawals": len(mstate.PendingPartialWithdrawals),
+			"pending_consolidations":      len(mstate.PendingConsolidations),
+			"attestations":                len(mblock.Message.Body.Attestations),
+			"attestation_bits":            int(mblock.Message.Body.Attestations[0].AggregationBits.Len()),
+			"attester_slashing_indices":   len(mblock.Message.Body.AttesterSlashings[0].Attestation1.AttestingIndices),
+			"withdrawals":                 len(mblock.Message.Body.ExecutionPayload.Withdrawals),
+			"gloas_ptc_window":            len(gstate.PTCWindow),
+			"gloas_ptc_size":              len(gstate.PTCWindow[0]),
+			"blocks":                      len(mblocks),
+		},
+	}
+	mj, _ := json.MarshalIndent(meta, "", "  ")
+	must(0, os.WriteFile(filepath.Join(outDir, "meta-minimal.json"), mj, 0o644))
 	fmt.Println(string(mj))
 }
 
@@ -528,7 +606,7 @@ func toGloasState(st *gloas.FuluBeaconState, active []uint64, specs map[string]a
 // operations as they are, the execution payload replaced by a bid built
 // from it, payload attestations added, and the execution requests moved to
 // the parent requests. The payload itself goes into the envelope.
-func toGloasBlock(ds *dynssz.DynSsz, sb *gloas.ElectraSignedBeaconBlock, payloadAtts int, rng *rand.Rand) (*gloas.GloasSignedBeaconBlock, *gloas.GloasSignedExecutionPayloadEnvelope) {
+func toGloasBlock(ds *dynssz.DynSsz, sb *gloas.ElectraSignedBeaconBlock, payloadAtts, ptc int, rng *rand.Rand) (*gloas.GloasSignedBeaconBlock, *gloas.GloasSignedExecutionPayloadEnvelope) {
 	b := sb.Message.Body
 	p := b.ExecutionPayload
 	req := &gloas.GloasExecutionRequests{
@@ -555,9 +633,9 @@ func toGloasBlock(ds *dynssz.DynSsz, sb *gloas.ElectraSignedBeaconBlock, payload
 	}
 	var payloadAttestations []*gloas.GloasPayloadAttestation
 	for range payloadAtts {
-		bits := bitfield.NewBitvector512()
-		for i := range uint64(512) {
-			bits.SetBitAt(i, true)
+		bits := make(bitfield.Bitvector512, (ptc+7)/8)
+		for i := range ptc {
+			bits[i/8] |= 1 << (i % 8)
 		}
 		payloadAttestations = append(payloadAttestations, &gloas.GloasPayloadAttestation{
 			AggregationBits: bits,

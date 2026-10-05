@@ -1,7 +1,8 @@
 // Package gloas benchmarks the Gloas-shaped payload: the same mainnet data
 // as the Fulu payload converted to the Gloas types (progressive lists and
 // progressive containers), plus the execution payload envelope that holds
-// the transactions in Gloas.
+// the transactions in Gloas, and the state and block cut to the minimal
+// preset (GloasMinState, GloasMinBlock).
 package gloas
 
 import (
@@ -48,6 +49,23 @@ type engine struct {
 }
 
 var htrOnly = map[string]bool{"HashTreeRoot": true}
+
+// minimalOnly are the operations measured on the minimal objects: the
+// three that carry every spec-dependent size and limit; the other six are
+// variants of them.
+var minimalOnly = map[string]bool{"Unmarshal": true, "Marshal": true, "HashTreeRoot": true}
+
+// restrict keeps the operations of only that the codec has.
+func restrict(c bench.Codec, only map[string]bool) bench.Codec {
+	keep := make(map[string]bool, len(only))
+	for op := range only {
+		if c.Only == nil || c.Only[op] {
+			keep[op] = true
+		}
+	}
+	c.Only = keep
+	return c
+}
 
 // engines lists the engines the library version under test has (package
 // feat).
@@ -116,6 +134,17 @@ func BenchmarkReal(b *testing.B) {
 			b.Run("GloasEnvelope", func(b *testing.B) {
 				ds := ssz.NewDynSsz(bench.LoadSpecs(filepath.Join(dir, "spec.json")), e.opts...)
 				bench.RunOne(b, e.codec(ds, o.envelope, o.envRoot), bench.LoadOne(dir, "envelope"))
+			})
+			// The minimal preset: the same types with the minimal spec
+			// values, on the payload cut to them.
+			mdir := filepath.Join(dir, "minimal")
+			b.Run("GloasMinState", func(b *testing.B) {
+				ds := ssz.NewDynSsz(bench.LoadSpecs(filepath.Join(mdir, "spec.json")), e.opts...)
+				bench.RunOne(b, restrict(e.codec(ds, o.state, o.stateRoot), minimalOnly), bench.LoadOne(mdir, "state"))
+			})
+			b.Run("GloasMinBlock", func(b *testing.B) {
+				ds := ssz.NewDynSsz(bench.LoadSpecs(filepath.Join(mdir, "spec.json")), e.opts...)
+				bench.RunOne(b, restrict(e.codec(ds, o.block, o.blockRoot), minimalOnly), bench.LoadOne(mdir, "block"))
 			})
 		})
 	}

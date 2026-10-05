@@ -73,9 +73,14 @@ More: /api/job/<id>/samples (every single run of a job), /raw/<id>/<file>
 
 - A benchmark is Engine / Object / Operation. Objects are payload types
   (FuluState, FuluBlock, FuluBlocks, GloasState, GloasBlock, GloasBlocks,
-  GloasEnvelope); operations are Unmarshal, Marshal, HashTreeRoot and
-  their variants. Engines of dynamic-ssz: Codegen (generated code) and
-  Reflection. "HashTreeRoot (async)" is the hash tree root with background
+  GloasEnvelope, and FuluMinState, FuluMinBlock, GloasMinState,
+  GloasMinBlock: the state and the block cut to the minimal preset,
+  measured with the minimal spec values on Unmarshal, Marshal and
+  HashTreeRoot only, so that every spec value the types depend on is
+  exercised at a value other than its compiled default); operations are
+  Unmarshal, Marshal, HashTreeRoot and their variants. Engines of
+  dynamic-ssz: Codegen (generated code) and Reflection. "HashTreeRoot
+  (async)" is the hash tree root with background
   workers, an operation of each engine (the harness runs it as the engines
   CodegenAsync / ReflectionAsync, which is how the JSON names it).
 - A job measures a head commit, usually against a base commit. Each side

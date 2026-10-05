@@ -1,5 +1,7 @@
 // Package fulu benchmarks the Fulu-shaped payload: the extended mainnet
-// state, the extended block and the real blocks of the epoch.
+// state, the extended block and the real blocks of the epoch, and the
+// state and block cut to the minimal preset (FuluMinState, FuluMinBlock),
+// where every spec value the types depend on differs from its default.
 package fulu
 
 import (
@@ -84,6 +86,23 @@ func hashOnly(e engine) engine {
 	return e
 }
 
+// minimalOnly are the operations measured on the minimal objects: the
+// three that carry every spec-dependent size and limit; the other six are
+// variants of them.
+var minimalOnly = map[string]bool{"Unmarshal": true, "Marshal": true, "HashTreeRoot": true}
+
+// restrict keeps the operations of only that the codec has.
+func restrict(c bench.Codec, only map[string]bool) bench.Codec {
+	keep := make(map[string]bool, len(only))
+	for op := range only {
+		if c.Only == nil || c.Only[op] {
+			keep[op] = true
+		}
+	}
+	c.Only = keep
+	return c
+}
+
 // engines lists the engines the library version under test has (package
 // feat).
 func engines() []engine {
@@ -109,6 +128,15 @@ func BenchmarkReal(b *testing.B) {
 			})
 			b.Run("FuluBlocks", func(b *testing.B) {
 				bench.RunSet(b, e.block(bench.LoadSpecs(filepath.Join(dir, "spec.json"))), bench.LoadSet(dir, "blocks"))
+			})
+			// The minimal preset: the same types with the minimal spec
+			// values, on the payload cut to them.
+			mdir := filepath.Join(dir, "minimal")
+			b.Run("FuluMinState", func(b *testing.B) {
+				bench.RunOne(b, restrict(e.state(bench.LoadSpecs(filepath.Join(mdir, "spec.json"))), minimalOnly), bench.LoadOne(mdir, "state"))
+			})
+			b.Run("FuluMinBlock", func(b *testing.B) {
+				bench.RunOne(b, restrict(e.block(bench.LoadSpecs(filepath.Join(mdir, "spec.json"))), minimalOnly), bench.LoadOne(mdir, "block"))
 			})
 		})
 	}

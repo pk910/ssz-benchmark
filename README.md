@@ -96,6 +96,20 @@ blocks 15303807–15303838 (local copies in `ai_plans/perf-v1.4.0/data/mainnet`)
   `blocks/` (the real blocks converted, one payload attestation each).
 - `*.root` next to each file, `spec.json` per shape (the Gloas one carries
   the preset values the beacon API does not report), `meta.json`.
+- `fulu/minimal/` and `gloas/minimal/`: the same objects cut to the
+  minimal preset (`-minimal <consensus-specs checkout>`), with the
+  minimal `spec.json` and `meta-minimal.json` at the top. The registry is
+  every eighth validator (296,693) with its balance, participation and
+  inactivity score; the vectors are at their minimal lengths with the
+  newest slots and epochs in their places (64 block roots, state roots,
+  randao mixes, slashings), 32 eth1 votes, sync committees of 32, 16
+  lookahead entries, the pending partial withdrawals and consolidations
+  capped at 64, the pending deposits unchanged. The block keeps everything
+  the preset allows: the aggregation bits and slashing indices are cut to
+  a slot's committees (8,192), the committee bits to 4, the sync bits to
+  32, the withdrawals to 4. Validator indices the objects refer to are
+  divided by eight so they stay inside the registry. The mainnet files do
+  not depend on this step and are never rewritten by it.
 
 ## Suite
 
@@ -106,7 +120,7 @@ commit with that commit's `dynssz-gen` (`-legacy -with-streaming`):
 |---|---|
 | Engine | `Codegen` (generated code), `Reflection` (`WithNoFastSsz` + `WithNoDelegation`); `CodegenAsync` and `ReflectionAsync` measure HashTreeRoot with `WithAsyncHashing(3)` (time and cycles only: the async hasher materializes worker buffers as scheduling demands, so its allocation counts are not a property of the code) |
 | Reference libraries (their own job, see below) | `FastSSZv1` (ferranbt/fastssz v1.0.0), `FastSSZv2` (its v2 development branch), `PrysmSSZ` (methodical-ssz, the generator and runtime Prysm uses), `KaralabeSSZ` and `KaralabeSSZAsync` (karalabe/ssz v0.3.0, sequential and concurrent hasher) |
-| Object | `FuluState`, `FuluBlock`, `FuluBlocks`, `GloasState`, `GloasBlock`, `GloasBlocks`, `GloasEnvelope` |
+| Object | `FuluState`, `FuluBlock`, `FuluBlocks`, `GloasState`, `GloasBlock`, `GloasBlocks`, `GloasEnvelope`; `FuluMinState`, `FuluMinBlock`, `GloasMinState`, `GloasMinBlock` (the minimal-preset objects, measured with the minimal spec values on `Unmarshal`, `Marshal` and `HashTreeRoot` only: every spec value the types depend on then differs from its compiled default, which the mainnet objects never exercise) |
 | Op | `Unmarshal`, `UnmarshalReader`, `UnmarshalReaderUnknown`, `SizeSSZ`, `Marshal`, `MarshalTo`, `MarshalWriter`, `HashTreeRoot`, `GetTree` |
 
 Every leaf verifies its output (re-encoded bytes equal the input, roots
