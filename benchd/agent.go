@@ -396,24 +396,44 @@ func (w *webServer) agentRepo(rw http.ResponseWriter, req *http.Request) {
 	}
 	fmt.Fprintf(&sb, "- %d commits on %s, %d measured; page %d of %d (?page=N)\n\n", v.Total, v.Branch, v.Measured, page, max(1, (v.Total+repoPage-1)/repoPage))
 	sb.WriteString("Newest first. The change of a measured commit is against the measured commit before it: per engine the geomean over its operations, the async hashing among them (cycles, time for the async hashing) and how many operations moved by 1% or more (faster/slower). Per-operation detail is on the commit's page.\n\n")
-	sb.WriteString("| commit | committed | tags | description | change against the measured commit before |\n|---|---|---|---|---|\n")
-	for _, c := range v.Commits {
-		change := "not measured"
+	change := func(c repoCommit, what string) string {
 		switch {
 		case c.Compared:
 			var parts []string
 			for _, e := range c.Engines {
 				parts = append(parts, fmt.Sprintf("%s %s (%d faster, %d slower of %d)", e.Engine, mdPct(e.Geomean), e.Faster, e.Slower, e.N))
 			}
-			change = strings.Join(parts, "; ")
+			out := strings.Join(parts, "; ")
 			if c.Skipped > 0 {
-				change += fmt.Sprintf(" [against %s, %d unmeasured between]", shortSHA(c.Against), c.Skipped)
+				out += fmt.Sprintf(" [against %s, %d unmeasured between]", shortSHA(c.Against), c.Skipped)
 			}
+			return out
 		case c.Runs > 0:
-			change = "measured, no measured commit before it to compare with"
+			return "measured, no values comparable with " + what
 		case c.State != "":
-			change = c.State
+			return c.State
 		}
+		return "not measured"
+	}
+	if len(v.PullRequests) > 0 {
+		branch := v.Branch
+		if branch == "" {
+			branch = "the main branch"
+		}
+		fmt.Fprintf(&sb, "## Open pull requests\n\nNewest first. The change of a measured head is against the head of %s, from the pooled values of both within one harness version. Every measured head of a pull request, with the job's own comparison against its base: %s/api/pr/<number>.\n\n", branch, o)
+		fmt.Fprintf(&sb, "| pull request | branch | head | title | change against the head of %s |\n|---|---|---|---|---|\n", branch)
+		for _, pr := range v.PullRequests {
+			branch := pr.Branch
+			if pr.Fork {
+				branch += " (fork)"
+			}
+			fmt.Fprintf(&sb, "| #%d | %s | %s | %s | %s |\n", pr.Number, branch, mdCommit(o, v.Name, pr.SHA), strings.ReplaceAll(pr.Desc, "|", "\\|"), change(pr.repoCommit, "the head of "+branch))
+		}
+		sb.WriteString("\n## Commits\n\n")
+	}
+	sb.WriteString("| commit | committed | tags | description | change against the measured commit before |\n|---|---|---|---|---|\n")
+	for _, c := range v.Commits {
+		change := change(c, "the measured commit before")
 		committed := "-"
 		if c.Committed > 0 {
 			committed = time.Unix(c.Committed, 0).UTC().Format("2006-01-02")

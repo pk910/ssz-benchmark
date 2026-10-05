@@ -230,6 +230,7 @@ type pullRequest struct {
 	HeadRef string
 	HeadSHA string
 	BaseRef string
+	Title   string
 }
 
 // prCache polls the open pull requests of the repository.
@@ -238,6 +239,7 @@ type prCache struct {
 	token   string
 	tokenFn func(ctx context.Context) string // installation token of the GitHub App, when there is one
 	api     string                           // API root, replaced in tests
+	store   *store                           // keeps the open pull requests for the web pages; nil in tests
 	forks   []forkPR
 	mu      sync.Mutex
 	byHead  map[string]pullRequest // head branch -> PR
@@ -255,6 +257,7 @@ type forkPR struct {
 	HeadSHA string
 	Label   string // owner:branch
 	BaseRef string
+	Title   string
 }
 
 // bearer is the token for API requests: the App's when present, else the
@@ -423,7 +426,8 @@ func (c *prCache) refreshOlder(ctx context.Context, maxAge time.Duration) {
 		return
 	}
 	var prs []struct {
-		Number int `json:"number"`
+		Number int    `json:"number"`
+		Title  string `json:"title"`
 		Head   struct {
 			Ref  string `json:"ref"`
 			SHA  string `json:"sha"`
@@ -443,17 +447,27 @@ func (c *prCache) refreshOlder(ctx context.Context, maxAge time.Duration) {
 	c.etag = resp.Header.Get("ETag")
 	byHead := map[string]pullRequest{}
 	var forks []forkPR
+	open := make([]openPR, 0, len(prs))
 	for _, pr := range prs {
 		// Only branches of this repository are mirrored; a fork's head is
 		// fetched when a maintainer approves it.
-		if !strings.EqualFold(pr.Head.Repo.FullName, c.repo) {
-			forks = append(forks, forkPR{Number: pr.Number, HeadSHA: pr.Head.SHA, Label: pr.Head.Label, BaseRef: pr.Base.Ref})
-			continue
+		fork := !strings.EqualFold(pr.Head.Repo.FullName, c.repo)
+		branch := pr.Head.Ref
+		if fork {
+			branch = pr.Head.Label
+			forks = append(forks, forkPR{Number: pr.Number, HeadSHA: pr.Head.SHA, Label: pr.Head.Label, BaseRef: pr.Base.Ref, Title: pr.Title})
+		} else {
+			byHead[pr.Head.Ref] = pullRequest{Number: pr.Number, HeadRef: pr.Head.Ref, HeadSHA: pr.Head.SHA, BaseRef: pr.Base.Ref, Title: pr.Title}
 		}
-		byHead[pr.Head.Ref] = pullRequest{Number: pr.Number, HeadRef: pr.Head.Ref, HeadSHA: pr.Head.SHA, BaseRef: pr.Base.Ref}
+		open = append(open, openPR{Number: pr.Number, Title: pr.Title, Branch: branch, HeadSHA: pr.Head.SHA, BaseRef: pr.Base.Ref, Fork: fork})
 	}
 	c.byHead = byHead
 	c.forks = forks
+	if c.store != nil {
+		if err := c.store.savePullRequests(open); err != nil {
+			log.Printf("pull requests: store: %v", err)
+		}
+	}
 }
 
 func (c *prCache) forBranch(branch string) (pullRequest, bool) {

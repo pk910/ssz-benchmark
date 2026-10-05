@@ -362,15 +362,22 @@ routes:
 - `#/` overview, with two tabs: the running job with progress, the queue
   in execution order and the newest finished jobs; and `#/jobs`, every
   job with filters.
-- `#/repos`: every library with its repository, its targets and the five
-  newest commits of its main branch. `#/repo/<library>`: all of them,
+- Links lead to pages here; every link to GitHub stands behind the small
+  GitHub mark next to a commit, a repository or a pull request.
+- `#/repos`: every library in a box of its own with its repository, its
+  targets, the five newest commits of its main branch and the number of
+  its open pull requests. `#/repo/<library>`: all of them,
   200 a page, each with its age, its tags and, when measured, the change per engine
   against the measured commit before it (from the pooled values of both,
   within one harness version), and charts with one line per operation: its
   time (or cycles) per call at every measured commit, aggregated over the
   payload types (geometric mean, or sum), operations of one kind
   (unmarshalling, marshalling, hashing) sharing a chart. The change column shows one badge per engine or one
-  per engine and operation, and engines can be hidden. The list is the history of the branch as the repository has it:
+  per engine and operation, and engines can be hidden. For the mirrored
+  library the page also lists its open pull requests (the daemon stores
+  what it polls from GitHub), each head compared with the head of the main
+  branch from the pooled values of both; the pull request's own page has
+  every measured head against the job's base. The list is the history of the branch as the repository has it:
   the commits on the branch itself, a merge as one commit. It is read from
   a local repository when the page is built: the mirror, or, for another
   library, `work/history/<library>.git`, into which the target poller

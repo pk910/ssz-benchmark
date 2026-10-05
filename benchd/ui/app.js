@@ -232,8 +232,15 @@
   // it is no new work, its runs are pooled with the earlier ones.
   const isRefinement = j => /refinement run/.test(j.Note || '');
   const chip = j => `<span class="chip ${j.State}">${j.State}</span> ${kindChips(j)}${isRefinement(j) ? ' <span class="chip refine" title="idle time: the same commits measured again under other layouts; the runs are pooled with the earlier ones">refinement</span>' : ''}`;
-  // repoLink names the repository of a job's library, linked.
-  const repoLink = subject => { const url = subjectRepos[subject] || repo; return url ? `<a href="${url}" target="_blank" rel="noopener">${esc(url.replace('https://github.com/', ''))}</a>` : esc(subject || ''); };
+  // Every link to GitHub stands behind the GitHub mark (ghLink); a plain
+  // link always leads to a page here.
+  const ghLink = (url, title) => `<a class="gh" href="${url}" target="_blank" rel="noopener" title="${esc(title)}">${GH_MARK}</a>`;
+  // repoLink names the repository of a library, linked to its page here,
+  // with the mark leading to GitHub.
+  const repoLink = subject => { const sub = subject || 'dynamic-ssz', url = subjectRepos[sub] || repo; return `<a href="#/repo/${encodeURIComponent(sub)}" title="the commits and pull requests measured of this library">${esc(url ? url.replace('https://github.com/', '') : sub)}</a>${url ? ghLink(url, 'the repository on GitHub') : ''}`; };
+  // prRef names a pull request of the mirrored library, linked to its page
+  // here (every measured head), with the mark leading to GitHub.
+  const prRef = (n, label) => `<a href="#/pr/${n}" title="every measured head of this pull request">${label || '#' + n}</a>${repo ? ghLink(`${repo}/pull/${n}`, 'the pull request on GitHub') : ''}`;
   // refLabel is the branch or tag a job's commit was found under.
   const refLabel = j => esc(j.Branch) + prLink(j);
   // commitLink links a commit to its page here, with a small mark that
@@ -244,9 +251,9 @@
     if (!sha) return '<span class="muted">-</span>';
     if (sha === 'baselines') return '<span class="muted">reference libraries</span>';
     const sub = subject || 'dynamic-ssz', url = subjectRepos[sub] || repo;
-    return `<a class="mono" href="#/commit/${sub}/${sha}" title="everything measured of this commit">${short(sha)}</a>${url ? `<a class="gh" href="${url}/commit/${sha}" target="_blank" rel="noopener" title="this commit on GitHub">${GH_MARK}</a>` : ''}`;
+    return `<a class="mono" href="#/commit/${sub}/${sha}" title="everything measured of this commit">${short(sha)}</a>${url ? ghLink(`${url}/commit/${sha}`, 'this commit on GitHub') : ''}`;
   };
-  const prLink = j => j.PR ? ` · <a href="${repo}/pull/${j.PR}" target="_blank" rel="noopener">PR #${j.PR}</a> <a href="#/pr/${j.PR}" title="every measured head of this pull request">history</a>` : '';
+  const prLink = j => j.PR ? ` · ${prRef(j.PR, 'PR #' + j.PR)}` : '';
   const sortLeaf = (a, b) => rank(OBJECTS, a.Object) - rank(OBJECTS, b.Object) || a.Object.localeCompare(b.Object)
     || rank(OPS, a.Op) - rank(OPS, b.Op) || a.Op.localeCompare(b.Op) || rank(ENGINES, a.Engine) - rank(ENGINES, b.Engine);
   const sortEngines = es => es.sort((a, b) => rank(ENGINES, a) - rank(ENGINES, b) || a.localeCompare(b));
@@ -438,10 +445,10 @@
   /* ---------- repositories ---------- */
   // stepChips: how a commit changed each engine against the commit before
   // it on the branch.
-  const stepChips = (c, v) => {
+  const stepChips = (c, v, what) => {
     if (!c.State) return '<span class="muted">not measured</span>';
     if (c.State !== 'done') return `<span class="muted">${esc(c.State)}</span>`;
-    if (!c.Compared) return `<span class="muted">${c.Against ? 'no values comparable with the measured commit before' : 'first measured commit'}</span>`;
+    if (!c.Compared) return `<span class="muted">${c.Against ? `no values comparable with ${what || 'the measured commit before'}` : what ? `${what} is not measured` : 'first measured commit'}</span>`;
     const skipped = c.Skipped ? ` <span class="muted small" title="the ${c.Skipped} commit${c.Skipped === 1 ? '' : 's'} before it ${c.Skipped === 1 ? 'was' : 'were'} not measured: compared with the measured commit before those">against ${short(c.Against).slice(0, 8)}, ${c.Skipped} unmeasured between</span>` : '';
     return `<div class="chips">${c.Engines.map(e => `<span class="chip ${Math.abs(e.Geomean) < 0.5 ? '' : e.Geomean < 0 ? 'better' : 'worse'}" title="against the measured commit before: geomean over ${e.N} operations (cycles, else time); ${e.Faster} faster and ${e.Slower} slower by 1% or more">${esc(engName(e.Engine).replace(/^dynamic-ssz /, ''))} <b>${pct(e.Geomean, 1)}</b>${e.Faster || e.Slower ? ` <span class="moved">${e.Faster ? `<span class="better">▼${e.Faster}</span>` : ''}${e.Slower ? `<span class="worse">▲${e.Slower}</span>` : ''}</span>` : ''}</span>`).join('')}${skipped}</div>`;
   };
@@ -455,14 +462,13 @@
   };
   const tagBadges = c => (c.Tags || []).map(t => ` <span class="chip tag">${esc(t)}</span>`).join('');
   // commitDesc: the subject of a commit; its pull request, when it has
-  // one, links to GitHub, and for the mirrored library to the measured
-  // history of the pull request.
+  // one, links to the pull request's page here (the mirrored library) and
+  // to GitHub behind the mark.
   const commitDesc = (v, c) => {
     const desc = esc(c.Desc).replace(/^[0-9a-f]{7,12} /, '');
     if (!c.PR) return `<span class="muted desc" style="display:inline-block;vertical-align:bottom">${desc}</span>`;
-    const gh = v.Repo ? `<a href="${v.Repo}/pull/${c.PR}" target="_blank" rel="noopener" title="the pull request on GitHub">#${c.PR}</a>` : `#${c.PR}`;
-    const history = v.Repo && v.Repo === repo ? ` <a href="#/pr/${c.PR}" class="small" title="every measured head of this pull request">history</a>` : '';
-    const text = desc.endsWith(`(#${c.PR})`) ? `${desc.slice(0, -(`(#${c.PR})`.length))}(${gh}${history})` : `${desc} (${gh}${history})`;
+    const ref = v.Repo && v.Repo === repo ? prRef(c.PR) : `#${c.PR}${v.Repo ? ghLink(`${v.Repo}/pull/${c.PR}`, 'the pull request on GitHub') : ''}`;
+    const text = desc.endsWith(`(#${c.PR})`) ? `${desc.slice(0, -(`(#${c.PR})`.length))}(${ref})` : `${desc} (${ref})`;
     return `<span class="muted desc" style="display:inline-block;vertical-align:bottom">${text}</span>`;
   };
   const repoCommits = (v, commits) => !commits.length ? `<p class="muted">${v.Branch ? 'no commit of the main branch known yet' : 'a fixed version: no branch is followed'}</p>`
@@ -470,13 +476,15 @@
       `<tr class="${c.State ? '' : 'unmeasured'}"><td class="nowrap">${commitLink(c.SHA, v.Name)}${tagBadges(c)}</td><td class="muted nowrap">${commitAge(c.Committed)}</td><td>${commitDesc(v, c)}</td><td>${stepChips(c, v)}</td><td class="num">${c.Runs || ''}</td><td class="muted">${c.Jobs ? `${c.Measured ? when(c.Measured * 1000) : esc(c.State)} · <a href="#/jobs?repo=${encodeURIComponent(v.Name)}&sha=${c.SHA}">${c.Jobs} job${c.Jobs === 1 ? '' : 's'}</a>` : ''}</td></tr>`).join('')}</tbody></table>`;
   const repoTargets = v => (v.Targets || []).map(t => `<span class="chip">${esc(t.Name)} <b>${esc(t.Label)}</b></span> ${commitLink(t.SHA, v.Name)}`).join(' &nbsp; ');
   const repoTitle = v => `${esc(v.Name)} <span class="muted small">${repoLink(v.Name)}</span>`;
+  // repoFacts: what the page knows of the library in one line.
+  const repoFacts = v => [v.Branch ? `${v.Total} commit${v.Total === 1 ? '' : 's'} of ${esc(v.Branch)}, ${v.Measured} measured` : '', v.PullRequests && v.PullRequests.length ? `<a href="#/repo/${encodeURIComponent(v.Name)}">${v.PullRequests.length} open pull request${v.PullRequests.length === 1 ? '' : 's'}</a>` : ''].filter(Boolean).join(' · ');
 
   async function viewRepos() {
     const repos = await get('/api/repos');
-    app.innerHTML = `<h1>Repositories</h1><p class="note">Every measured library with the newest commits of its main branch. A row compares a commit with the one before it, over everything measured of both.</p>` +
-      repos.map(v => `<section class="repo"><h2><a href="#/repo/${encodeURIComponent(v.Name)}">${esc(v.Name)}</a> <span class="muted small">${repoLink(v.Name)}</span></h2>
-        <div class="toolbar">${repoTargets(v)}</div>${repoCommits(v, v.Commits)}
-        <p class="note"><a href="#/repo/${encodeURIComponent(v.Name)}">${v.Total > v.Commits.length ? 'view all commits' : 'repository page'} →</a></p></section>`).join('');
+    app.innerHTML = `<h1>Repositories</h1><p class="note">Every measured library in a box of its own: its targets, the newest commits of its main branch, each compared with the one before it over everything measured of both, and its open pull requests.</p>` +
+      repos.map(v => `<section class="repobox"><h2><a href="#/repo/${encodeURIComponent(v.Name)}">${esc(v.Name)}</a> <span class="muted small">${repoLink(v.Name)}</span></h2>
+        <div class="toolbar">${repoTargets(v)}<span class="muted">${repoFacts(v)}</span></div>${repoCommits(v, v.Commits)}
+        <p class="note"><a href="#/repo/${encodeURIComponent(v.Name)}">${v.Total > v.Commits.length ? 'all commits' : 'repository page'}${v.PullRequests && v.PullRequests.length ? ' and pull requests' : ''} →</a></p></section>`).join('');
   }
 
   // The change column of a library's page is a grid: one column per
@@ -512,29 +520,29 @@
   const stepClass = d => Math.abs(d) < 0.5 ? 'flat' : d < 0 ? 'better' : 'worse';
   const stepPct = d => `<span class="${stepClass(d)}">${pct(d, 1)}</span>`;
   // opGrid: the rows of one commit, one per engine, in operation precision.
-  function opGrid(v, c, i, cols, hidden) {
+  function opGrid(v, c, i, cols, hidden, src, what) {
     const steps = stepsOf(v, c), engines = sortEngines(Object.keys(steps).filter(e => !hidden.has(e)));
-    if (!engines.length) return stepChips(c, v);
+    if (!engines.length) return stepChips(c, v, what);
     const skipped = c.Skipped ? `<div class="muted small">against ${short(c.Against).slice(0, 8)}, ${c.Skipped} unmeasured between</div>` : '';
     return engines.map(e => `<div class="opgrid" ${gridStyle(cols.length)}><span class="eng" title="${esc(engName(e))}">${esc(engName(e).replace(/^dynamic-ssz /, ''))}</span>${cols.map(op => {
       const xs = steps[e][op];
       if (!xs) return '<span></span>';
       const d = geomean(xs);
-      return `<span class="chip ${stepClass(d)}" data-ci="${i}" data-e="${e}" data-op="${esc(op)}"><b>${pct(d, 1)}</b></span>`;
+      return `<span class="chip ${stepClass(d)}" data-ci="${i}" data-src="${src || 'c'}" data-e="${e}" data-op="${esc(op)}"><b>${pct(d, 1)}</b></span>`;
     }).join('')}</div>`).join('') + skipped;
   }
   // engineRows: the rows of one commit in engine precision: one chip per
   // engine with the count of operations that moved.
-  function engineRows(v, c, i, hidden) {
+  function engineRows(v, c, i, hidden, src, what) {
     const engines = (c.Engines || []).filter(e => !hidden.has(e.Engine));
-    if (!c.Compared || !engines.length) return stepChips(Object.assign({}, c, { Engines: engines }), v);
+    if (!c.Compared || !engines.length) return stepChips(Object.assign({}, c, { Engines: engines }), v, what);
     const skipped = c.Skipped ? `<div class="muted small">against ${short(c.Against).slice(0, 8)}, ${c.Skipped} unmeasured between</div>` : '';
-    return engines.map(e => `<div class="oprow"><span class="eng" title="${esc(engName(e.Engine))}">${esc(engName(e.Engine).replace(/^dynamic-ssz /, ''))}</span><span class="chip ${stepClass(e.Geomean)}" data-ci="${i}" data-e="${e.Engine}"><b>${pct(e.Geomean, 1)}</b></span><span class="muted small">${e.N} operations${e.Faster || e.Slower ? `, <span class="better">▼${e.Faster}</span> <span class="worse">▲${e.Slower}</span> by 1% or more` : ''}</span></div>`).join('') + skipped;
+    return engines.map(e => `<div class="oprow"><span class="eng" title="${esc(engName(e.Engine))}">${esc(engName(e.Engine).replace(/^dynamic-ssz /, ''))}</span><span class="chip ${stepClass(e.Geomean)}" data-ci="${i}" data-src="${src || 'c'}" data-e="${e.Engine}"><b>${pct(e.Geomean, 1)}</b></span><span class="muted small">${e.N} operations${e.Faster || e.Slower ? `, <span class="better">▼${e.Faster}</span> <span class="worse">▲${e.Slower}</span> by 1% or more` : ''}</span></div>`).join('') + skipped;
   }
   // stepCallout: the breakdown behind a chip: per payload type for an
   // operation, per operation for an engine.
-  function stepCallout(v, c, e, op) {
-    const steps = stepsOf(v, c), against = `against ${short(c.Against).slice(0, 8)}${c.Skipped ? `, ${c.Skipped} unmeasured between` : ''}`;
+  function stepCallout(v, c, e, op, what) {
+    const steps = stepsOf(v, c), against = `against ${what ? what + ' ' : ''}${short(c.Against).slice(0, 8)}${c.Skipped ? `, ${c.Skipped} unmeasured between` : ''}`;
     const ops = steps[e] || {};
     if (op) {
       const xs = ops[op] || [];
@@ -574,26 +582,36 @@
     const tabs = (id, items, cur) => `<div class="tabs" id="${id}">${items.map(([k, label]) => `<button data-k="${k}" class="${k === cur ? 'active' : ''}">${esc(label)}</button>`).join('')}</div>`;
     // The operations of the page, the columns of the change grid.
     const cols = [...new Set((v.Leaves || []).map(l => opLabel(l.Engine, l.Op)))].sort((a, b) => opRank(a) - opRank(b));
-    const changeHead = precision === 'ops'
-      ? `<div>Change against the measured commit before <span class="muted" style="text-transform:none">(per engine and operation, geomean over the payload types; hover a value for the types)</span></div>${opGridHead(cols)}`
-      : `Change against the measured commit before <span class="muted" style="text-transform:none">(per engine, geomean over its operations; hover a value for the operations)</span>`;
+    const changeHead = against => precision === 'ops'
+      ? `<div>Change against ${against} <span class="muted" style="text-transform:none">(per engine and operation, geomean over the payload types; hover a value for the types)</span></div>${opGridHead(cols)}`
+      : `Change against ${against} <span class="muted" style="text-transform:none">(per engine, geomean over its operations; hover a value for the operations)</span>`;
+    const change = (c, i, src, what) => precision === 'ops' && c.Compared ? opGrid(v, c, i, cols, hidden, src, what) : engineRows(v, c, i, hidden, src, what);
+    const measured = c => c.Jobs ? `${c.Measured ? when(c.Measured * 1000) : esc(c.State)} · <a href="#/jobs?repo=${encodeURIComponent(v.Name)}&sha=${c.SHA}">${c.Jobs} job${c.Jobs === 1 ? '' : 's'}</a>` : '';
     const rows = commits => !commits.length ? repoCommits(v, commits)
-      : `<table class="commits"><thead><tr><th>Commit</th><th>Date</th><th>Description</th><th>${changeHead}</th><th class="num">Runs</th><th>Measured</th></tr></thead><tbody>${commits.map((c, i) => {
-        return `<tr class="${c.State ? '' : 'unmeasured'}"><td class="nowrap">${commitLink(c.SHA, v.Name)}${tagBadges(c)}</td><td class="muted nowrap">${commitAge(c.Committed)}</td><td>${commitDesc(v, c)}</td><td>${precision === 'ops' && c.Compared ? opGrid(v, c, i, cols, hidden) : engineRows(v, c, i, hidden)}</td><td class="num">${c.Runs || ''}</td><td class="muted nowrap">${c.Jobs ? `${c.Measured ? when(c.Measured * 1000) : esc(c.State)} · <a href="#/jobs?repo=${encodeURIComponent(v.Name)}&sha=${c.SHA}">${c.Jobs} job${c.Jobs === 1 ? '' : 's'}</a>` : ''}</td></tr>`;
+      : `<table class="commits"><thead><tr><th>Commit</th><th>Date</th><th>Description</th><th>${changeHead('the measured commit before')}</th><th class="num">Runs</th><th>Measured</th></tr></thead><tbody>${commits.map((c, i) => {
+        return `<tr class="${c.State ? '' : 'unmeasured'}"><td class="nowrap">${commitLink(c.SHA, v.Name)}${tagBadges(c)}</td><td class="muted nowrap">${commitAge(c.Committed)}</td><td>${commitDesc(v, c)}</td><td>${change(c, i, 'c')}</td><td class="num">${c.Runs || ''}</td><td class="muted nowrap">${measured(c)}</td></tr>`;
       }).join('')}</tbody></table>`;
+    // The open pull requests, each head against the head of the main
+    // branch: the pooled values of both, within one harness version.
+    const headOf = `the head of ${esc(v.Branch || 'the main branch')}`;
+    const prs = v.PullRequests || [];
+    const prRows = () => `<table class="commits"><thead><tr><th>Pull request</th><th>Branch</th><th>Head</th><th>Title</th><th>${changeHead(headOf)}</th><th class="num">Runs</th><th>Measured</th></tr></thead><tbody>${prs.map((c, i) =>
+      `<tr class="${c.State ? '' : 'unmeasured'}"><td class="nowrap">${prRef(c.Number)}</td><td class="mono nowrap">${esc(c.Branch)}${c.Fork ? ' <span class="chip" title="a fork: its head is measured once a maintainer approves it">fork</span>' : ''}</td><td class="nowrap">${commitLink(c.SHA, v.Name)}</td><td><span class="muted desc" style="display:inline-block;vertical-align:bottom">${esc(c.Desc)}</span></td><td>${change(c, i, 'p', headOf)}</td><td class="num">${c.Runs || ''}</td><td class="muted nowrap">${measured(c)}</td></tr>`).join('')}</tbody></table>`;
+    const prSection = prs.length ? `<h2 id="prs">Open pull requests <span class="muted small">newest first; a head against ${headOf}</span></h2>${prRows()}` : '';
     const charted = engines.length && chain.length > 1;
     app.innerHTML = `<h1>${repoTitle(v)} <a class="agent" href="/repo/${encodeURIComponent(name)}.md${page > 1 ? '?page=' + page : ''}" title="this page as text, for an agent">text</a></h1>
       <div class="toolbar">${repoTargets(v)}<span class="muted">${v.Total} commit${v.Total === 1 ? '' : 's'} of ${esc(v.Branch || 'the main branch')}, ${v.Measured} measured</span></div>
       ${charted ? `<div class="toolbar">${tabs('repoEngine', engines.map(e => [e, engName(e)]), engine)}${tabs('repoMetric', [['ns', 'Time'], ['cycles', 'Cycles']], useNs ? 'ns' : 'cycles')}${tabs('repoAgg', [['geomean', 'Mean over payload types'], ['sum', 'Sum']], agg)}</div>
       <p class="note">One line per operation: its ${useNs ? 'time' : 'cycles'} per call at every measured commit, ${agg === 'sum' ? 'summed over the payload types (the largest type dominates)' : 'as the geometric mean over the payload types (every type counts alike)'}. Operations of one kind (unmarshalling, marshalling, hashing) share a chart and its scale.</p>
       <div id="repoCharts"></div>` : ''}
-      <h2>Commits <span class="muted small">newest first</span></h2>
       ${engines.length ? `<div class="toolbar"><span class="muted">detail</span>${tabs('repoPrecision', [['engines', 'Engines'], ['ops', 'Operations']], precision)}<span class="muted">show</span><span id="repoHidden">${engines.map(e => `<a class="chip toggle ${hidden.has(e) ? 'off' : 'commit'}" data-e="${e}" title="click to ${hidden.has(e) ? 'show' : 'hide'}">${esc(engName(e))}</a>`).join(' ')}</span></div>` : ''}
+      ${prSection}
+      <h2>Commits <span class="muted small">newest first</span></h2>
       ${pager}${rows(v.Commits)}${pager}`;
     const again = () => viewRepo(name, page);
     ['repoEngine', 'repoMetric', 'repoAgg', 'repoPrecision'].forEach(id => document.querySelectorAll(`#${id} button`).forEach(b => b.onclick = () => { localStorage.setItem(id, b.dataset.k); again(); }));
     document.querySelectorAll('#repoHidden a').forEach(a => a.onclick = () => { hidden.has(a.dataset.e) ? hidden.delete(a.dataset.e) : hidden.add(a.dataset.e); localStorage.setItem('repoHidden', [...hidden].join(',')); again(); });
-    document.querySelectorAll('table.commits').forEach(t => bindCallouts(t, '.chip[data-ci]', el => stepCallout(v, v.Commits[+el.dataset.ci], el.dataset.e, el.dataset.op)));
+    document.querySelectorAll('table.commits').forEach(t => bindCallouts(t, '.chip[data-ci]', el => el.dataset.src === 'p' ? stepCallout(v, prs[+el.dataset.ci], el.dataset.e, el.dataset.op, headOf) : stepCallout(v, v.Commits[+el.dataset.ci], el.dataset.e, el.dataset.op)));
     destroyCharts();
     if (!charted) return;
     // Per operation the payload types every measured commit has a value
@@ -1042,7 +1060,7 @@
       ${live}
       <div class="cards">
         <div class="card"><h3>Head</h3><div class="mono">${commitLink(j.HeadSHA, j.Subject)} ${esc(j.HeadDesc).replace(/^[0-9a-f]{7} /, '')}</div><div class="sub mono">${esc(j.Branch)}${prLink(j)}</div></div>
-        <div class="card"${j.BaseSHA ? '' : ' style="display:none"'}><h3>Base (${esc(j.BaseRef)})</h3><div class="mono">${commitLink(j.BaseSHA)} ${esc(j.BaseDesc).replace(/^[0-9a-f]{7} /, '')}</div>${j.BaseSHA !== j.HeadSHA ? `<div class="sub"><a href="${repo}/compare/${j.BaseSHA}...${j.HeadSHA}" target="_blank" rel="noopener">diff on GitHub</a></div>` : ''}</div>
+        <div class="card"${j.BaseSHA ? '' : ' style="display:none"'}><h3>Base (${esc(j.BaseRef)})</h3><div class="mono">${commitLink(j.BaseSHA)} ${esc(j.BaseDesc).replace(/^[0-9a-f]{7} /, '')}</div>${j.BaseSHA !== j.HeadSHA ? `<div class="sub">diff${ghLink(`${repo}/compare/${j.BaseSHA}...${j.HeadSHA}`, 'the diff on GitHub')}</div>` : ''}</div>
         <div class="card"><h3>Measurement</h3><div class="mono">${j.Passes} passes${j.Seconds ? ', ' + dur(j.Seconds) : ''}${runs}</div><div class="sub">runner ${esc(j.Runner || '-')}</div><div class="sub">${esc(j.GoVersion)} · harness ${j.Harness}${d.Steal ? ` · ${d.Steal} steal ticks (wake-ups, within the limit)` : ' · no steal'}</div><div class="sub">queued ${when(j.Created)} · finished ${when(j.Finished)}</div></div>
         ${buildCard(d.Builds)}
         <div class="card"${oneSided ? ' style="display:none"' : ''}><h3>Ratio per engine <span class="muted" style="text-transform:none">(cycles when counted, else time)</span></h3><div class="chips">${engineTotals(d.Summaries || []).map(x => `<span class="chip" title="geomean of head/base ${x.Cycles ? 'cycles' : 'time'} over ${x.N} operations of every object">${engName(x.Engine)} <b>${pct(x.Geomean, 1)}</b></span>`).join('') || '<span class="muted">-</span>'}</div><details class="small" style="margin-top:6px"><summary>per object</summary><div class="chips" style="margin-top:4px">${objectTotals(d.Summaries || []).map(x => `<span class="chip" title="geomean over ${x.N} operations">${engName(x.Engine)}·${x.Object} <b>${pct(x.Geomean, 1)}</b></span>`).join('')}</div></details></div>
@@ -1232,7 +1250,7 @@
     let leaf = leaves.includes(prLeaf) ? prLeaf : '';
     if (prMode === 'abs' && !leaf) leaf = leaves.includes('FuluState/HashTreeRoot') ? 'FuluState/HashTreeRoot' : (leaves[0] || '');
     const count = d.Rows.filter(r => !r.Detached).length;
-    app.innerHTML = `<h1>Pull request <a href="${repo}/pull/${d.PR}" target="_blank" rel="noopener">#${d.PR}</a> <span class="mono muted" style="font-size:13px;font-weight:400">${esc(d.Branch || '')}</span></h1>
+    app.innerHTML = `<h1>Pull request #${d.PR}${ghLink(`${repo}/pull/${d.PR}`, 'the pull request on GitHub')} <span class="mono muted" style="font-size:13px;font-weight:400">${esc(d.Branch || '')}</span></h1>
       <div class="toolbar">${metricTabs()}<div class="tabs" id="prMode"><button data-mode="rel" class="${prMode === 'rel' ? 'active' : ''}">change against the base</button><button data-mode="abs" class="${prMode === 'abs' ? 'active' : ''}">measured values</button></div>
         <select id="prLeaf">${prMode === 'rel' ? `<option value="">all operations (geomean)</option>` : ''}${leaves.map(l => `<option value="${l}" ${l === leaf ? 'selected' : ''}>${l.replace('/', ' / ')}</option>`).join('')}</select>
         <span class="muted">${measured.length} of ${count} commits measured</span></div>

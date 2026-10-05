@@ -292,6 +292,14 @@ func openDB(path string) (*store, error) {
 			at INTEGER NOT NULL,
 			PRIMARY KEY (pr, head_sha)
 		)`,
+		`CREATE TABLE IF NOT EXISTS pull_requests (
+			number INTEGER PRIMARY KEY,
+			title TEXT NOT NULL,
+			branch TEXT NOT NULL,
+			head_sha TEXT NOT NULL,
+			base_ref TEXT NOT NULL,
+			fork INTEGER NOT NULL
+		)`,
 		`CREATE TABLE IF NOT EXISTS seen_refs (
 			ref TEXT PRIMARY KEY,
 			sha TEXT NOT NULL
@@ -1090,6 +1098,56 @@ func (s *store) setHarnessLeaves(hash string, leaves []leaf) error {
 		}
 	}
 	return tx.Commit()
+}
+
+// openPR is an open pull request of the mirrored library as the daemon
+// last saw it: its head is measured when it is a branch of the repository
+// (or an approved fork head).
+type openPR struct {
+	Number  int
+	Title   string
+	Branch  string // head branch; owner:branch for a fork
+	HeadSHA string
+	BaseRef string
+	Fork    bool
+}
+
+// savePullRequests replaces the stored open pull requests.
+func (s *store) savePullRequests(prs []openPR) error {
+	tx, err := s.db.Begin()
+	if err != nil {
+		return err
+	}
+	if _, err := tx.Exec(`DELETE FROM pull_requests`); err != nil {
+		tx.Rollback()
+		return err
+	}
+	for _, pr := range prs {
+		if _, err := tx.Exec(`INSERT INTO pull_requests(number, title, branch, head_sha, base_ref, fork) VALUES(?, ?, ?, ?, ?, ?)`,
+			pr.Number, pr.Title, pr.Branch, pr.HeadSHA, pr.BaseRef, pr.Fork); err != nil {
+			tx.Rollback()
+			return err
+		}
+	}
+	return tx.Commit()
+}
+
+// openPullRequests lists the stored open pull requests, newest first.
+func (s *store) openPullRequests() ([]openPR, error) {
+	rows, err := s.db.Query(`SELECT number, title, branch, head_sha, base_ref, fork FROM pull_requests ORDER BY number DESC`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []openPR
+	for rows.Next() {
+		var pr openPR
+		if err := rows.Scan(&pr.Number, &pr.Title, &pr.Branch, &pr.HeadSHA, &pr.BaseRef, &pr.Fork); err != nil {
+			return nil, err
+		}
+		out = append(out, pr)
+	}
+	return out, rows.Err()
 }
 
 func (s *store) setKV(key, value string) error {

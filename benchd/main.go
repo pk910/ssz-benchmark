@@ -154,6 +154,7 @@ func main() {
 		log.Fatal(err)
 	}
 	sched := &scheduler{cfg: cfg, db: db, git: git, prs: newPRCache(cfg.github, cfg.token), ready: make(chan struct{})}
+	sched.prs.store = db
 	local := &localStore{db: db, sched: sched, local: cfg.name, rule: cfg.rule}
 	if cfg.ghAppID != "" {
 		app, err := loadGHApp(cfg.ghAppID, cfg.ghInstallationID, cfg.ghAppKey)

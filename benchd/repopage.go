@@ -60,15 +60,130 @@ type repoCommit struct {
 
 type repoTarget struct{ Name, Label, SHA string }
 
+// repoPR is an open pull request of the mirrored library with its head
+// compared against the head of the main branch (from the pooled values of
+// both, within one harness version).
+type repoPR struct {
+	repoCommit // the head: SHA, Desc is the title, Against the main head
+	Number     int
+	Branch     string // head branch; owner:branch for a fork
+	BaseRef    string
+	Fork       bool
+}
+
 type repoView struct {
-	Name, Repo string
-	Branch     string // of the master target; empty without one
-	Targets    []repoTarget
-	Total      int // commits of the main branch
-	PageSize   int
-	Measured   int // of them measured
-	Commits    []repoCommit
-	Leaves     []leaf `json:",omitempty"`
+	Name, Repo   string
+	Branch       string // of the master target; empty without one
+	Targets      []repoTarget
+	Total        int // commits of the main branch
+	PageSize     int
+	Measured     int // of them measured
+	Commits      []repoCommit
+	PullRequests []repoPR `json:",omitempty"` // open, the mirrored library only
+	Leaves       []leaf   `json:",omitempty"`
+}
+
+// commitStep is the change of one operation between two commits: the
+// ratio of time and of cycles; zero where one of the two has no value.
+type commitStep struct{ ns, cycles float64 }
+
+// harnessValues are the pooled values of one commit under one harness
+// version, with the newest job that measured it.
+type harnessValues struct {
+	job    int64
+	values map[leaf]commitValue
+}
+
+// newestValues picks the harness version a commit has the newest values of.
+func newestValues(cur map[string]*harnessValues) *harnessValues {
+	var own *harnessValues
+	for _, h := range cur {
+		if own == nil || h.job > own.job {
+			own = h
+		}
+	}
+	return own
+}
+
+// compareValues compares a commit's values with another commit's under
+// the newest harness version both have: per engine the geomean over its
+// operations (the async hashing among them) and the counts of operations
+// that moved, and per leaf the step. ok is false when the two share no
+// harness version.
+func compareValues(cur, prev map[string]*harnessValues) ([]repoEngine, map[leaf]commitStep, bool) {
+	var a, b *harnessValues
+	for harness, h := range cur {
+		if p := prev[harness]; p != nil && (a == nil || h.job > a.job) {
+			a, b = h, p
+		}
+	}
+	if a == nil {
+		return nil, nil, false
+	}
+	steps := make(map[leaf]commitStep, len(a.values))
+	type acc struct {
+		sum            float64
+		n              int
+		faster, slower int
+	}
+	engines := map[string]*acc{}
+	for l, cv := range a.values {
+		pv, ok := b.values[l]
+		if !ok {
+			continue
+		}
+		var st commitStep
+		if cv.Ns > 0 && pv.Ns > 0 {
+			st.ns = cv.Ns / pv.Ns
+		}
+		if cv.Cycles > 0 && pv.Cycles > 0 {
+			st.cycles = cv.Cycles / pv.Cycles
+		}
+		steps[l] = st
+		ratio := st.cycles
+		if ratio == 0 || isAsync(l.Engine) {
+			ratio = st.ns
+		}
+		if ratio <= 0 {
+			continue
+		}
+		e := engines[baseEngine(l.Engine)]
+		if e == nil {
+			e = &acc{}
+			engines[baseEngine(l.Engine)] = e
+		}
+		e.sum += math.Log(ratio)
+		e.n++
+		if d := (ratio - 1) * 100; d <= -stepMoved {
+			e.faster++
+		} else if d >= stepMoved {
+			e.slower++
+		}
+	}
+	out := make([]repoEngine, 0, len(engines))
+	for name, e := range engines {
+		out = append(out, repoEngine{Engine: name, Geomean: (math.Exp(e.sum/float64(e.n)) - 1) * 100, N: e.n, Faster: e.faster, Slower: e.slower})
+	}
+	sort.Slice(out, func(x, y int) bool { return leafLess("", "", out[x].Engine, "", "", out[y].Engine) })
+	return out, steps, true
+}
+
+// fill writes a commit's own values and its steps per leaf of the page.
+func (c *repoCommit) fill(leaves []leaf, own *harnessValues, steps map[leaf]commitStep) {
+	if own != nil {
+		c.Values = make([][2]float64, len(leaves))
+		for k, l := range leaves {
+			cv := own.values[l]
+			c.Values[k] = [2]float64{cv.Ns, cv.Cycles}
+		}
+	}
+	if steps != nil {
+		c.Steps = make([][2]float64, len(leaves))
+		for k, l := range leaves {
+			st := steps[l]
+			c.Steps[k] = [2]float64{st.ns, st.cycles}
+		}
+	}
 }
 
 // repoPage is how many commits a page of a library's history holds.
@@ -162,11 +277,7 @@ func (w *webServer) repoView(sub *subject, offset, limit int, steps bool) (*repo
 	v.Total, v.PageSize = len(commits), repoPage
 
 	// The pooled values of every commit, per harness version.
-	type hv struct {
-		job    int64
-		values map[leaf]commitValue
-	}
-	values := map[string]map[string]*hv{}
+	values := map[string]map[string]*harnessValues{}
 	rows, err = w.db.db.Query(`SELECT sha, harness, engine, object, op, job_id, n, ns, cycles FROM commit_values WHERE subject = ?`, sub.Name)
 	if err != nil {
 		return nil, err
@@ -179,11 +290,11 @@ func (w *webServer) repoView(sub *subject, offset, limit int, steps bool) (*repo
 			return nil, err
 		}
 		if values[sha] == nil {
-			values[sha] = map[string]*hv{}
+			values[sha] = map[string]*harnessValues{}
 		}
 		h := values[sha][harness]
 		if h == nil {
-			h = &hv{values: map[leaf]commitValue{}}
+			h = &harnessValues{values: map[leaf]commitValue{}}
 			values[sha][harness] = h
 		}
 		h.job = max(h.job, cv.JobID)
@@ -192,27 +303,16 @@ func (w *webServer) repoView(sub *subject, offset, limit int, steps bool) (*repo
 	rows.Close()
 
 	seen := map[leaf]bool{}
-	type step struct{ ns, cycles float64 }
-	perCommit := make([]map[leaf]step, len(commits))
-	owns := make([]*hv, len(commits))
+	perCommit := make([]map[leaf]commitStep, len(commits))
+	owns := make([]*harnessValues, len(commits))
 	for i := range commits {
 		c := &commits[i]
-		cur := values[c.SHA]
-		// The newest harness version the commit has values of gives its
-		// number of runs; the newest both have gives the comparison.
-		var own *hv
-		for _, h := range cur {
-			if own == nil || h.job > own.job {
-				own = h
-			}
-		}
-		if own != nil {
-			for _, cv := range own.values {
-				c.Runs = max(c.Runs, cv.N)
-			}
-		}
+		own := newestValues(values[c.SHA])
 		if own == nil {
 			continue
+		}
+		for _, cv := range own.values {
+			c.Runs = max(c.Runs, cv.N)
 		}
 		v.Measured++
 		owns[i] = own
@@ -231,67 +331,78 @@ func (w *webServer) repoView(sub *subject, offset, limit int, steps bool) (*repo
 			continue
 		}
 		c.Against, c.Skipped = commits[before].SHA, before-i-1
-		prev := values[commits[before].SHA]
-		var a, b *hv
-		for harness, h := range cur {
-			if p := prev[harness]; p != nil && (a == nil || h.job > a.job) {
-				a, b = h, p
-			}
-		}
-		if a == nil {
+		engines, steps, ok := compareValues(values[c.SHA], values[commits[before].SHA])
+		if !ok {
 			continue
 		}
-		c.Compared = true
-		perCommit[i] = map[leaf]step{}
-		type acc struct {
-			sum            float64
-			n              int
-			faster, slower int
-		}
-		engines := map[string]*acc{}
-		for l, cv := range a.values {
-			pv, ok := b.values[l]
-			if !ok {
-				continue
-			}
-			var st step
-			if cv.Ns > 0 && pv.Ns > 0 {
-				st.ns = cv.Ns / pv.Ns
-			}
-			if cv.Cycles > 0 && pv.Cycles > 0 {
-				st.cycles = cv.Cycles / pv.Cycles
-			}
-			perCommit[i][l] = st
+		c.Compared, c.Engines, perCommit[i] = true, engines, steps
+		for l := range steps {
 			seen[l] = true
-			ratio := st.cycles
-			if ratio == 0 || isAsync(l.Engine) {
-				ratio = st.ns
-			}
-			if ratio <= 0 {
-				continue
-			}
-			e := engines[baseEngine(l.Engine)]
-			if e == nil {
-				e = &acc{}
-				engines[baseEngine(l.Engine)] = e
-			}
-			e.sum += math.Log(ratio)
-			e.n++
-			if d := (ratio - 1) * 100; d <= -stepMoved {
-				e.faster++
-			} else if d >= stepMoved {
-				e.slower++
+		}
+	}
+
+	// The open pull requests of the mirrored library, each head against
+	// the head of the main branch.
+	var prOwns []*harnessValues
+	var prSteps []map[leaf]commitStep
+	if sub.mirrored() {
+		var master string
+		for _, t := range v.Targets {
+			if t.Name == targetMaster {
+				master = t.SHA
 			}
 		}
-		for name, e := range engines {
-			c.Engines = append(c.Engines, repoEngine{Engine: name, Geomean: (math.Exp(e.sum/float64(e.n)) - 1) * 100, N: e.n, Faster: e.faster, Slower: e.slower})
+		prs, _ := w.db.openPullRequests()
+		for _, pr := range prs {
+			c := repoPR{Number: pr.Number, Branch: pr.Branch, BaseRef: pr.BaseRef, Fork: pr.Fork}
+			c.SHA, c.Desc = pr.HeadSHA, pr.Title
+			var newest int64
+			var state string
+			var done int
+			_ = w.db.db.QueryRow(`SELECT coalesce(max(id), 0), count(*), coalesce(max(finished), 0), sum(state = ?) FROM jobs WHERE subject = ? AND head_sha = ?`,
+				stateDone, sub.Name, pr.HeadSHA).Scan(&newest, &c.Jobs, &c.Measured, &done)
+			if newest > 0 {
+				_ = w.db.db.QueryRow(`SELECT state FROM jobs WHERE id = ?`, newest).Scan(&state)
+			}
+			switch {
+			case done > 0:
+				c.State = stateDone
+			default:
+				c.State = state
+			}
+			own := newestValues(values[pr.HeadSHA])
+			var steps map[leaf]commitStep
+			if own != nil {
+				for _, cv := range own.values {
+					c.Runs = max(c.Runs, cv.N)
+				}
+				c.State = stateDone
+				if master != "" {
+					c.Against = master
+					var engines []repoEngine
+					engines, steps, c.Compared = compareValues(values[pr.HeadSHA], values[master])
+					c.Engines = engines
+					for l := range steps {
+						seen[l] = true
+					}
+				}
+			}
+			v.PullRequests = append(v.PullRequests, c)
+			prOwns = append(prOwns, own)
+			prSteps = append(prSteps, steps)
 		}
-		sort.Slice(c.Engines, func(x, y int) bool { return leafLess("", "", c.Engines[x].Engine, "", "", c.Engines[y].Engine) })
 	}
 	if steps {
 		for i := offset; i < min(len(commits), offset+limit); i++ {
 			if owns[i] != nil {
 				for l := range owns[i].values {
+					seen[l] = true
+				}
+			}
+		}
+		for _, own := range prOwns {
+			if own != nil {
+				for l := range own.values {
 					seen[l] = true
 				}
 			}
@@ -303,21 +414,10 @@ func (w *webServer) repoView(sub *subject, offset, limit int, steps bool) (*repo
 			return leafLess(v.Leaves[a].Object, v.Leaves[a].Op, v.Leaves[a].Engine, v.Leaves[b].Object, v.Leaves[b].Op, v.Leaves[b].Engine)
 		})
 		for i := offset; i < min(len(commits), offset+limit); i++ {
-			if owns[i] != nil {
-				commits[i].Values = make([][2]float64, len(v.Leaves))
-				for k, l := range v.Leaves {
-					cv := owns[i].values[l]
-					commits[i].Values[k] = [2]float64{cv.Ns, cv.Cycles}
-				}
-			}
-			if perCommit[i] == nil {
-				continue
-			}
-			commits[i].Steps = make([][2]float64, len(v.Leaves))
-			for k, l := range v.Leaves {
-				st := perCommit[i][l]
-				commits[i].Steps[k] = [2]float64{st.ns, st.cycles}
-			}
+			commits[i].fill(v.Leaves, owns[i], perCommit[i])
+		}
+		for i := range v.PullRequests {
+			v.PullRequests[i].fill(v.Leaves, prOwns[i], prSteps[i])
 		}
 	}
 	offset = min(offset, len(commits))
