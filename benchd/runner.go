@@ -163,11 +163,19 @@ func (r *runner) goVersion() string {
 // with: its sources without the baseline libraries, so a change to those
 // does not separate the runs of a commit pair.
 func harnessHash(dir string) (string, error) {
-	return hashTree(dir, func(rel string) bool { return !strings.HasPrefix(rel, "baselines/") })
+	return hashTree(dir, func(rel string) bool { return !strings.HasPrefix(rel, "baselines/") && harnessSource(rel) })
 }
 
-// hashTree hashes the Go sources, module files and generation recipes
-// under dir that keep accepts (generated gen_* files follow from the rest).
+// harnessSource reports whether a file of the harness is a source its
+// version depends on: Go sources (generated gen_* files follow from the
+// rest), module files and generation recipes.
+func harnessSource(rel string) bool {
+	name := filepath.Base(rel)
+	recipe := name == "generate.sh" || name == "order.txt" || strings.HasSuffix(name, ".yaml")
+	return (strings.HasSuffix(name, ".go") && !strings.HasPrefix(name, "gen_")) || name == "go.mod" || name == "go.sum" || recipe
+}
+
+// hashTree hashes the files under dir that keep accepts.
 func hashTree(dir string, keep func(rel string) bool) (string, error) {
 	h := sha256.New()
 	var files []string
@@ -178,13 +186,8 @@ func hashTree(dir string, keep func(rel string) bool) (string, error) {
 		if info.IsDir() {
 			return nil
 		}
-		name := info.Name()
 		rel, _ := filepath.Rel(dir, path)
-		if !keep(filepath.ToSlash(rel)) {
-			return nil
-		}
-		recipe := name == "generate.sh" || name == "order.txt" || strings.HasSuffix(name, ".yaml")
-		if (strings.HasSuffix(name, ".go") && !strings.HasPrefix(name, "gen_")) || name == "go.mod" || name == "go.sum" || recipe {
+		if keep(filepath.ToSlash(rel)) {
 			files = append(files, path)
 		}
 		return nil
@@ -216,6 +219,9 @@ type side struct {
 	// option of the library the checkout lacks (package feat of the
 	// harness), which leaves the engines that need it out.
 	tags []string
+	// wrap is benchwrap for an adapter of another language: the binaries
+	// are launchers it runs.
+	wrap string
 }
 
 // libraryOptions are the options of the library that not every version
@@ -579,6 +585,9 @@ func (r *runner) buildHarness(ctx context.Context, s *side, logw func(string, ..
 // generator, then one test binary per fork and layout seed.
 func (r *runner) buildAdapter(ctx context.Context, s *side, lib *subject, logw func(string, ...any)) error {
 	s.bins = map[string]map[string]string{}
+	if lib.Exec {
+		return r.buildExecAdapter(ctx, s, lib, logw)
+	}
 	if data, err := os.ReadFile(filepath.Join(s.hdir, "ok")); err == nil {
 		for _, pkg := range strings.Fields(string(data)) {
 			s.bins[pkg] = map[string]string{}
@@ -650,6 +659,90 @@ func (r *runner) buildAdapter(ctx context.Context, s *side, lib *subject, logw f
 		return err
 	}
 	writeBuildNote(s.hdir, time.Since(start).Seconds())
+	logw("%s built at %s in %s (%s)", lib.Name, s.sha, time.Since(start).Round(time.Second), strings.Join(built, ", "))
+	return nil
+}
+
+// buildExecAdapter builds an adapter of another language: a copy of the
+// harness in which the adapter's build.sh fetches the library at the
+// commit, installs or updates the toolchain it needs under the toolchain
+// directory, builds, and leaves one launcher per fork under out/ (and one
+// per fork and seed, <fork>-<seed>, when the language can shuffle the
+// layout); benchwrap, built here, runs them.
+func (r *runner) buildExecAdapter(ctx context.Context, s *side, lib *subject, logw func(string, ...any)) error {
+	s.wrap = filepath.Join(s.hdir, "benchwrap")
+	register := func() bool {
+		data, err := os.ReadFile(filepath.Join(s.hdir, "ok"))
+		if err != nil {
+			return false
+		}
+		if _, err := os.Stat(s.wrap); err != nil {
+			return false
+		}
+		for _, pkg := range strings.Fields(string(data)) {
+			fork := strings.TrimPrefix(pkg, lib.Adapter+"-")
+			s.bins[pkg] = map[string]string{}
+			for _, seed := range r.seeds {
+				launcher := filepath.Join(s.hdir, "out", fork+"-"+seed)
+				if _, err := os.Stat(launcher); err != nil {
+					launcher = filepath.Join(s.hdir, "out", fork)
+				}
+				s.bins[pkg][seed] = launcher
+			}
+		}
+		return len(s.bins) > 0
+	}
+	if register() {
+		return nil
+	}
+	start := time.Now()
+	_ = os.RemoveAll(s.hdir)
+	if err := copyTree(r.cfg.harnessDir, s.hdir); err != nil {
+		return err
+	}
+	if err := os.MkdirAll(filepath.Join(s.hdir, "out"), 0o755); err != nil {
+		return err
+	}
+	if err := r.own(s.hdir); err != nil {
+		return err
+	}
+	if err := runLogged(r.goCmd(ctx, s.hdir, "build", "-o", s.wrap, "./benchwrap")); err != nil {
+		return fmt.Errorf("benchwrap: %w", err)
+	}
+	// The toolchains belong to the sandbox user, which installs them.
+	if _, err := os.Stat(r.cfg.toolchainDir); err != nil {
+		if err := os.MkdirAll(r.cfg.toolchainDir, 0o755); err != nil {
+			return err
+		}
+		if err := r.own(r.cfg.toolchainDir); err != nil {
+			return err
+		}
+	}
+	libDir := filepath.Join(s.hdir, "baselines", lib.Adapter)
+	name, args, env := r.building("bash", "build.sh", s.sha, filepath.Join(s.hdir, "out"))
+	build := r.sandboxed(ctx, true, name, args...)
+	build.Dir = libDir
+	build.Env = append(append(build.Env, env...), "BENCH_TOOLCHAINS="+r.cfg.toolchainDir, "BENCH_SEEDS="+strings.Join(r.seeds, ","), "BENCH_JOBS="+strconv.Itoa(cpuCount(r.cfg.buildCPUs)))
+	if err := runLogged(build); err != nil {
+		return fmt.Errorf("build: %w", err)
+	}
+	var built []string
+	for _, fork := range r.cfg.packages {
+		if _, err := os.Stat(filepath.Join(s.hdir, "out", fork)); err == nil {
+			built = append(built, lib.Adapter+"-"+fork)
+		}
+	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if len(built) == 0 {
+		return fmt.Errorf("build.sh left no launcher under out/")
+	}
+	if err := os.WriteFile(filepath.Join(s.hdir, "ok"), []byte(strings.Join(built, " ")), 0o644); err != nil {
+		return err
+	}
+	writeBuildNote(s.hdir, time.Since(start).Seconds())
+	register()
 	logw("%s built at %s in %s (%s)", lib.Name, s.sha, time.Since(start).Round(time.Second), strings.Join(built, ", "))
 	return nil
 }
@@ -1417,7 +1510,13 @@ func (r *runner) runBinary(ctx context.Context, s *side, pkg, seed, pattern, ben
 	if arch == "amd64" {
 		arch = "x86_64"
 	}
-	args := []string{arch, "-R", "taskset", "-c", r.cfg.cpus, bin, "-test.run", "^$", "-test.bench", pattern, "-test.benchmem", "-test.benchtime", benchTime, "-test.count", "1", "-test.timeout", "60m"}
+	args := []string{arch, "-R", "taskset", "-c", r.cfg.cpus}
+	if s.wrap != "" {
+		args = append(args, s.wrap, "-adapter", bin)
+	} else {
+		args = append(args, bin)
+	}
+	args = append(args, "-test.run", "^$", "-test.bench", pattern, "-test.benchmem", "-test.benchtime", benchTime, "-test.count", "1", "-test.timeout", "60m")
 	cmd := r.sandboxed(ctx, false, "setarch", args...)
 	cmd.Dir = s.hdir
 	// GOGC=off: the harness collects between iterations with the timer

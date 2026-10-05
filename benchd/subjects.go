@@ -7,7 +7,9 @@ import (
 	"io"
 	"log"
 	"net/http"
+	"os"
 	"os/exec"
+	"path/filepath"
 	"regexp"
 	"sort"
 	"strconv"
@@ -41,6 +43,7 @@ type target struct {
 	TagMatch  string   // the highest version among the tags matching this pattern
 	PinRepo   string   // the version PinModule has in the go.mod of this repository's latest release
 	PinModule string
+	Npm       string // the commit the latest version of this npm package was published from
 }
 
 type subject struct {
@@ -50,6 +53,10 @@ type subject struct {
 	// commit by its recipe. Empty: the harness packages themselves, built
 	// against a checkout from the mirror.
 	Adapter string
+	// Exec marks an adapter of another language: its recipe is build.sh,
+	// which leaves one launcher per fork, run through benchwrap (see
+	// harness/benchwrap) instead of a Go test binary.
+	Exec    bool
 	Targets []target
 	// Weight scales how much of the idle time the library's commits get
 	// next to the others' (0 counts as 1).
@@ -74,6 +81,22 @@ var subjects = []subject{
 	// main once the work is merged there.
 	{Name: "methodical-ssz", Repo: "https://github.com/OffchainLabs/methodical-ssz", Adapter: "prysmssz",
 		Targets: []target{{Name: targetRelease, PinRepo: "https://github.com/OffchainLabs/prysm", PinModule: "github.com/OffchainLabs/methodical-ssz"}, {Name: targetMaster, Newest: []string{"main", "progression"}}}},
+	// The libraries of other languages (adapters with build.sh, run through
+	// benchwrap). The Rust crates of Sigma Prime are three repositories;
+	// ethereum_ssz is the one followed, the adapter pins ssz_types and
+	// tree_hash to the revisions Lighthouse builds with.
+	{Name: "ethereum-ssz", Repo: "https://github.com/sigp/ethereum_ssz", Adapter: "ethereumssz", Exec: true,
+		Targets: []target{{Name: targetRelease, TagMatch: `^v\d+\.\d+\.\d+(-beta\.\d+)?$`}, {Name: targetMaster, Branch: "main"}}},
+	{Name: "lodestar-ssz", Repo: "https://github.com/ChainSafe/ssz", Adapter: "lodestarssz", Exec: true,
+		Targets: []target{{Name: targetRelease, Npm: "@chainsafe/ssz"}, {Name: targetMaster, Branch: "master"}}},
+	{Name: "teku-ssz", Repo: "https://github.com/Consensys/teku", Adapter: "tekussz", Exec: true,
+		Targets: []target{{Name: targetRelease, TagMatch: `^\d{2}\.\d+\.\d+$`}, {Name: targetMaster, Branch: "master"}}},
+	{Name: "nim-ssz", Repo: "https://github.com/status-im/nim-ssz-serialization", Adapter: "nimssz", Exec: true,
+		Targets: []target{{Name: targetMaster, Branch: "master"}}},
+	{Name: "grandine-ssz", Repo: "https://github.com/grandinetech/grandine", Adapter: "grandinessz", Exec: true,
+		Targets: []target{{Name: targetRelease, TagMatch: `^\d+\.\d+\.\d+$`}, {Name: targetMaster, Branch: "develop"}}},
+	{Name: "sszpp", Repo: "https://github.com/OffchainLabs/sszpp", Adapter: "sszpp", Exec: true,
+		Targets: []target{{Name: targetMaster, Branch: "main"}}},
 }
 
 func subjectByName(name string) *subject {
@@ -95,6 +118,20 @@ func configureSubjects(cfg *config) {
 			sub.Targets[i].Branch = cfg.mainBranch
 		}
 	}
+	// A library of another language is measured once its adapter has a
+	// build recipe in the harness; until then it is left out, so that no
+	// job of it is queued.
+	kept := subjects[:0]
+	for _, sub := range subjects {
+		if sub.Exec {
+			if _, err := os.Stat(filepath.Join(cfg.harnessDir, "baselines", sub.Adapter, "build.sh")); err != nil {
+				log.Printf("library %s left out: no build.sh for its adapter %s in the harness", sub.Name, sub.Adapter)
+				continue
+			}
+		}
+		kept = append(kept, sub)
+	}
+	subjects = kept
 }
 
 func (sub *subject) weight() float64 {
@@ -135,15 +172,40 @@ func subjectHash(dir string, sub *subject) (string, error) {
 	if sub.mirrored() {
 		return harnessHash(dir)
 	}
-	return libHash(dir, sub.Adapter)
+	return libHash(dir, sub)
 }
 
 // libHash identifies a library adapter and the kit it shares with the
-// harness: the harness version of that library's jobs.
-func libHash(dir, adapter string) (string, error) {
+// harness: the harness version of that library's jobs. An adapter of
+// another language is identified by every source file of its directory,
+// the toolchain recipes, the wrapper and the protocol.
+func libHash(dir string, sub *subject) (string, error) {
+	adapter := "baselines/" + sub.Adapter + "/"
 	return hashTree(dir, func(rel string) bool {
-		return strings.HasPrefix(rel, "baselines/"+adapter+"/") || strings.HasPrefix(rel, "kit/")
+		switch {
+		case strings.HasPrefix(rel, "kit/"):
+			return harnessSource(rel)
+		case sub.Exec && (strings.HasPrefix(rel, "toolchains/") || strings.HasPrefix(rel, "benchwrap/") || strings.HasPrefix(rel, "protocol/")):
+			return true
+		case strings.HasPrefix(rel, adapter):
+			if !sub.Exec {
+				return harnessSource(rel)
+			}
+			return !builtOutput(strings.TrimPrefix(rel, adapter))
+		}
+		return false
 	})
+}
+
+// builtOutput reports whether a path inside an adapter's directory is
+// what a build leaves behind rather than a source of it.
+func builtOutput(rel string) bool {
+	for _, dir := range []string{"target/", "node_modules/", "build/", ".gradle/", "out/", "lib/", "dist/", "nimcache/", "work/"} {
+		if strings.HasPrefix(rel, dir) {
+			return true
+		}
+	}
+	return false
 }
 
 // targetState is what a target of a subject points to.
@@ -341,6 +403,12 @@ func resolveTargets(ctx context.Context, sub *subject) ([]targetState, error) {
 			if name, ok := highestTag(tags, t.TagMatch); ok {
 				st.SHA, st.Label = tags[name], name
 			}
+		case t.Npm != "":
+			version, sha, err := npmLatest(ctx, t.Npm)
+			if err != nil {
+				return nil, err
+			}
+			st.SHA, st.Label = sha, "npm "+version
 		case t.PinRepo != "":
 			_, pinTags, err := remoteRefs(ctx, t.PinRepo)
 			if err != nil {
@@ -526,4 +594,37 @@ func (s *store) migrateJobKinds(mainBranch string) error {
 	}
 	_, err = s.db.Exec(`UPDATE jobs SET targets = ? WHERE subject = ? AND kind = ? AND branch = ? AND targets = ''`, targetMaster, subjectDynSSZ, kindCommit, mainBranch)
 	return err
+}
+
+// npmLatest resolves the latest version of an npm package to the commit it
+// was published from (the registry's gitHead of that version).
+func npmLatest(ctx context.Context, pkg string) (version, sha string, err error) {
+	req, err := http.NewRequestWithContext(ctx, "GET", "https://registry.npmjs.org/"+pkg, nil)
+	if err != nil {
+		return "", "", err
+	}
+	req.Header.Set("Accept", "application/json")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return "", "", err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return "", "", fmt.Errorf("npm %s: HTTP %s", pkg, resp.Status)
+	}
+	var meta struct {
+		DistTags map[string]string `json:"dist-tags"`
+		Versions map[string]struct {
+			GitHead string `json:"gitHead"`
+		} `json:"versions"`
+	}
+	if err := json.NewDecoder(io.LimitReader(resp.Body, 64<<20)).Decode(&meta); err != nil {
+		return "", "", fmt.Errorf("npm %s: %w", pkg, err)
+	}
+	version = meta.DistTags["latest"]
+	sha = meta.Versions[version].GitHead
+	if len(sha) != 40 {
+		return "", "", fmt.Errorf("npm %s %s: no commit published with it", pkg, version)
+	}
+	return version, sha, nil
 }

@@ -275,6 +275,30 @@ measures its head, and its base when it has one.
   default versions. Its output is checked in.
 - Adding a library: an adapter directory with its types, benchmark file
   and `generate.sh`, and an entry in `subjects`.
+- Libraries of other languages (`harness/baselines/FOREIGN.md`): an
+  adapter with `build.sh` instead of Go packages, marked `Exec` in
+  `subjects`. The build sources a toolchain recipe
+  (`harness/toolchains/<lang>.sh`), which installs or updates the pinned
+  toolchain under `-toolchains` (`/srv/benchd/work/toolchains`, the work
+  disk) on first use, fetches the library at the commit, generates the
+  type definitions from the harness types with
+  `baselines/convert_foreign.py` (one set per preset) and leaves one
+  launcher per fork (and per layout seed where the linker can shuffle
+  sections: Rust, C++). The runner runs the launcher through `benchwrap`
+  (`harness/benchwrap`), which passes the pattern and the iteration counts
+  on, switches the hardware counters of the adapter's measuring thread on
+  its messages (a pipe on file descriptor 3: `thread`, `begin`, `pause`,
+  `resume`, `end`, `fail`, `skip`), pins that thread to the benchmark cpu,
+  and prints the Go benchmark lines the runner reads. An adapter verifies
+  every object as the kit does, warms up untimed (a JIT runtime until it
+  has settled, reported as `warmup`), and frees or collects between
+  batches with the counters paused, so the figures mean what the kit's
+  mean: time and counters of the operation itself, memory where the
+  runtime can count it. A library without a `build.sh` in the deployed
+  harness is left out of the subjects, so nothing is queued for it. The
+  wrapper was validated against the kit with a Go adapter speaking the
+  protocol (`harness/adapters/dynssz`): same time, bytes, allocations and
+  page faults on the same leaves.
 - Idle time refines what was measured before (`benchd/idle.go`). Every
   commit worth another run is a candidate with a weight: the head of an
   open pull request 8, each of its earlier heads half of the one above

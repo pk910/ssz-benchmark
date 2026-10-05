@@ -26,6 +26,16 @@ repo.git/
 /harness/types/*/gen_ssz.go
 /harness/dynssz-gen
 
+# what the builds of the adapters of other languages leave behind
+/harness/baselines/*/work/
+/harness/baselines/*/target/
+/harness/baselines/*/node_modules/
+/harness/baselines/*/build/
+/harness/baselines/*/.gradle/
+/harness/baselines/*/out/
+/harness/baselines/*/nimcache/
+/harness/baselines/*/Cargo.lock
+
 # build and test artefacts
 *.test
 *.out

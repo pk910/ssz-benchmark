@@ -22,6 +22,7 @@ type config struct {
 	repoURL          string
 	github           string // owner/name for the pull request lookup
 	dataDir          string
+	toolchainDir     string // toolchains of the adapters of other languages, installed by their builds
 	harnessDir       string
 	packages         []string // harness packages (forks), each a benchmark binary
 	payloadDir       string
@@ -70,6 +71,7 @@ func main() {
 	flag.StringVar(&cfg.github, "github", "pk910/dynamic-ssz", "GitHub owner/name for the pull request lookup")
 	flag.StringVar(&cfg.dataDir, "data", "/srv/benchd", "data directory (mirror, worktrees, harness builds, job logs, database)")
 	flag.StringVar(&cfg.harnessDir, "harness", "/srv/benchd/harness", "harness module source")
+	flag.StringVar(&cfg.toolchainDir, "toolchains", "/srv/benchd/work/toolchains", "where the builds of the adapters of other languages install their toolchains")
 	flag.StringVar(&cfg.payloadDir, "payload", "/srv/benchd/res/real", "payload directory (REAL_DATA of the harness)")
 	flag.StringVar(&packages, "packages", "fulu,gloas", "harness packages to build and measure, each with a types/<package> package to generate")
 	flag.StringVar(&cfg.listen, "listen", ":80", "web UI listen address")

@@ -19,7 +19,10 @@ trap 'rm -rf "$OUT"' EXIT
 (cd "$SRC" && go vet ./... && go test ./... >/dev/null && GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build -trimpath -o "$OUT/benchd" .)
 scp -q "$OUT/benchd" "$HERE/benchd.service" "$HERE/benchweb.service" "$HERE/bench-irq-affinity.service" "$HERE/bench-irq-affinity" "$BOX:/tmp/"
 if [ "$TARGET" != ui ]; then
-  rsync -a --delete --exclude 'gen_ssz.go' --exclude 'payload' --exclude 'dynssz-gen' --exclude '*.test' "$HARNESS/" "$BOX:/srv/benchd/harness/"
+  rsync -a --delete --exclude 'gen_ssz.go' --exclude 'payload' --exclude 'dynssz-gen' --exclude '*.test' \
+    --exclude 'baselines/*/work' --exclude 'baselines/*/target' --exclude 'baselines/*/node_modules' --exclude 'baselines/*/build' \
+    --exclude 'baselines/*/.gradle' --exclude 'baselines/*/out' --exclude 'baselines/*/nimcache' --exclude 'baselines/*/Cargo.lock' \
+    "$HARNESS/" "$BOX:/srv/benchd/harness/"
 fi
 ssh "$BOX" "set -e
   mkdir -p /srv/benchd

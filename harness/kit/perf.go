@@ -102,12 +102,20 @@ func openEvent(ev event, tid int) (int, error) {
 // every thread the process has at this moment. Cycles and instructions
 // must open; a counter of the pair that the machine lacks is left out.
 func openCounters(allThreads bool) *counters {
-	c := &counters{}
 	targets := []int{0}
+	var tids []int
 	if allThreads {
-		c.tids = threadIDs()
-		targets = c.tids
+		tids = threadIDs()
+		targets = tids
 	}
+	return openOn(targets, tids)
+}
+
+// openOn opens the counters on the given threads (0: the calling one);
+// tids, when set, are the threads of the process the counters stand for
+// and are checked for completeness afterwards.
+func openOn(targets, tids []int) *counters {
+	c := &counters{tids: tids}
 	events := append([]event{}, baseEvents...)
 	for _, ev := range counterSets[os.Getenv("BENCH_COUNTERS")] {
 		if !ev.zen || isZen {

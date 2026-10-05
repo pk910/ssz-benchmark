@@ -1,0 +1,44 @@
+# The adapter of ethereum_ssz (Sigma Prime: ethereum_ssz, ssz_types,
+# tree_hash). The three crates come from checkouts under work/, which
+# build.sh fetches: ethereum_ssz at the measured commit, the other two at
+# the revisions pinned there. The patches point every dependency of theirs
+# at those checkouts.
+[package]
+name = "ethereumssz-bench"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[[bin]]
+name = "bench"
+path = "src/main.rs"
+
+[dependencies]
+ssz = { package = "ethereum_ssz", path = "work/ethereum_ssz/ssz" }
+ssz_derive = { package = "ethereum_ssz_derive", path = "work/ethereum_ssz/ssz_derive" }
+ssz_types = { path = "work/ssz_types" }
+tree_hash = { path = "work/tree_hash/tree_hash" }
+tree_hash_derive = { path = "work/tree_hash/tree_hash_derive" }
+alloy-primitives = "1"
+regex = "1"
+libc = "0.2"
+
+[patch.crates-io]
+ethereum_ssz = { path = "work/ethereum_ssz/ssz" }
+ethereum_ssz_derive = { path = "work/ethereum_ssz/ssz_derive" }
+ssz_types = { path = "work/ssz_types" }
+tree_hash = { path = "work/tree_hash/tree_hash" }
+tree_hash_derive = { path = "work/tree_hash/tree_hash_derive" }
+
+[patch."https://github.com/sigp/tree_hash"]
+tree_hash = { path = "work/tree_hash/tree_hash" }
+tree_hash_derive = { path = "work/tree_hash/tree_hash_derive" }
+
+[patch."https://github.com/sigp/ethereum_ssz"]
+ethereum_ssz = { path = "work/ethereum_ssz/ssz" }
+ethereum_ssz_derive = { path = "work/ethereum_ssz/ssz_derive" }
+
+[profile.release]
+debug = false
+codegen-units = 16
+lto = false

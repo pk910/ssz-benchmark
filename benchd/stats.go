@@ -363,7 +363,8 @@ func summarize(samples []sample) []result {
 var (
 	objectOrder = []string{"FuluState", "FuluBlock", "FuluBlocks", "FuluMinState", "FuluMinBlock", "GloasState", "GloasBlock", "GloasBlocks", "GloasEnvelope", "GloasMinState", "GloasMinBlock"}
 	opOrder     = []string{"Unmarshal", "UnmarshalReader", "UnmarshalReaderUnknown", "SizeSSZ", "Marshal", "MarshalTo", "MarshalWriter", "HashTreeRoot", "GetTree"}
-	engineOrder = []string{"Codegen", "Reflection", "CodegenAsync", "ReflectionAsync", "FastSSZ", "FastSSZv1", "FastSSZv2", "PrysmSSZ", "KaralabeSSZ", "KaralabeSSZAsync"}
+	engineOrder = []string{"Codegen", "Reflection", "CodegenAsync", "ReflectionAsync", "FastSSZ", "FastSSZv1", "FastSSZv2", "PrysmSSZ", "KaralabeSSZ", "KaralabeSSZAsync",
+		"EthereumSSZ", "Grandine", "Teku", "LodestarValue", "LodestarTree", "Nimbus", "SszPP"}
 )
 
 // An engine named *Async is its parent engine hashing with background

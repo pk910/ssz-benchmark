@@ -57,7 +57,7 @@
   const objName = o => `${o}${objInfo(o)}`;
   // How an engine is named on the pages. The engines of dynamic-ssz carry
   // the library's name like the others do.
-  const ENGINE_LABELS = { Codegen: 'dynamic-ssz codegen', Reflection: 'dynamic-ssz reflection' };
+  const ENGINE_LABELS = { Codegen: 'dynamic-ssz codegen', Reflection: 'dynamic-ssz reflection', EthereumSSZ: 'ethereum_ssz (Rust)', Grandine: 'grandine ssz (Rust)', Teku: 'teku ssz (Java)', LodestarValue: 'lodestar ssz value (TS)', LodestarTree: 'lodestar ssz tree (TS)', Nimbus: 'nim-ssz (Nim)', SszPP: 'sszpp (C++)' };
   // An engine named *Async is its parent engine hashing with background
   // workers. The harness runs it as an engine of its own; the pages show
   // it as an operation of the parent, "HashTreeRoot (async)", so an engine
@@ -67,7 +67,7 @@
   const opLabel = (e, op) => isAsync(e) ? op + ' (async)' : op;
   const opRank = op => rank(OPS, op.replace(/ \(async\)$/, '')) * 2 + (/\(async\)$/.test(op) ? 1 : 0);
   const engName = e => ENGINE_LABELS[baseEngine(e)] || baseEngine(e);
-  const ENGINES = ['Codegen', 'Reflection', 'CodegenAsync', 'ReflectionAsync', 'FastSSZ', 'FastSSZv1', 'FastSSZv2', 'PrysmSSZ', 'KaralabeSSZ', 'KaralabeSSZAsync'];
+  const ENGINES = ['Codegen', 'Reflection', 'CodegenAsync', 'ReflectionAsync', 'FastSSZ', 'FastSSZv1', 'FastSSZv2', 'PrysmSSZ', 'KaralabeSSZ', 'KaralabeSSZAsync', 'EthereumSSZ', 'Grandine', 'Teku', 'LodestarValue', 'LodestarTree', 'Nimbus', 'SszPP'];
   const COLORS = ['#2f5fd1', '#d97706', '#7c3aed', '#0f9d8a', '#6b7280', '#db2777'];
   const METRICS = {
     ns: { key: 'Ns', label: 'Time', unit: 'per op', fmt: fmtNs },
