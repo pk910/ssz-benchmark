@@ -41,6 +41,7 @@ python3 ../convert_foreign.py rust ../../types/gloas/types.go src/gen_gloas.rs -
   --preset mainnet="$PAYLOAD/gloas/spec.json" --preset minimal="$PAYLOAD/gloas/minimal/spec.json"
 
 export CARGO_TARGET_DIR="$PWD/target"
+mkdir -p "$OUT"
 IFS=',' read -r -a SEEDS <<< "${BENCH_SEEDS:-101}"
 for seed in "${SEEDS[@]}"; do
   cargo rustc --release --quiet --bin bench -- -C link-arg="-Wl,--shuffle-sections=*=$seed"
