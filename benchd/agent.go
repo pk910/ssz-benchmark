@@ -74,9 +74,10 @@ More: /api/job/<id>/samples (every single run of a job), /raw/<id>/<file>
 - A benchmark is Engine / Object / Operation. Objects are payload types
   (FuluState, FuluBlock, FuluBlocks, GloasState, GloasBlock, GloasBlocks,
   GloasEnvelope); operations are Unmarshal, Marshal, HashTreeRoot and
-  their variants. Engines of dynamic-ssz: Codegen (generated code),
-  Reflection, and CodegenAsync / ReflectionAsync (hash tree root with
-  background workers).
+  their variants. Engines of dynamic-ssz: Codegen (generated code) and
+  Reflection. "HashTreeRoot (async)" is the hash tree root with background
+  workers, an operation of each engine (the harness runs it as the engines
+  CodegenAsync / ReflectionAsync, which is how the JSON names it).
 - A job measures a head commit, usually against a base commit. Each side
   is built once per layout seed (the linker shuffles the functions), and a
   pass measures both sides built with the same seed. Numbers per call:
@@ -84,7 +85,7 @@ More: /api/job/<id>/samples (every single run of a job), /raw/<id>/<file>
   counters, user mode), allocated bytes and allocations.
 - The delta of an operation is the median over the passes of
   (head - base) / base. Cycles are the primary metric (time for the async
-  engines, whose work is spread over threads).
+  hashing, whose work is spread over threads).
 
 ## Reading a result
 
@@ -176,7 +177,7 @@ func mdResults(sb *strings.Builder, results []result, nf noiseFloor) {
 			instrs = mdPct(mdDelta(r.Instrs))
 		}
 		return fmt.Sprintf("| %s | %s | %s | %s | %s | %s | %s | ±%.2f%% | %s | %s | %s | %s | %s | %s | %s |\n",
-			r.Engine, r.Object, r.Op, name, fmtv(m.Base), fmtv(m.Head), mdPct(mdDelta(m)), m.band(floor(r)), passes, verdict,
+			baseEngine(r.Engine), r.Object, opLabel(r.Engine, r.Op), name, fmtv(m.Base), fmtv(m.Head), mdPct(mdDelta(m)), m.band(floor(r)), passes, verdict,
 			instrs, work, mdPct(mdDelta(r.Ns)), mdAbs(r.Bytes), mdAbs(r.Allocs))
 	}
 	const header = "| engine | object | operation | metric | base | head | delta | band | passes agreeing | verdict | instructions | work | time | bytes/call | allocs/call |\n|---|---|---|---|---:|---:|---:|---:|---:|---|---:|---|---:|---:|---:|\n"
@@ -190,11 +191,11 @@ func mdResults(sb *strings.Builder, results []result, nf noiseFloor) {
 		var changed []result
 		for _, r := range compared {
 			m, _, _ := checkMetric(r)
-			e := engines[r.Engine]
+			e := engines[baseEngine(r.Engine)]
 			if e == nil {
 				e = &sum{}
-				engines[r.Engine] = e
-				names = append(names, r.Engine)
+				engines[baseEngine(r.Engine)] = e
+				names = append(names, baseEngine(r.Engine))
 			}
 			e.logs = append(e.logs, math.Log(1+mdDelta(m)/100))
 			if m.changed(floor(r)) {
@@ -235,7 +236,7 @@ func mdResults(sb *strings.Builder, results []result, nf noiseFloor) {
 	if len(plain) > 0 {
 		sb.WriteString("\n## Values without a comparison\n\n| engine | object | operation | time | cycles | instructions | bytes/call | allocs/call |\n|---|---|---|---:|---:|---:|---:|---:|\n")
 		for _, r := range plain {
-			fmt.Fprintf(sb, "| %s | %s | %s | %s | %s | %s | %.0f | %.0f |\n", r.Engine, r.Object, r.Op, fmtNs(r.Ns.Head), fmtCount(r.Cycles.Head), fmtCount(r.Instrs.Head), r.Bytes.Head, r.Allocs.Head)
+			fmt.Fprintf(sb, "| %s | %s | %s | %s | %s | %s | %.0f | %.0f |\n", baseEngine(r.Engine), r.Object, opLabel(r.Engine, r.Op), fmtNs(r.Ns.Head), fmtCount(r.Cycles.Head), fmtCount(r.Instrs.Head), r.Bytes.Head, r.Allocs.Head)
 		}
 	}
 	if len(compared) == 0 && len(plain) == 0 {
@@ -389,7 +390,7 @@ func (w *webServer) agentRepo(rw http.ResponseWriter, req *http.Request) {
 		fmt.Fprintf(&sb, "- %s: %s at %s\n", t.Name, t.Label, mdCommit(o, v.Name, t.SHA))
 	}
 	fmt.Fprintf(&sb, "- %d commits on %s, %d measured; page %d of %d (?page=N)\n\n", v.Total, v.Branch, v.Measured, page, max(1, (v.Total+repoPage-1)/repoPage))
-	sb.WriteString("Newest first. The change of a measured commit is against the measured commit before it: per engine the geomean over its operations (cycles, time for the async engines) and how many operations moved by 1% or more (faster/slower). Per-operation detail is on the commit's page.\n\n")
+	sb.WriteString("Newest first. The change of a measured commit is against the measured commit before it: per engine the geomean over its operations, the async hashing among them (cycles, time for the async hashing) and how many operations moved by 1% or more (faster/slower). Per-operation detail is on the commit's page.\n\n")
 	sb.WriteString("| commit | committed | tags | description | change against the measured commit before |\n|---|---|---|---|---|\n")
 	for _, c := range v.Commits {
 		change := "not measured"

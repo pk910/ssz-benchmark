@@ -62,7 +62,7 @@ func (s *store) compareHarness(subject, from, to string) (string, error) {
 			return "", err
 		}
 		a, b := ca, cb
-		if a <= 0 || b <= 0 || strings.HasSuffix(engine, "Async") {
+		if a <= 0 || b <= 0 || isAsync(engine) {
 			a, b = na, nb
 		}
 		if a > 0 && b > 0 {

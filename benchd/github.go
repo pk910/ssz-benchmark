@@ -362,7 +362,7 @@ func truncate(s string, n int) string {
 // measured thread, or wall time for an engine that works on other threads
 // and for results without counters.
 func checkMetric(r result) (metric, string, func(float64) string) {
-	if !strings.HasSuffix(r.Engine, "Async") && r.Cycles.Head > 0 {
+	if !isAsync(r.Engine) && r.Cycles.Head > 0 {
 		return r.Cycles, "cycles", fmtCount
 	}
 	return r.Ns, "time", fmtNs
@@ -402,6 +402,7 @@ func renderCheck(j *job, results []result, nf noiseFloor, link, state string) (s
 	pct := func(v float64) string { return fmt.Sprintf("%+.2f%%", v) }
 
 	// Per engine: geomean of head/base and the count of marked operations.
+	// The async hashing of an engine is one of its operations.
 	type engineSum struct {
 		logs           []float64
 		slower, faster int
@@ -412,10 +413,10 @@ func renderCheck(j *job, results []result, nf noiseFloor, link, state string) (s
 		if m.Base <= 0 || m.Head <= 0 {
 			continue
 		}
-		e := engines[r.Engine]
+		e := engines[baseEngine(r.Engine)]
 		if e == nil {
 			e = &engineSum{}
-			engines[r.Engine] = e
+			engines[baseEngine(r.Engine)] = e
 		}
 		ratio := 1 + m.PMed/100
 		if m.PN == 0 || ratio <= 0 {
@@ -443,11 +444,9 @@ func renderCheck(j *job, results []result, nf noiseFloor, link, state string) (s
 		e := engines[name]
 		gm := (math.Exp(mean(e.logs)) - 1) * 100
 		fmt.Fprintf(&sb, "| %s | %s | %d | %d | %d |\n", name, pct(gm), e.slower, e.faster, len(e.logs))
-		if !strings.HasSuffix(name, "Async") {
-			titleParts = append(titleParts, name+" "+pct(gm))
-		}
+		titleParts = append(titleParts, name+" "+pct(gm))
 	}
-	sb.WriteString("\nΔ is head against base in cycles of the measured thread (wall time for the async engines): the median over the passes, each of which links both sides with another function layout. ")
+	sb.WriteString("\nΔ is head against base in cycles of the measured thread (wall time for HashTreeRoot (async), the hash tree root with background workers): the median over the passes, each of which links both sides with another function layout. ")
 	sb.WriteString("**Bold** marks a change: the median lies beyond the operation's noise floor and beyond what the layouts alone did to this pair, and at least three quarters of the passes agree. \"slower\" and \"faster\" count those.\n")
 
 	// Per object: one row per operation, one column pair per engine.
@@ -466,14 +465,15 @@ func renderCheck(j *job, results []result, nf noiseFloor, link, state string) (s
 		var ops, engs []string
 		seenOp, seenEng := map[string]bool{}, map[string]bool{}
 		for _, r := range rs {
-			cells[r.Engine+"/"+r.Op] = r
-			if !seenOp[r.Op] {
-				seenOp[r.Op] = true
-				ops = append(ops, r.Op)
+			eng, op := baseEngine(r.Engine), opLabel(r.Engine, r.Op)
+			cells[eng+"/"+op] = r
+			if !seenOp[op] {
+				seenOp[op] = true
+				ops = append(ops, op)
 			}
-			if !seenEng[r.Engine] {
-				seenEng[r.Engine] = true
-				engs = append(engs, r.Engine)
+			if !seenEng[eng] {
+				seenEng[eng] = true
+				engs = append(engs, eng)
 			}
 		}
 		sort.Slice(engs, func(a, b int) bool { return rank(engineOrder, engs[a]) < rank(engineOrder, engs[b]) })
@@ -498,7 +498,7 @@ func renderCheck(j *job, results []result, nf noiseFloor, link, state string) (s
 				delta := pct(m.PMed)
 				if beyond(r) {
 					delta = "**" + delta + "**"
-					if work, ok := r.workChanged(); ok && !strings.HasSuffix(r.Engine, "Async") {
+					if work, ok := r.workChanged(); ok && !isAsync(r.Engine) {
 						if work {
 							delta += " ¹"
 						} else {

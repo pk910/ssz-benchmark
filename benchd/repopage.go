@@ -24,10 +24,11 @@ import (
 const stepMoved = 1.0
 
 // repoEngine summarises the change of one engine's operations at a commit
-// against the commit before it.
+// against the commit before it. The async variant of the engine counts as
+// one of its operations.
 type repoEngine struct {
 	Engine         string
-	Geomean        float64 // percent, over cycles (time for the async engines and without counters)
+	Geomean        float64 // percent, over cycles (time for the async hashing and without counters)
 	N              int
 	Faster, Slower int // operations that moved by more than stepMoved
 }
@@ -254,16 +255,16 @@ func (w *webServer) repoView(sub *subject, offset, limit int, steps bool) (*repo
 			perCommit[i][l] = st
 			seen[l] = true
 			ratio := st.cycles
-			if ratio == 0 || strings.HasSuffix(l.Engine, "Async") {
+			if ratio == 0 || isAsync(l.Engine) {
 				ratio = st.ns
 			}
 			if ratio <= 0 {
 				continue
 			}
-			e := engines[l.Engine]
+			e := engines[baseEngine(l.Engine)]
 			if e == nil {
 				e = &acc{}
-				engines[l.Engine] = e
+				engines[baseEngine(l.Engine)] = e
 			}
 			e.sum += math.Log(ratio)
 			e.n++

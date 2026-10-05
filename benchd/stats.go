@@ -366,6 +366,23 @@ var (
 	engineOrder = []string{"Codegen", "Reflection", "CodegenAsync", "ReflectionAsync", "FastSSZ", "FastSSZv1", "FastSSZv2", "PrysmSSZ", "KaralabeSSZ", "KaralabeSSZAsync"}
 )
 
+// An engine named *Async is its parent engine hashing with background
+// workers. The harness measures it as an engine of its own; the pages show
+// it as an operation of the parent, "HashTreeRoot (async)".
+func isAsync(engine string) bool { return strings.HasSuffix(engine, "Async") }
+
+// baseEngine is the engine an async variant belongs to.
+func baseEngine(engine string) string { return strings.TrimSuffix(engine, "Async") }
+
+// opLabel names an operation on the pages: the async variant of an
+// engine is its operation with "(async)".
+func opLabel(engine, op string) string {
+	if isAsync(engine) {
+		return op + " (async)"
+	}
+	return op
+}
+
 func rank(order []string, v string) int {
 	for i, o := range order {
 		if o == v {

@@ -53,8 +53,16 @@
   const objName = o => `${o}${objInfo(o)}`;
   // How an engine is named on the pages. The engines of dynamic-ssz carry
   // the library's name like the others do.
-  const ENGINE_LABELS = { Codegen: 'dynamic-ssz codegen', Reflection: 'dynamic-ssz reflection', CodegenAsync: 'dynamic-ssz codegen async', ReflectionAsync: 'dynamic-ssz reflection async' };
-  const engName = e => ENGINE_LABELS[e] || e;
+  const ENGINE_LABELS = { Codegen: 'dynamic-ssz codegen', Reflection: 'dynamic-ssz reflection' };
+  // An engine named *Async is its parent engine hashing with background
+  // workers. The harness runs it as an engine of its own; the pages show
+  // it as an operation of the parent, "HashTreeRoot (async)", so an engine
+  // name on a page is always the parent's.
+  const isAsync = e => /Async$/.test(e);
+  const baseEngine = e => e.replace(/Async$/, '');
+  const opLabel = (e, op) => isAsync(e) ? op + ' (async)' : op;
+  const opRank = op => rank(OPS, op.replace(/ \(async\)$/, '')) * 2 + (/\(async\)$/.test(op) ? 1 : 0);
+  const engName = e => ENGINE_LABELS[baseEngine(e)] || baseEngine(e);
   const ENGINES = ['Codegen', 'Reflection', 'CodegenAsync', 'ReflectionAsync', 'FastSSZ', 'FastSSZv1', 'FastSSZv2', 'PrysmSSZ', 'KaralabeSSZ', 'KaralabeSSZAsync'];
   const COLORS = ['#2f5fd1', '#d97706', '#7c3aed', '#0f9d8a', '#6b7280', '#db2777'];
   const METRICS = {
@@ -239,18 +247,25 @@
     || rank(OPS, a.Op) - rank(OPS, b.Op) || a.Op.localeCompare(b.Op) || rank(ENGINES, a.Engine) - rank(ENGINES, b.Engine);
   const sortEngines = es => es.sort((a, b) => rank(ENGINES, a) - rank(ENGINES, b) || a.localeCompare(b));
 
-  // engineTotals folds per-object geomeans into one per engine, over
-  // cycles when the job has cycle counts, else over time.
-  function engineTotals(sums) {
+  // foldSummaries folds the per-engine-and-object geomeans of a job by a
+  // key, over cycles when the job has cycle counts, else over time. The
+  // async hashing of an engine folds into the engine, by time (its cycles
+  // are those of all its threads).
+  function foldSummaries(sums, keyOf) {
     const acc = {};
     const useCycles = (sums || []).some(s => s.CyclesGeomean);
     (sums || []).forEach(s => {
-      const a = acc[s.Engine] || (acc[s.Engine] = { Engine: s.Engine, logSum: 0, N: 0 });
-      a.logSum += Math.log(1 + (useCycles && !s.Engine.endsWith('Async') ? s.CyclesGeomean : s.Geomean) / 100) * s.N;
+      const k = keyOf(s), a = acc[k] || (acc[k] = { Engine: baseEngine(s.Engine), Object: s.Object, logSum: 0, N: 0 });
+      a.logSum += Math.log(1 + (useCycles && !isAsync(s.Engine) ? s.CyclesGeomean : s.Geomean) / 100) * s.N;
       a.N += s.N;
     });
-    return sortEngines(Object.keys(acc)).map(e => ({ Engine: e, N: acc[e].N, Geomean: (Math.exp(acc[e].logSum / acc[e].N) - 1) * 100, Cycles: useCycles }));
+    return Object.values(acc).sort((a, b) => rank(ENGINES, a.Engine) - rank(ENGINES, b.Engine) || rank(OBJECTS, a.Object) - rank(OBJECTS, b.Object))
+      .map(a => ({ Engine: a.Engine, Object: a.Object, N: a.N, Geomean: (Math.exp(a.logSum / a.N) - 1) * 100, Cycles: useCycles }));
   }
+  // engineTotals is one geomean per engine, objectTotals one per engine
+  // and object.
+  const engineTotals = sums => foldSummaries(sums, s => baseEngine(s.Engine));
+  const objectTotals = sums => foldSummaries(sums, s => baseEngine(s.Engine) + '/' + s.Object);
 
   async function get(url) {
     const r = await fetch(url);
@@ -429,21 +444,22 @@
 
   // opBadges: per engine one line with a badge per operation: the change
   // against the measured commit before, as the geomean over the payload
-  // types (cycles, else time).
+  // types (cycles, else time; time for the async hashing).
   function opBadges(v, c, hidden) {
     if (!c.Steps) return stepChips(c, v);
     const acc = {};
     v.Leaves.forEach((l, k) => {
-      if (hidden.has(l.Engine)) return;
-      const st = c.Steps[k], r = st ? (l.Engine.endsWith('Async') ? st[0] : (st[1] || st[0])) : 0;
+      const eng = baseEngine(l.Engine), op = opLabel(l.Engine, l.Op);
+      if (hidden.has(eng)) return;
+      const st = c.Steps[k], r = st ? (isAsync(l.Engine) ? st[0] : (st[1] || st[0])) : 0;
       if (!(r > 0)) return;
-      const e = acc[l.Engine] || (acc[l.Engine] = {}), a = e[l.Op] || (e[l.Op] = { sum: 0, n: 0 });
+      const e = acc[eng] || (acc[eng] = {}), a = e[op] || (e[op] = { sum: 0, n: 0 });
       a.sum += Math.log(r); a.n++;
     });
     const engines = sortEngines(Object.keys(acc));
     if (!engines.length) return '<span class="muted">-</span>';
     const skipped = c.Skipped ? `<div class="muted small">against ${short(c.Against).slice(0, 8)}, ${c.Skipped} unmeasured between</div>` : '';
-    return engines.map(e => `<div class="oprow"><span class="eng">${esc(engName(e).replace(/^dynamic-ssz /, ''))}</span><div class="chips">${Object.keys(acc[e]).sort((a, b) => rank(OPS, a) - rank(OPS, b)).map(op => {
+    return engines.map(e => `<div class="oprow"><span class="eng">${esc(engName(e).replace(/^dynamic-ssz /, ''))}</span><div class="chips">${Object.keys(acc[e]).sort((a, b) => opRank(a) - opRank(b)).map(op => {
       const a = acc[e][op], d = (Math.exp(a.sum / a.n) - 1) * 100;
       return `<span class="chip ${Math.abs(d) < 0.5 ? 'flat' : d < 0 ? 'better' : 'worse'}" title="${esc(engName(e))} ${op}: geomean over ${a.n} payload type${a.n === 1 ? '' : 's'} against the measured commit before">${op} <b>${pct(d, 1)}</b></span>`;
     }).join('')}</div></div>`).join('') + skipped;
@@ -458,12 +474,10 @@
     const pager = pages < 2 ? '' : `<div class="toolbar pager">${page > 1 ? `<a class="chip" href="${pageHref(page - 1)}">← newer</a>` : ''}${Array.from({ length: pages }, (_, i) => i + 1).filter(p => p === 1 || p === pages || Math.abs(p - page) <= 2).map((p, i, shown) => `${i && p - shown[i - 1] > 1 ? '<span class="muted">…</span>' : ''}<a class="chip ${p === page ? 'commit' : ''}" href="${pageHref(p)}">${p}</a>`).join('')}${page < pages ? `<a class="chip" href="${pageHref(page + 1)}">older →</a>` : ''}<span class="muted">commits ${(page - 1) * v.PageSize + 1}–${(page - 1) * v.PageSize + v.Commits.length} of ${v.Total}</span></div>`;
     // The measured commits of the page, oldest first, for the charts.
     const chain = v.Commits.filter(c => c.Values).reverse();
-    const engines = sortEngines([...new Set((v.Leaves || []).map(l => l.Engine))]);
+    const engines = sortEngines([...new Set((v.Leaves || []).map(l => baseEngine(l.Engine)))]);
     const pref = (key, def, allowed) => { const x = localStorage.getItem(key); return !allowed || allowed.includes(x) ? (x || def) : def; };
-    // An async variant is charted with its engine, not on its own.
-    const chartEngines = engines.filter(e => !(e.endsWith('Async') && engines.includes(e.slice(0, -5))));
-    const engine = pref('repoEngine', chartEngines[0], chartEngines);
-    const useNs = pref('repoMetric', 'ns', ['ns', 'cycles']) === 'ns' || (engine || '').endsWith('Async');
+    const engine = pref('repoEngine', engines[0], engines);
+    const useNs = pref('repoMetric', 'ns', ['ns', 'cycles']) === 'ns';
     const agg = pref('repoAgg', 'geomean', ['geomean', 'sum']);
     const precision = pref('repoPrecision', 'engines', ['engines', 'ops']);
     let hidden = new Set((localStorage.getItem('repoHidden') || '').split(',').filter(e => engines.includes(e)));
@@ -477,7 +491,7 @@
     const charted = engines.length && chain.length > 1;
     app.innerHTML = `<h1>${repoTitle(v)} <a class="agent" href="/repo/${encodeURIComponent(name)}.md${page > 1 ? '?page=' + page : ''}" title="this page as text, for an agent">text</a></h1>
       <div class="toolbar">${repoTargets(v)}<span class="muted">${v.Total} commit${v.Total === 1 ? '' : 's'} of ${esc(v.Branch || 'the main branch')}, ${v.Measured} measured</span></div>
-      ${charted ? `<div class="toolbar">${tabs('repoEngine', chartEngines.map(e => [e, engName(e)]), engine)}${tabs('repoMetric', [['ns', 'Time'], ['cycles', 'Cycles']], useNs ? 'ns' : 'cycles')}${tabs('repoAgg', [['geomean', 'Mean over payload types'], ['sum', 'Sum']], agg)}</div>
+      ${charted ? `<div class="toolbar">${tabs('repoEngine', engines.map(e => [e, engName(e)]), engine)}${tabs('repoMetric', [['ns', 'Time'], ['cycles', 'Cycles']], useNs ? 'ns' : 'cycles')}${tabs('repoAgg', [['geomean', 'Mean over payload types'], ['sum', 'Sum']], agg)}</div>
       <p class="note">One line per operation: its ${useNs ? 'time' : 'cycles'} per call at every measured commit, ${agg === 'sum' ? 'summed over the payload types (the largest type dominates)' : 'as the geometric mean over the payload types (every type counts alike)'}. Operations of one kind (unmarshalling, marshalling, hashing) share a chart and its scale.</p>
       <div id="repoCharts"></div>` : ''}
       <h2>Commits <span class="muted small">newest first</span></h2>
@@ -498,9 +512,9 @@
       series.push({ op: op + suffix, n: ks.length, data });
     });
     addSeries(engine, '');
-    // The async variant of the engine is a line of its own next to the
+    // The async hashing of the engine is a line of its own next to the
     // operation it runs. Its cycles are those of all its threads.
-    if (engines.includes(engine + 'Async')) addSeries(engine + 'Async', useNs ? ' (async)' : ' (async, all threads)');
+    if (v.Leaves.some(l => l.Engine === engine + 'Async')) addSeries(engine + 'Async', useNs ? ' (async)' : ' (async, all threads)');
     // The operations of one kind share a chart: unmarshalling,
     // marshalling, hashing; any other stands alone.
     const family = op => op.startsWith('Unmarshal') ? 'Unmarshal' : op.startsWith('Marshal') ? 'Marshal' : /^(HashTreeRoot|GetTree)/.test(op) ? 'Hash' : op;
@@ -540,8 +554,8 @@
       // libraries (r.Other) stand beside them. Without a base the job's
       // results are values only.
       const own = rs.filter(r => !r.Other);
-      const engines = sortEngines([...new Set(own.filter(r => !r.Engine.endsWith('Async')).map(r => r.Engine))]);
-      const asyncEngines = sortEngines([...new Set(own.filter(r => r.Engine.endsWith('Async')).map(r => r.Engine))]);
+      const engines = sortEngines([...new Set(own.filter(r => !isAsync(r.Engine)).map(r => r.Engine))]);
+      const asyncEngines = sortEngines([...new Set(own.filter(r => isAsync(r.Engine)).map(r => r.Engine))]);
       const baselines = sortEngines([...new Set(rs.filter(r => r.Other).map(r => r.Engine))]);
       const oneSided = own.length > 0 && own.every(r => r.Baseline);
       const ops = [...new Set(own.map(r => r.Op))].sort((a, b) => rank(OPS, a) - rank(OPS, b) || a.localeCompare(b));
@@ -579,17 +593,16 @@
   function refCell(mx, m, op) {
     const lines = mx.baselines.map(b => {
       const ref = mx.cells[b + '/' + op];
-      const isAsync = b.endsWith('Async');
       const mAll = m;
       m = metricFor(mAll, b, ref);
       if (!ref || unmeasured(ref[m.key])) { m = mAll; return ''; }
-      const ours = (isAsync ? mx.asyncEngines : mx.engines).map(e => {
+      const ours = (isAsync(b) ? mx.asyncEngines : mx.engines).map(e => {
         const r = mx.cells[e + '/' + op];
         if (!r || unmeasured(r[m.key]) || !(ref[m.key].Head > 0)) return '';
         const x = r[m.key].Head / ref[m.key].Head;
-        return `<span class="${x < 0.95 ? 'better' : x > 1.05 ? 'worse' : 'muted'}">${engName(e.replace('Async', ''))} ${x.toFixed(2)}×</span>`;
+        return `<span class="${x < 0.95 ? 'better' : x > 1.05 ? 'worse' : 'muted'}">${engName(e)} ${x.toFixed(2)}×</span>`;
       }).filter(Boolean).join(' ');
-      const line = `<div class="ref"><span class="muted">${ENGINE_LABELS[b] || b.replace('Async', ' async')}${m !== mAll ? ' (time)' : ''}</span><b>${m.fmt(ref[m.key].Head)}</b><span class="ours">${ours}</span></div>`;
+      const line = `<div class="ref"><span class="muted">${engName(b)}${isAsync(b) ? ' (async)' : ''}${m !== mAll ? ' (time)' : ''}</span><b>${m.fmt(ref[m.key].Head)}</b><span class="ours">${ours}</span></div>`;
       m = mAll;
       return line;
     }).filter(Boolean).join('');
@@ -938,7 +951,7 @@
         <div class="card"${j.BaseSHA ? '' : ' style="display:none"'}><h3>Base (${esc(j.BaseRef)})</h3><div class="mono">${commitLink(j.BaseSHA)} ${esc(j.BaseDesc).replace(/^[0-9a-f]{7} /, '')}</div>${j.BaseSHA !== j.HeadSHA ? `<div class="sub"><a href="${repo}/compare/${j.BaseSHA}...${j.HeadSHA}" target="_blank" rel="noopener">diff on GitHub</a></div>` : ''}</div>
         <div class="card"><h3>Measurement</h3><div class="mono">${j.Passes} passes${j.Seconds ? ', ' + dur(j.Seconds) : ''}${runs}</div><div class="sub">runner ${esc(j.Runner || '-')}</div><div class="sub">${esc(j.GoVersion)} · harness ${j.Harness}${d.Steal ? ` · ${d.Steal} steal ticks (wake-ups, within the limit)` : ' · no steal'}</div><div class="sub">queued ${when(j.Created)} · finished ${when(j.Finished)}</div></div>
         ${buildCard(d.Builds)}
-        <div class="card"${oneSided ? ' style="display:none"' : ''}><h3>Ratio per engine <span class="muted" style="text-transform:none">(cycles when counted, else time)</span></h3><div class="chips">${engineTotals(d.Summaries || []).map(x => `<span class="chip" title="geomean of head/base ${x.Cycles ? 'cycles' : 'time'} over ${x.N} operations of every object">${engName(x.Engine)} <b>${pct(x.Geomean, 1)}</b></span>`).join('') || '<span class="muted">-</span>'}</div><details class="small" style="margin-top:6px"><summary>per object</summary><div class="chips" style="margin-top:4px">${(d.Summaries || []).map(x => `<span class="chip">${engName(x.Engine)}·${x.Object} <b>${pct(x.Geomean, 1)}</b></span>`).join('')}</div></details></div>
+        <div class="card"${oneSided ? ' style="display:none"' : ''}><h3>Ratio per engine <span class="muted" style="text-transform:none">(cycles when counted, else time)</span></h3><div class="chips">${engineTotals(d.Summaries || []).map(x => `<span class="chip" title="geomean of head/base ${x.Cycles ? 'cycles' : 'time'} over ${x.N} operations of every object">${engName(x.Engine)} <b>${pct(x.Geomean, 1)}</b></span>`).join('') || '<span class="muted">-</span>'}</div><details class="small" style="margin-top:6px"><summary>per object</summary><div class="chips" style="margin-top:4px">${objectTotals(d.Summaries || []).map(x => `<span class="chip" title="geomean over ${x.N} operations">${engName(x.Engine)}·${x.Object} <b>${pct(x.Geomean, 1)}</b></span>`).join('')}</div></details></div>
       </div>
       ${j.Note ? `<p class="note">${esc(j.Note)}</p>` : ''}${mxs.some(mx => mx.baselines.length) ? `<p class="note">Other libraries: their pooled values at their latest release, measured by their own jobs on the same machine and payload (see <a href="#/ops">Operations</a>). They cannot hash Gloas objects unless they implement progressive merkleization.</p>` : ''}${j.Error ? `<pre class="err">${esc(j.Error)}</pre>` : ''}
       <div class="toolbar">${metricTabs(true)}<div class="tabs" id="modeTabs"${oneSided ? ' style="display:none"' : ''}><button data-mode="rel" class="${mode === 'rel' ? 'active' : ''}" title="charts show head against base in percent">change in %</button><button data-mode="abs" class="${mode === 'abs' ? 'active' : ''}" title="charts show the measured values">measured values</button></div>${mode === 'abs' ? `<label class="check"><input type="checkbox" id="chartLibs" ${chartLibs ? 'checked' : ''}> with the other libraries</label>` : ''}${oneSided ? `<span class="muted">${m.label} ${m.unit} of this commit, measured on its own (nothing to compare against)</span>` : ''}<span class="muted"${oneSided ? ' style="display:none"' : ''}>${m.label} ${m.unit}: base → head and Δ per engine and operation. Δ is the median over the passes. Green/red: a change (outside the band, most passes agree); bold: |Δ| ≥ 5%; grey: no change. Click a bar or cell for every sample.</span></div>
@@ -1001,13 +1014,13 @@
     const pairText = s => s.Extra ? Object.keys(EXTRAS).filter(k => !EXTRAS[k].bytes && !EXTRAS[k].kernel && s.Extra[k] !== undefined).map(k => `${EXTRAS[k].short} ${fmtNum(s.Extra[k])}`).join(' · ') : '';
     // offClock marks a run whose clock rate (cycles per ns) is more than
     // 1% off the median of all runs shown.
-    const clocks = samples.filter(s => s.Cycles && s.Ns && !engine.endsWith('Async')).map(s => s.Cycles / s.Ns).sort((a, b) => a - b);
+    const clocks = samples.filter(s => s.Cycles && s.Ns && !isAsync(engine)).map(s => s.Cycles / s.Ns).sort((a, b) => a - b);
     const clockMed = clocks.length ? clocks[Math.floor(clocks.length / 2)] : 0;
     const offClock = s => clockMed > 0 && s.Cycles && s.Ns && Math.abs(s.Cycles / s.Ns / clockMed - 1) > 0.01;
     const stat = (M, f) => r.Baseline
       ? `<div class="big">${f(M.Head)}</div><div class="sub">cv ${M.CVHead.toFixed(2)}%</div>`
       : `<div class="big">${badge(M)}</div><div class="sub">${f(M.Base)} → ${f(M.Head)} · 95% [${pct(M.Lo, 1)}, ${pct(M.Hi, 1)}] · p ${M.P.toFixed(3)} · median Δ ${pct(M.MedDelta)} · cv ${M.CVBase.toFixed(2)}% / ${M.CVHead.toFixed(2)}%</div>`;
-    app.innerHTML = `<h1><span class="mono">${engName(engine)} / ${object} / ${op}</span> <span class="muted small">job <a href="#/job/${id}">#${id}</a>${d.Runs.length > 1 ? `, pooled over ${d.Runs.length} runs` : ''}</span></h1>
+    app.innerHTML = `<h1><span class="mono">${engName(engine)} / ${object} / ${opLabel(engine, op)}</span> <span class="muted small">job <a href="#/job/${id}">#${id}</a>${d.Runs.length > 1 ? `, pooled over ${d.Runs.length} runs` : ''}</span></h1>
       <div class="cards">
         <div class="card"><h3>Time per op</h3>${stat(r.Ns, fmtNs)}</div>
         ${r.Cycles.Head ? `<div class="card"><h3>Cycles per op</h3>${stat(r.Cycles, fmtNum)}</div><div class="card"><h3>Instructions per op</h3>${stat(r.Instrs, fmtNum)}</div>` : ''}
@@ -1062,12 +1075,15 @@
   async function viewOps() {
     const d = await get('/api/ops?mode=' + opsMode);
     const rows = d.Rows || [], m = curMetric(false);
-    // One column per engine or library; its async variant has a row of
+    // One column per engine or library; its async hashing has a row of
     // its own below the operation it runs.
-    const all = sortEngines([...new Set((d.Engines || []).map(e => e.replace(/Async$/, '')))]);
+    const all = sortEngines([...new Set((d.Engines || []).map(baseEngine))]);
     const engines = all.filter(e => !opsHidden.has(e));
     const cell = (r, e) => {
       const c = r.Cells[e];
+      // An engine with the operation but not its async hashing: the
+      // library, or this version of it, has no background hashing.
+      if (!c && isAsync(e) && r.Cells[baseEngine(e)]) return '<td class="grp muted" title="no async hashing in this library at the commit shown: its job leaves the operation out">none</td>';
       if (!c) return '<td class="grp muted">-</td>';
       const em = metricFor(m, e, c), v = c[em.key];
       if (!(v > 0) && em.key !== 'Bytes' && em.key !== 'Allocs') return '<td class="grp muted">-</td>';
@@ -1076,7 +1092,7 @@
       const cv = em.key === 'Ns' ? c.CVNs : em.key === 'Cycles' ? c.CVCycles : 0;
       return `<td class="grp"><b title="median of ${c.N} runs of this commit${cv ? `, spread ${cv.toFixed(1)}%` : ''}${c.Threads ? `, counted over all ${c.Threads} threads` : ''}">${em.fmt(v)}</b>${unit}${rel !== null ? ` <span class="ci ${Math.abs(rel) < 1 ? '' : rel < 0 ? 'better' : 'worse'}" title="master against the latest release of the same library">${pct(rel, 1)} vs release</span>` : ''}</td>`;
     };
-    const asyncRow = r => Object.keys(r.Cells).some(e => e.endsWith('Async'))
+    const asyncRow = r => Object.keys(r.Cells).some(isAsync)
       ? `<tr><td><span class="muted">${r.Object}</span></td><td class="mono muted">${r.Op} (async${(m.key === 'Cycles' || m.key === 'Instrs') ? ', all threads' : ''})</td>${engines.map(e => cell(r, e + 'Async')).join('')}</tr>` : '';
     const subjectChip = s => {
       const link = commitLink(s.SHA, s.Name);
@@ -1091,7 +1107,8 @@
       <div class="toolbar chips" id="engsel">${all.map(e => `<a href="#" data-e="${e}" class="chip ${opsHidden.has(e) ? '' : 'commit'}" title="show or hide this column">${engName(e)}</a>`).join(' ')}<a href="#" data-e="*" class="chip">all</a><a href="#" data-e="-" class="chip">dynamic-ssz only</a></div>
       <div style="overflow-x:auto"><table><thead><tr><th>Object</th><th>Operation</th>${engines.map(e => `<th class="grp">${engName(e)}</th>`).join('')}</tr></thead><tbody>
       ${rows.map((r, i) => `<tr><td>${i > 0 && rows[i - 1].Object === r.Object ? `<span class="muted">${r.Object}</span>` : objName(r.Object)}</td><td class="mono"><a href="#/op/${r.Object}/${r.Op}">${r.Op}</a></td>${engines.map(e => cell(r, e)).join('')}</tr>${asyncRow(r)}`).join('')}
-      </tbody></table></div>${rows.length ? '' : '<p class="muted">no commit of this mode has been measured yet</p>'}`;
+      </tbody></table></div>${rows.length ? '' : '<p class="muted">no commit of this mode has been measured yet</p>'}
+      <p class="note">HashTreeRoot (async) is the hash tree root with background hashing workers, an operation of the engine above it; a library or version without that option has none.</p>`;
     bindMetricTabs(viewOps);
     document.querySelectorAll('#opsMode button').forEach(b => b.onclick = () => { opsMode = b.dataset.mode; localStorage.setItem('opsMode', opsMode); viewOps(); });
     document.querySelectorAll('#engsel a').forEach(a => a.onclick = (ev => {
@@ -1115,7 +1132,7 @@
     const d = await get('/api/pr/' + n);
     repo = d.Repo;
     const m = curMetric(false);
-    const chips = sums => engineTotals(sums).map(x => `<span class="chip" title="geomean over ${x.N} operations (${x.Cycles && !x.Engine.endsWith('Async') ? 'cycles' : 'time'})">${engName(x.Engine)} <b>${pct(x.Geomean, 1)}</b></span>`).join('') || '<span class="muted">-</span>';
+    const chips = sums => engineTotals(sums).map(x => `<span class="chip" title="geomean over ${x.N} operations (${x.Cycles ? 'cycles, time for the async hashing' : 'time'})">${engName(x.Engine)} <b>${pct(x.Geomean, 1)}</b></span>`).join('') || '<span class="muted">-</span>';
     const measured = d.Rows.filter(r => r.Job && r.Job.State === 'done');
     const leaves = [...new Set(measured.flatMap(r => r.Results.map(x => x.Object + '/' + x.Op)))].sort((a, b) => { const [ao, ap] = a.split('/'), [bo, bp] = b.split('/'); return rank(OBJECTS, ao) - rank(OBJECTS, bo) || rank(OPS, ap) - rank(OPS, bp); });
     let leaf = leaves.includes(prLeaf) ? prLeaf : '';
@@ -1158,7 +1175,7 @@
     chart('prc', {
       type: 'line',
       data: { labels: xs.map(r => short(r.SHA).slice(0, 7)), datasets: engines.filter(e => prMode === 'rel' || metricFor(m, e) === m).map((e, i) => ({
-        label: engName(e) + (metricFor(m, e) !== m && leaf ? ' (time)' : ''), borderColor: COLORS[rank(ENGINES, e) % COLORS.length], backgroundColor: COLORS[rank(ENGINES, e) % COLORS.length], tension: 0, pointRadius: 4, spanGaps: true,
+        label: engName(e) + (isAsync(e) ? ' (async)' : '') + (metricFor(m, e) !== m && leaf ? ' (time)' : ''), borderColor: COLORS[rank(ENGINES, e) % COLORS.length], backgroundColor: COLORS[rank(ENGINES, e) % COLORS.length], borderDash: isAsync(e) ? [5, 3] : undefined, tension: 0, pointRadius: 4, spanGaps: true,
         data: xs.map(r => value(r, e)) })) },
       options: { responsive: true, maintainAspectRatio: false, animation: false,
         onClick: (ev, els) => { if (els.length) { const r = xs[els[0].index]; if (r.Job) location.hash = `#/job/${r.Job.ID}`; } },
@@ -1173,27 +1190,36 @@
     const v = await get(`/api/op/${object}/${op}`);
     const m = curMetric(false);
     const main = (await get('/api/status')).MainBranch;
+    // One card and one column per engine; the async hashing of an engine
+    // (its *Async engine of the harness) is a line inside them.
+    const engines = sortEngines([...new Set(v.Engines.map(baseEngine))]);
+    const asyncOf = e => v.Engines.includes(e + 'Async') ? e + 'Async' : null;
+    const latest = e => { const l = v.Latest[e]; return l ? `${fmtNs(l.Ns.Head)}` : ''; };
     app.innerHTML = `<h1><span class="mono">${object} / ${op}</span>${objInfo(object)}</h1>
-      <div class="cards">${v.Engines.map((e, i) => {
-        const l = v.Latest[e], t = v.Trends[e], n = v.Noise[e];
-        return `<div class="card"><h3><i class="legend"><i style="background:${COLORS[i]}"></i></i>${engName(e)}</h3><div class="big">${fmtNs(l.Ns.Head)}</div><div class="sub">${fmtBytes(l.Bytes.Head)} · ${fmtNum(l.Allocs.Head)} allocs/op · latest head (job <a href="#/job/${l.JobID}">#${l.JobID}</a>)</div>${t && t.N >= 3 ? `<div class="sub">master trend ${pct(t.SlopePct30d, 1)} / 30d over ${t.N} points (R² ${t.R2.toFixed(2)}), projected ${fmtNs(t.Projected30d)}</div>` : ''}${n ? `<div class="sub">noise floor p95 |Δ| ${n.toFixed(2)}%</div>` : ''}</div>`;
+      <div class="cards">${engines.map((e, i) => {
+        const l = v.Latest[e], t = v.Trends[e], n = v.Noise[e], a = asyncOf(e), la = a && v.Latest[a], ta = a && v.Trends[a];
+        if (!l) return '';
+        return `<div class="card"><h3><i class="legend"><i style="background:${COLORS[i]}"></i></i>${engName(e)}</h3><div class="big">${fmtNs(l.Ns.Head)}</div><div class="sub">${fmtBytes(l.Bytes.Head)} · ${fmtNum(l.Allocs.Head)} allocs/op · latest head (job <a href="#/job/${l.JobID}">#${l.JobID}</a>)</div>${t && t.N >= 3 ? `<div class="sub">master trend ${pct(t.SlopePct30d, 1)} / 30d over ${t.N} points (R² ${t.R2.toFixed(2)}), projected ${fmtNs(t.Projected30d)}</div>` : ''}${n ? `<div class="sub">noise floor p95 |Δ| ${n.toFixed(2)}%</div>` : ''}${la ? `<div class="sub">async: <b>${latest(a)}</b>${ta && ta.N >= 3 ? `, trend ${pct(ta.SlopePct30d, 1)} / 30d` : ''}${v.Noise[a] ? `, noise floor p95 ${v.Noise[a].toFixed(2)}%` : ''}</div>` : ''}</div>`;
       }).join('')}</div>
       <div class="toolbar">${metricTabs()}<span class="muted">master history: head value of every ${esc(main)} job, newest right</span></div>
       <div class="chart h300"><canvas id="hc"></canvas></div>
       <h2>Every job</h2>
-      <table><thead><tr><th>Job</th><th>Kind</th><th>Repository</th><th>Branch</th><th>Head</th><th>Base</th>${v.Engines.map(e => `<th class="grp">${engName(e)}</th>`).join('')}</tr></thead><tbody>
-      ${v.History.map(row => `<tr><td><a href="#/job/${row.Job.ID}">#${row.Job.ID}</a></td><td>${kindChips(row.Job)}</td><td>${repoLink(row.Job.Subject)}</td><td class="mono">${esc(row.Job.Branch)}</td><td>${commitLink(row.Job.HeadSHA, row.Job.Subject)}</td><td>${commitLink(row.Job.BaseSHA, row.Job.Subject)}</td>${v.Engines.map(e => {
-        const r = row.Results[e];
-        if (!r) return '<td class="grp muted">-</td>';
-        return `<td class="grp cell">${r.Baseline ? cellAbs(r, m) : cellDelta(r, m, row.Job.ID)}</td>`;
+      <table><thead><tr><th>Job</th><th>Kind</th><th>Repository</th><th>Branch</th><th>Head</th><th>Base</th>${engines.map(e => `<th class="grp">${engName(e)}</th>`).join('')}</tr></thead><tbody>
+      ${v.History.map(row => `<tr><td><a href="#/job/${row.Job.ID}">#${row.Job.ID}</a></td><td>${kindChips(row.Job)}</td><td>${repoLink(row.Job.Subject)}</td><td class="mono">${esc(row.Job.Branch)}</td><td>${commitLink(row.Job.HeadSHA, row.Job.Subject)}</td><td>${commitLink(row.Job.BaseSHA, row.Job.Subject)}</td>${engines.map(e => {
+        const r = row.Results[e], ra = asyncOf(e) && row.Results[asyncOf(e)];
+        const one = (x, label) => { const xm = metricFor(m, x.Engine, x), body = `${label ? `<span class="muted small">${label}${xm !== m ? ' (time)' : ''}</span> ` : ''}${cellAbs(x, xm)}`; return `<a href="#/job/${row.Job.ID}/leaf/${x.Engine}/${x.Object}/${x.Op}">${body}</a>`; };
+        const show = (x, label) => x.Baseline ? one(x, label) : cellDelta(x, m, row.Job.ID, label);
+        return `<td class="grp cell">${r ? show(r) : '<span class="muted">-</span>'}${ra ? show(ra, 'async') : ''}</td>`;
       }).join('')}</tr>`).join('')}
       </tbody></table>`;
     bindMetricTabs(() => viewOp(object, op));
     destroyCharts();
     const pts = v.History.slice().reverse().filter(row => row.Job.Branch === main && row.Job.Kind !== 'noise' && row.Job.Finished);
-    const datasets = v.Engines.filter(e => pts.some(row => row.Results[e])).map(e => { const i = v.Engines.indexOf(e); return {
-      label: engName(e), borderColor: COLORS[i], backgroundColor: COLORS[i], pointRadius: 3, borderWidth: 1.5, tension: 0.1, spanGaps: true,
-      data: pts.map(row => row.Results[e] ? { x: when(row.Job.Finished), y: row.Results[e][m.key].Head, j: row.Job } : null).filter(Boolean),
+    // The async hashing is a dashed line in the colour of its engine; on a
+    // counter tab a job that counted one thread of it only leaves a gap.
+    const datasets = v.Engines.filter(e => pts.some(row => row.Results[e])).map(e => { const i = engines.indexOf(baseEngine(e)); return {
+      label: engName(e) + (isAsync(e) ? ' (async)' : ''), borderColor: COLORS[i % COLORS.length], backgroundColor: COLORS[i % COLORS.length], borderDash: isAsync(e) ? [5, 3] : undefined, pointRadius: 3, borderWidth: 1.5, tension: 0.1, spanGaps: true,
+      data: pts.map(row => { const r = row.Results[e]; return r && metricFor(m, e, r) === m ? { x: when(row.Job.Finished), y: r[m.key].Head, j: row.Job } : null; }).filter(Boolean),
     }; });
     chart('hc', {
       type: 'line',
@@ -1221,7 +1247,7 @@
           <div class="card"><h3>Source</h3><div class="big">${d.AJob.ID === d.BJob.ID ? 'same job' : 'different jobs'}</div><div class="sub">${d.AJob.ID === d.BJob.ID ? 'interleaved measurement' : 'measured at different times; the noise floor applies on top'}</div></div></div>
           <div class="toolbar">${metricTabs()}</div>
           <table><thead><tr><th>Engine</th><th>Object</th><th>Operation</th><th class="num">A</th><th class="num">B</th><th class="num">Δ</th></tr></thead><tbody>
-          ${d.Rows.map(r => { const dl = r[key[1]]; return `<tr><td>${r.Engine}</td><td>${r.Object}</td><td class="mono"><a href="#/op/${r.Object}/${r.Op}">${r.Op}</a></td><td class="num">${m.fmt(r.A[key[0]])}</td><td class="num">${m.fmt(r.B[key[0]])}</td><td class="num"><span class="badge ${Math.abs(dl) < 1 ? 'same' : dl < 0 ? 'better' : 'worse'}">${pct(dl)}</span></td></tr>`; }).join('')}
+          ${d.Rows.map(r => { const dl = r[key[1]]; return `<tr><td>${engName(r.Engine)}</td><td>${r.Object}</td><td class="mono"><a href="#/op/${r.Object}/${r.Op}">${opLabel(r.Engine, r.Op)}</a></td><td class="num">${m.fmt(r.A[key[0]])}</td><td class="num">${m.fmt(r.B[key[0]])}</td><td class="num"><span class="badge ${Math.abs(dl) < 1 ? 'same' : dl < 0 ? 'better' : 'worse'}">${pct(dl)}</span></td></tr>`; }).join('')}
           </tbody></table>`;
       } else body = '<p class="err">One of the commits has no finished measurement.</p>';
     }
@@ -1248,7 +1274,7 @@
       else if (sortKey === 'cv') rows.sort((a, b) => st(b).CV - st(a).CV);
       else rows.sort(sortLeaf);
       return `<table><thead><tr><th>Runner</th><th>Engine</th><th>Object</th><th>Operation</th><th class="num">n</th><th class="num">median |Δ|</th><th class="num sortable" data-k="p95">p95 |Δ| ▾</th><th class="num">max |Δ|</th><th class="num sortable" data-k="cv">median CV ▾</th><th class="num">steal</th></tr></thead><tbody>
-        ${rows.map(r => { const s = st(r); return `<tr><td class="mono muted">${esc(r.Runner)}</td><td>${r.Engine}</td><td>${r.Object}</td><td class="mono"><a href="#/op/${r.Object}/${r.Op}">${r.Op}</a></td><td class="num">${r.N}</td><td class="num">${s.MedianAbs.toFixed(2)}%</td><td class="num"><span class="badge ${s.P95Abs < 1 ? 'better' : s.P95Abs < 3 ? 'same' : 'worse'}">${s.P95Abs.toFixed(2)}%</span></td><td class="num">${s.MaxAbs.toFixed(2)}%</td><td class="num">${s.CV.toFixed(2)}%</td><td class="num">${r.Steal}</td></tr>`; }).join('')}
+        ${rows.map(r => { const s = st(r); return `<tr><td class="mono muted">${esc(r.Runner)}</td><td>${engName(r.Engine)}</td><td>${r.Object}</td><td class="mono"><a href="#/op/${r.Object}/${r.Op}">${opLabel(r.Engine, r.Op)}</a></td><td class="num">${r.N}</td><td class="num">${s.MedianAbs.toFixed(2)}%</td><td class="num"><span class="badge ${s.P95Abs < 1 ? 'better' : s.P95Abs < 3 ? 'same' : 'worse'}">${s.P95Abs.toFixed(2)}%</span></td><td class="num">${s.MaxAbs.toFixed(2)}%</td><td class="num">${s.CV.toFixed(2)}%</td><td class="num">${r.Steal}</td></tr>`; }).join('')}
         </tbody></table>`;
     };
     const draw = () => {
