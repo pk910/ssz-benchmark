@@ -75,10 +75,13 @@ a signed block's `Message`, an envelope's `Message`.
 
 Operations: `Unmarshal` (bytes to a fresh object), `SizeSSZ`, `Marshal`
 (to a new buffer), `MarshalTo` (into a buffer kept across iterations, when
-the library has such a call), `HashTreeRoot`. For a tree-backed library
-whose roots are cached, HashTreeRoot hashes an object with no cache (a
-fresh decode per iteration counts as part of it and is named as such on
-the pages), or the structural representation when there is one.
+the library has such a call), `HashTreeRoot`. HashTreeRoot is bare
+hashing in every library: nothing cached from an earlier hash may be
+reused. A tree-backed library whose nodes cache their roots prepares a
+fresh object for every iteration (a new decode) inside `pause` /
+`resume`, so that the preparation is outside the timed window and only
+the hashing of an uncached object is measured; the structural
+representation, when there is one, needs no such preparation.
 
 Engine names are fixed per library (one more per representation):
 `EthereumSSZ`, `Grandine`, `Teku`, `LodestarValue`, `LodestarTree`,

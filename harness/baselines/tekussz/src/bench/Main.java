@@ -21,8 +21,9 @@ import tech.pegasys.teku.infrastructure.ssz.schema.SszContainerSchema;
  * tree eagerly, so this is the decode), SizeSSZ (the schema's getSszSize of the tree), Marshal
  * (sszSerialize to a new Bytes) and HashTreeRoot. Teku caches every hash in its tree nodes, so
  * hashTreeRoot of an object once hashed is a lookup: HashTreeRoot hashes a freshly deserialized
- * object per iteration and the deserialization is part of the measured operation. Memory is the
- * bytes allocated by the measuring thread (ThreadMXBean); the runtime does not count allocations.
+ * object per iteration, prepared outside the timed window, so that only the hashing counts.
+ * Memory is the bytes allocated by the measuring thread (ThreadMXBean); the runtime does not
+ * count allocations.
  *
  * <p>Objects of a fork: the state, the block, the block set, and (Gloas) the envelope, plus the
  * minimal-preset state and block. Roots: a state's own, a signed block's or envelope's Message.
@@ -212,15 +213,17 @@ public final class Main {
           marshal(p, l, state, decode(schema, data));
           break;
         case "HashTreeRoot":
-          // Teku caches the roots in the tree: a fresh deserialization per iteration gives an
-          // object without a cache, and is part of the measured operation.
+          // Teku caches the roots in the tree: every iteration hashes a freshly deserialized
+          // object, prepared untimed, so that the measured work is the hashing alone.
           p.run(
               l,
               state,
-              () -> {
+              () -> decode(schema, data),
+              in -> {
+                final SszContainer[] objs = (SszContainer[]) in;
                 final Bytes32[] out = new Bytes32[n];
                 for (int i = 0; i < n; i++) {
-                  out[i] = rootOf.apply(schema.sszDeserialize(data[i]));
+                  out[i] = rootOf.apply(objs[i]);
                 }
                 return out;
               });

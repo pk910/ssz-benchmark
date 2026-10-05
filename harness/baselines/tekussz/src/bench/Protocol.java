@@ -11,6 +11,7 @@ import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.function.Function;
 import java.util.function.Supplier;
 import java.util.regex.Pattern;
 
@@ -141,18 +142,31 @@ final class Protocol {
    * batch are dropped and collected between batches with the counters paused.
    */
   void run(final Leaf l, final boolean state, final Supplier<Object> f) {
+    run(l, state, null, in -> f.get());
+  }
+
+  /**
+   * Measures a leaf whose every iteration needs a fresh input: prepare makes it untimed, with the
+   * counters paused, and f gets it. What Teku caches in an object (the roots of its tree) is
+   * therefore never carried from one iteration to the next, and the preparation is not measured.
+   */
+  void run(
+      final Leaf l,
+      final boolean state,
+      final Supplier<Object> prepare,
+      final Function<Object, Object> f) {
     final int count = iters.getOrDefault(l.op, 0);
     int n = count > 0 ? count : Math.max(fixed, 1);
     int warm = 0;
     final long t0 = System.nanoTime();
     do {
-      sink = f.get();
+      sink = f.apply(prepare == null ? null : prepare.get());
       warm++;
     } while ((!state && warm < WARM_ITERS) || System.nanoTime() - t0 < WARM_NS);
     sink = null;
     System.gc();
     while (true) {
-      final long[] r = timed(l, n, f);
+      final long[] r = timed(l, n, prepare, f);
       final long elapsed = r[0];
       if (targetNs > 0 && count == 0 && elapsed < targetNs) {
         final long next = (long) (n * ((double) targetNs / Math.max(elapsed, 1)) * 1.2);
@@ -168,7 +182,8 @@ final class Protocol {
   private static volatile Object sink;
 
   /** Runs n iterations: {elapsed ns, bytes allocated by the measuring thread}. */
-  private long[] timed(final Leaf l, final int n, final Supplier<Object> f) {
+  private long[] timed(
+      final Leaf l, final int n, final Supplier<Object> prepare, final Function<Object, Object> f) {
     final ArrayList<Object> kept = new ArrayList<>(Math.min(n, 1 << 16));
     long every = 1;
     long elapsed = 0;
@@ -178,7 +193,18 @@ final class Protocol {
     long bytes0 = threads.getCurrentThreadAllocatedBytes();
     long start = System.nanoTime();
     for (int i = 0; i < n; i++) {
-      final Object r = f.get();
+      Object in = null;
+      if (prepare != null) {
+        elapsed += System.nanoTime() - start;
+        sumBytes += threads.getCurrentThreadAllocatedBytes() - bytes0;
+        send("pause");
+        in = prepare.get();
+        send("resume");
+        bytes0 = threads.getCurrentThreadAllocatedBytes();
+        start = System.nanoTime();
+      }
+      final Object r = f.apply(in);
+      in = null;
       if (r != null) {
         kept.add(r);
       }
