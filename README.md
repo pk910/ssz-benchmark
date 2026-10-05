@@ -342,8 +342,8 @@ routes:
   against the measured commit before it (from the pooled values of both,
   within one harness version), and charts with one line per operation: its
   time (or cycles) per call at every measured commit, aggregated over the
-  payload types (geometric mean, or sum), operations of a similar size
-  sharing a chart. The change column shows one badge per engine or one
+  payload types (geometric mean, or sum), operations of one kind
+  (unmarshalling, marshalling, hashing) sharing a chart. The change column shows one badge per engine or one
   per engine and operation, and engines can be hidden. The list is the history of the branch as the repository has it:
   the commits on the branch itself, a merge as one commit. It is read from
   a local repository when the page is built: the mirror, or, for another

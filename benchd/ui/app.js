@@ -476,7 +476,7 @@
     app.innerHTML = `<h1>${repoTitle(v)} <a class="agent" href="/repo/${encodeURIComponent(name)}.md${page > 1 ? '?page=' + page : ''}" title="this page as text, for an agent">text</a></h1>
       <div class="toolbar">${repoTargets(v)}<span class="muted">${v.Total} commit${v.Total === 1 ? '' : 's'} of ${esc(v.Branch || 'the main branch')}, ${v.Measured} measured</span></div>
       ${charted ? `<div class="toolbar">${tabs('repoEngine', engines.map(e => [e, engName(e)]), engine)}${tabs('repoMetric', [['ns', 'Time'], ['cycles', 'Cycles']], useNs ? 'ns' : 'cycles')}${tabs('repoAgg', [['geomean', 'Mean over payload types'], ['sum', 'Sum']], agg)}</div>
-      <p class="note">One line per operation: its ${useNs ? 'time' : 'cycles'} per call at every measured commit, ${agg === 'sum' ? 'summed over the payload types (the largest type dominates)' : 'as the geometric mean over the payload types (every type counts alike)'}. Operations of a similar size share a chart and its scale.</p>
+      <p class="note">One line per operation: its ${useNs ? 'time' : 'cycles'} per call at every measured commit, ${agg === 'sum' ? 'summed over the payload types (the largest type dominates)' : 'as the geometric mean over the payload types (every type counts alike)'}. Operations of one kind (unmarshalling, marshalling, hashing) share a chart and its scale.</p>
       <div id="repoCharts"></div>` : ''}
       <h2>Commits <span class="muted small">newest first</span></h2>
       ${engines.length ? `<div class="toolbar"><span class="muted">detail</span>${tabs('repoPrecision', [['engines', 'Engines'], ['ops', 'Operations']], precision)}<span class="muted">show</span><span id="repoHidden">${engines.map(e => `<a class="chip toggle ${hidden.has(e) ? 'off' : 'commit'}" data-e="${e}" title="click to ${hidden.has(e) ? 'show' : 'hide'}">${esc(engName(e))}</a>`).join(' ')}</span></div>` : ''}
@@ -495,9 +495,11 @@
       const data = chain.map(c => agg === 'sum' ? ks.reduce((t, k) => t + c.Values[k][col], 0) : Math.exp(ks.reduce((t, k) => t + Math.log(c.Values[k][col]), 0) / ks.length));
       series.push({ op, n: ks.length, data, mid: data.slice().sort((a, b) => a - b)[data.length >> 1] });
     });
-    // Operations within a factor of five share a chart.
+    // The operations of one kind share a chart: unmarshalling,
+    // marshalling, hashing; any other stands alone.
+    const family = op => op.startsWith('Unmarshal') ? 'Unmarshal' : op.startsWith('Marshal') ? 'Marshal' : /^(HashTreeRoot|GetTree)/.test(op) ? 'Hash' : op;
     const groups = [];
-    series.slice().sort((a, b) => b.mid - a.mid).forEach(sr => { const g = groups[groups.length - 1]; if (g && g[0].mid / sr.mid <= 5) g.push(sr); else groups.push([sr]); });
+    series.forEach(sr => { const g = groups.find(g => family(g[0].op) === family(sr.op)); if (g) g.push(sr); else groups.push([sr]); });
     const fmt = useNs ? fmtNs : fmtNum;
     document.getElementById('repoCharts').innerHTML = groups.map((g, i) => `<div class="chart" style="height:${200 + 14 * g.length}px"><canvas id="rc${i}"></canvas></div>`).join('');
     // The charts stand below each other: the axis and the legend take
