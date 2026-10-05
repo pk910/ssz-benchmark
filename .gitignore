@@ -49,3 +49,6 @@ repo.git/
 
 # planning notes stay local
 /ai_plans/
+
+# python caches of the type converters
+__pycache__/
