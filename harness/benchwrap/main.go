@@ -164,6 +164,9 @@ func (s *session) resume() {
 		return
 	}
 	s.f0, s.s0 = s.kernel()
+	if s.f0 < 0 {
+		s.f0, s.s0 = 0, 0
+	}
 	s.counters.Start()
 	s.open = true
 }
@@ -173,9 +176,13 @@ func (s *session) pause() {
 		return
 	}
 	s.counters.Stop()
-	f1, s1 := s.kernel()
-	s.faults += f1 - s.f0
-	s.sysNs += s1 - s.s0
+	// An adapter that has already exited leaves no figures to read: the
+	// window's faults and kernel time are then unknown and left out,
+	// rather than made negative.
+	if f1, s1 := s.kernel(); f1 >= 0 {
+		s.faults += f1 - s.f0
+		s.sysNs += s1 - s.s0
+	}
 	s.open = false
 }
 
@@ -267,17 +274,17 @@ func (s *session) kernel() (faults, sysNs int64) {
 	}
 	data, err := os.ReadFile("/proc/" + strconv.Itoa(s.pid) + "/task/" + strconv.Itoa(tid) + "/stat")
 	if err != nil {
-		return 0, 0
+		return -1, -1
 	}
 	// The command name is in parentheses and may hold spaces: the fields
 	// after it start with the state (field 3).
 	i := strings.LastIndexByte(string(data), ')')
 	if i < 0 {
-		return 0, 0
+		return -1, -1
 	}
 	f := strings.Fields(string(data[i+1:]))
 	if len(f) < 13 {
-		return 0, 0
+		return -1, -1
 	}
 	minflt, _ := strconv.ParseInt(f[7], 10, 64)
 	majflt, _ := strconv.ParseInt(f[9], 10, 64)
