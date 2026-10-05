@@ -1,0 +1,30 @@
+# The adapter of Grandine's SSZ (grandinetech/grandine, crate ssz with
+# ssz_derive and hashing). The crate comes from the workspace checkout under
+# work/grandine, which build.sh fetches at the measured commit; its sibling
+# crates and the workspace's dependency pins resolve through that workspace.
+# The sha2 patch is the workspace's own: hashing builds on Grandine's fork.
+[package]
+name = "grandinessz-bench"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[[bin]]
+name = "bench"
+path = "src/main.rs"
+
+[dependencies]
+ssz = { path = "work/grandine/ssz" }
+ethereum-types = "0.14"
+primitive-types = "0.12"
+typenum = "1"
+regex = "1"
+libc = "0.2"
+
+[patch.crates-io]
+sha2 = { git = "https://github.com/grandinetech/universal-precompiles.git", tag = "sha2-v0.10.9-up.2" }
+
+[profile.release]
+debug = false
+codegen-units = 16
+lto = false
