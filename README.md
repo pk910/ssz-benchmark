@@ -462,11 +462,14 @@ lists every runner with its state.
 - A new head of a branch marks that branch's queued jobs as skipped; the
   running one finishes. `#/pr/<n>` lists every measured head of a pull
   request against the base and against the head before it.
-- Pull requests from forks are measured only after a maintainer approves
-  a specific head, and only inside the sandbox (`SANDBOX_USER`,
-  `deploy/setup-sandbox.sh`): builds run as an unprivileged user without
-  access to private address ranges, benchmark processes without any
-  network. Two ways to approve:
+- Pull requests from forks are measured only inside the sandbox
+  (`SANDBOX_USER`, `deploy/setup-sandbox.sh`): builds run as an
+  unprivileged user without access to private address ranges, benchmark
+  processes without any network. A head is measured when the repository's
+  own rule for forks let it through: GitHub ran the workflows for it (the
+  author is known to the repository, or a maintainer approved the run
+  there). A run that still waits for that approval does not count. A
+  maintainer can also approve a specific head directly:
   - apply the label `benchmark` (`-approve-label`). The App's webhook
     (`/webhook`, signed with `GH_APP_WEBHOOK_SECRET`, event "Pull
     request") delivers the head the label was applied to; the daemon

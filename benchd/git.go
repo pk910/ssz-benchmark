@@ -328,6 +328,62 @@ func (c *prCache) approvedBy(ctx context.Context, number int, headSHA string) st
 	return ""
 }
 
+// workflowsRan reports whether GitHub ran the repository's workflows for
+// a pull request head: the head then passed the repository's own rule
+// for code from forks (a known author, or a maintainer's approval of the
+// run), and is measured by the same rule. A run that waits for that
+// approval does not count.
+func (c *prCache) workflowsRan(ctx context.Context, headSHA string) bool {
+	get := func(token string) (*http.Response, error) {
+		req, err := http.NewRequestWithContext(ctx, "GET", fmt.Sprintf("%s/repos/%s/actions/runs?event=pull_request&per_page=100&head_sha=%s", c.api, c.repo, headSHA), nil)
+		if err != nil {
+			return nil, err
+		}
+		req.Header.Set("Accept", "application/vnd.github+json")
+		req.Header.Set("User-Agent", "benchd")
+		if token != "" {
+			req.Header.Set("Authorization", "Bearer "+token)
+		}
+		return http.DefaultClient.Do(req)
+	}
+	resp, err := get(c.bearer(ctx))
+	if err == nil && (resp.StatusCode == http.StatusForbidden || resp.StatusCode == http.StatusNotFound) {
+		// The token may not cover the workflow runs; those of a public
+		// repository can be read without one.
+		resp.Body.Close()
+		resp, err = get("")
+	}
+	if err != nil {
+		log.Printf("workflow runs of %s: %v", shortSHA(headSHA), err)
+		return false
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		log.Printf("workflow runs of %s: HTTP %s", shortSHA(headSHA), resp.Status)
+		return false
+	}
+	var out struct {
+		Runs []struct {
+			Status     string `json:"status"`
+			Conclusion string `json:"conclusion"`
+			HeadSHA    string `json:"head_sha"`
+		} `json:"workflow_runs"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
+		return false
+	}
+	for _, r := range out.Runs {
+		if r.HeadSHA != headSHA || r.Status == "action_required" || r.Conclusion == "action_required" {
+			continue
+		}
+		switch r.Status {
+		case "queued", "in_progress", "completed":
+			return true
+		}
+	}
+	return false
+}
+
 // refresh reloads the open pull requests at most every five minutes.
 func (c *prCache) refresh(ctx context.Context) { c.refreshOlder(ctx, 5*time.Minute) }
 
@@ -416,13 +472,16 @@ type scheduler struct {
 	// lastTargetPoll is when the libraries' upstream repositories were
 	// last checked.
 	lastTargetPoll time.Time
-	runner         *runner        // publishes the fetch status with its own
-	checks         *checkReporter // nil without a GitHub App
-	ready          chan struct{}  // closed after the first fetch
-	readyOnce      sync.Once
-	mu             sync.Mutex
-	lastFetch      time.Time
-	lastErr        string
+	// forkChecked is when the workflow runs of a fork's head were last
+	// looked up.
+	forkChecked map[string]time.Time
+	runner      *runner        // publishes the fetch status with its own
+	checks      *checkReporter // nil without a GitHub App
+	ready       chan struct{}  // closed after the first fetch
+	readyOnce   sync.Once
+	mu          sync.Mutex
+	lastFetch   time.Time
+	lastErr     string
 }
 
 func (s *scheduler) loop(ctx context.Context) {
@@ -532,11 +591,21 @@ func (s *scheduler) enqueueForkPRs(ctx context.Context) {
 			continue
 		}
 		// Approved by the label (recorded by the webhook with the head it was
-		// applied to) or by a maintainer's review of this head.
+		// applied to), by a maintainer's review of this head, or by the
+		// repository's own rule for forks: its workflows ran for this head.
 		by, _ := s.db.prApproval(pr.Number, pr.HeadSHA)
 		byLabel := by != ""
 		if by == "" {
 			by = s.prs.approvedBy(ctx, pr.Number, pr.HeadSHA)
+		}
+		if by == "" && time.Since(s.forkChecked[pr.HeadSHA]) > 2*time.Minute {
+			if s.forkChecked == nil {
+				s.forkChecked = map[string]time.Time{}
+			}
+			s.forkChecked[pr.HeadSHA] = time.Now()
+			if s.prs.workflowsRan(ctx, pr.HeadSHA) {
+				by = "the repository's workflows running for it"
+			}
 		}
 		if by == "" {
 			continue

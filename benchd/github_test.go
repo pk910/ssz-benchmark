@@ -313,3 +313,42 @@ func TestWebhookApproval(t *testing.T) {
 		t.Fatalf("without a secret configured: %d", code)
 	}
 }
+
+func TestWorkflowsRan(t *testing.T) {
+	head := strings.Repeat("a", 40)
+	runs, status := `{"workflow_runs":[]}`, http.StatusOK
+	var tokens []string
+	srv := httptest.NewServer(http.HandlerFunc(func(rw http.ResponseWriter, req *http.Request) {
+		if req.URL.Path != "/repos/o/r/actions/runs" || req.URL.Query().Get("head_sha") != head {
+			http.NotFound(rw, req)
+			return
+		}
+		tokens = append(tokens, req.Header.Get("Authorization"))
+		if status != http.StatusOK && req.Header.Get("Authorization") != "" {
+			rw.WriteHeader(status)
+			return
+		}
+		_, _ = io.WriteString(rw, runs)
+	}))
+	defer srv.Close()
+	c := newPRCache("o/r", "tok")
+	c.api = srv.URL
+	ctx := context.Background()
+	if c.workflowsRan(ctx, head) {
+		t.Fatal("no run counts as run")
+	}
+	// A run that waits for a maintainer's approval is no approval.
+	runs = `{"workflow_runs":[{"status":"completed","conclusion":"action_required","head_sha":"` + head + `"},{"status":"action_required","conclusion":"","head_sha":"` + head + `"}]}`
+	if c.workflowsRan(ctx, head) {
+		t.Fatal("a run awaiting approval counts as run")
+	}
+	runs = `{"workflow_runs":[{"status":"completed","conclusion":"action_required","head_sha":"` + head + `"},{"status":"in_progress","conclusion":"","head_sha":"` + head + `"}]}`
+	if !c.workflowsRan(ctx, head) {
+		t.Fatal("a started run does not count")
+	}
+	// A token that does not cover the runs: read without it.
+	status, tokens = http.StatusForbidden, nil
+	if !c.workflowsRan(ctx, head) || len(tokens) != 2 || tokens[0] == "" || tokens[1] != "" {
+		t.Fatalf("no retry without the token: %q", tokens)
+	}
+}
