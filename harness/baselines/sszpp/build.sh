@@ -44,9 +44,10 @@ python3 ../convert_foreign.py cpp ../../types/fulu/types.go src/gen_fulu.hpp --r
 make -s -C work/hashtree/src -j"$BENCH_JOBS" OUT_DIR="$PWD/build/hashtree" "$PWD/build/hashtree/lib/libhashtree.a"
 
 # build <link flags> <binary>: configures (a relink when only the flags
-# changed) and builds the driver into out.
+# changed) and builds the driver into out, with the system's g++ (gcc 14
+# on the box) whatever CXX says.
 build() {
-  cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DCMAKE_EXE_LINKER_FLAGS="$1" >/dev/null
+  cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DCMAKE_CXX_COMPILER=g++ -DCMAKE_EXE_LINKER_FLAGS="$1" >/dev/null
   cmake --build build --parallel "$BENCH_JOBS" >/dev/null
   cp build/bench "$2"
 }

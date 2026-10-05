@@ -6,23 +6,38 @@
 // Operations: Unmarshal (ssz::deserialize<T*>, the object on the heap as
 // the library's own benchmark decodes a state), SizeSSZ (ssz_size),
 // Marshal (ssz::serialize into a new buffer), MarshalTo (ssz::serialize
-// through an iterator into a buffer kept across iterations; the library
-// ORs bit fields into the destination, so the buffer is zeroed first) and
+// through an iterator into one buffer kept across iterations and reused
+// for every item of a set; the library ORs bit fields into the
+// destination, so the region is sized with ssz_size and zeroed before
+// every object, which is what a user of this entry point must do) and
 // HashTreeRoot (ssz::hash_tree_root on one thread; the library splits
-// large vectors over std::async threads when asked for more). Objects of
-// the fulu launcher: the state, the block, the block set, plus the
+// large vectors over std::async threads when asked for more; it caches
+// nothing). Every leaf checks the results of its last iteration after the
+// loop as the kit does: decoded values must encode back to the input,
+// encoded bytes must equal the input, roots must equal the stored root.
+//
+// Objects of the fulu launcher: the state, the block, the block set, the
 // minimal-preset state. The minimal-preset block is left out: its
 // attestations carry aggregation bits at the limit (8192 bits in 1025
 // bytes), and the library's bitlist deserialization refuses a bitlist
-// whose byte count times eight exceeds the limit, which counts the byte of
-// the length bit (lists.hpp, "byte slice larger than list limit"). The
-// Gloas types are progressive containers and lists, which sszpp has no
-// notion of: no gloas launcher.
+// whose byte count times eight exceeds the limit, which counts the byte
+// of the length bit (lists.hpp, "byte slice larger than list limit"). The
+// object is decoded all the same, and left out, with a note on stderr,
+// only when the decode fails so. The Gloas types are progressive
+// containers and lists, which sszpp has no notion of: no gloas launcher.
 //
 // Memory: a counting operator new gives the bytes and allocations per
 // operation. Freeing is not part of an operation: as the kit collects
 // between batches with the clock stopped, the results of a batch are
-// destroyed between batches with the counters paused.
+// destroyed between batches with the counters paused. The heap stays
+// mapped as the kit's does (GOGC=off, the runtime keeps its pages): glibc
+// would otherwise unmap every large block on free and trim the heap when
+// a batch's results are destroyed, and the next batch would pay the
+// kernel for every page again (half of a block's Marshal time, a third of
+// a state decode), which the kit's warm-up calls exist to keep out of the
+// figures; main sets malloc to serve everything from a heap it never trims.
+#include <malloc.h>
+
 #include <algorithm>
 #include <atomic>
 #include <cstdio>
@@ -32,6 +47,7 @@
 #include <fstream>
 #include <memory>
 #include <new>
+#include <span>
 #include <stdexcept>
 #include <string>
 #include <vector>
@@ -43,39 +59,48 @@ namespace {
 
 std::atomic<std::uint64_t> allocBytes{0}, allocCount{0};
 
-void* counted(std::size_t n) {
+// Every allocation counts, the nothrow and the aligned forms included
+// (null when out of memory; the throwing operators throw on it).
+void* counted(std::size_t n) noexcept {
     allocBytes.fetch_add(n, std::memory_order_relaxed);
     allocCount.fetch_add(1, std::memory_order_relaxed);
-    void* p = std::malloc(n ? n : 1);
-    if (!p) throw std::bad_alloc();
-    return p;
+    return std::malloc(n ? n : 1);
 }
 
-void* countedAligned(std::size_t n, std::align_val_t al) {
+void* countedAligned(std::size_t n, std::align_val_t al) noexcept {
     allocBytes.fetch_add(n, std::memory_order_relaxed);
     allocCount.fetch_add(1, std::memory_order_relaxed);
     std::size_t a = static_cast<std::size_t>(al);
-    void* p = std::aligned_alloc(a, (n + a - 1) / a * a);
+    return std::aligned_alloc(a, (n + a - 1) / a * a);
+}
+
+void* orThrow(void* p) {
     if (!p) throw std::bad_alloc();
     return p;
 }
 
 }  // namespace
 
-void* operator new(std::size_t n) { return counted(n); }
-void* operator new[](std::size_t n) { return counted(n); }
-void* operator new(std::size_t n, const std::nothrow_t&) noexcept { return std::malloc(n ? n : 1); }
-void* operator new[](std::size_t n, const std::nothrow_t&) noexcept { return std::malloc(n ? n : 1); }
-void* operator new(std::size_t n, std::align_val_t al) { return countedAligned(n, al); }
-void* operator new[](std::size_t n, std::align_val_t al) { return countedAligned(n, al); }
+void* operator new(std::size_t n) { return orThrow(counted(n)); }
+void* operator new[](std::size_t n) { return orThrow(counted(n)); }
+void* operator new(std::size_t n, const std::nothrow_t&) noexcept { return counted(n); }
+void* operator new[](std::size_t n, const std::nothrow_t&) noexcept { return counted(n); }
+void* operator new(std::size_t n, std::align_val_t al) { return orThrow(countedAligned(n, al)); }
+void* operator new[](std::size_t n, std::align_val_t al) { return orThrow(countedAligned(n, al)); }
+void* operator new(std::size_t n, std::align_val_t al, const std::nothrow_t&) noexcept { return countedAligned(n, al); }
+void* operator new[](std::size_t n, std::align_val_t al, const std::nothrow_t&) noexcept { return countedAligned(n, al); }
 void operator delete(void* p) noexcept { std::free(p); }
 void operator delete[](void* p) noexcept { std::free(p); }
 void operator delete(void* p, std::size_t) noexcept { std::free(p); }
 void operator delete[](void* p, std::size_t) noexcept { std::free(p); }
+void operator delete(void* p, const std::nothrow_t&) noexcept { std::free(p); }
+void operator delete[](void* p, const std::nothrow_t&) noexcept { std::free(p); }
 void operator delete(void* p, std::align_val_t) noexcept { std::free(p); }
 void operator delete[](void* p, std::align_val_t) noexcept { std::free(p); }
 void operator delete(void* p, std::size_t, std::align_val_t) noexcept { std::free(p); }
 void operator delete[](void* p, std::size_t, std::align_val_t) noexcept { std::free(p); }
+void operator delete(void* p, std::align_val_t, const std::nothrow_t&) noexcept { std::free(p); }
+void operator delete[](void* p, std::align_val_t, const std::nothrow_t&) noexcept { std::free(p); }
 
 std::pair<std::uint64_t, std::uint64_t> allocs() {
     return {allocBytes.load(std::memory_order_relaxed), allocCount.load(std::memory_order_relaxed)};
@@ -130,12 +155,14 @@ Payload loadOne(const fs::path& dir, const std::string& name) {
     return p;
 }
 
+// The .ssz files of the directory with their roots, in name order.
 Payload loadSet(const fs::path& dir, const std::string& name) {
     std::vector<fs::path> files;
     for (const auto& e : fs::directory_iterator(dir / name)) {
         if (e.path().extension() == ".ssz") files.push_back(e.path());
     }
     std::sort(files.begin(), files.end());
+    if (files.empty()) throw std::runtime_error((dir / name).string() + ": no files");
     Payload p;
     for (const auto& f : files) {
         fs::path root = f;
@@ -178,57 +205,103 @@ std::vector<std::unique_ptr<T>> verify(const Payload& p, RootOf<T> rootOf) {
 }
 
 // Measures the operations of an object; one iteration of a set runs the
-// operation on every item.
+// operation on every item, in order. A verification failure fails every
+// leaf, unless its message holds leaveOutOn, a limitation of the library
+// known for this object: the object is then left out with a note.
 template <class T>
-void bench(Session& s, const std::vector<Leaf>& ls, const Payload& p, RootOf<T> rootOf) {
+void bench(Session& s, const std::vector<Leaf>& ls, const Payload& p, RootOf<T> rootOf, const char* leaveOutOn) {
     std::vector<std::unique_ptr<T>> decoded;
     try {
         decoded = verify<T>(p, rootOf);
     } catch (const std::exception& e) {
+        if (leaveOutOn && std::string(e.what()).find(leaveOutOn) != std::string::npos) {
+            std::fprintf(stderr, "%s/%s: left out, the library cannot decode the object: %s\n", kEngine,
+                         ls[0].object.c_str(), e.what());
+            return;
+        }
         for (const auto& l : ls) s.fail(l, e.what());
         return;
     }
-    std::size_t total = 0;
-    for (const auto& [d, _] : p.items) total += d.size();
+    const auto& items = p.items;
+    const std::size_t count = items.size();
+    std::size_t total = 0, largest = 0;
+    for (const auto& [d, _] : items) {
+        total += d.size();
+        largest = std::max(largest, d.size());
+    }
     for (const auto& l : ls) {
         if (l.op == "Unmarshal") {
-            s.run(l, [&] {
-                std::vector<std::unique_ptr<T>> out;
-                out.reserve(p.items.size());
-                for (const auto& [d, _] : p.items) out.emplace_back(ssz::deserialize<T*>(d));
-                return out;
-            });
+            s.run<std::unique_ptr<T>>(
+                l, count, [&](auto& out) {
+                    for (const auto& [d, _] : items) out.emplace_back(ssz::deserialize<T*>(d));
+                },
+                [&](auto last) -> std::string {
+                    for (std::size_t j = 0; j < last.size(); j++) {
+                        if (ssz::serialize(*last[j]) != items[j].first) {
+                            return "decoded value " + std::to_string(j) + " does not encode back to the input";
+                        }
+                    }
+                    return "";
+                });
         } else if (l.op == "SizeSSZ") {
-            s.run(l, [&] {
-                std::size_t sum = 0;
-                for (const auto& v : decoded) sum += v->ssz_size();
-                return sum;
-            });
+            s.run<std::size_t>(
+                l, 1, [&](auto& out) {
+                    std::size_t sum = 0;
+                    for (const auto& v : decoded) sum += v->ssz_size();
+                    out.push_back(sum);
+                },
+                [&](auto last) -> std::string {
+                    if (last[0] != total) return "size " + std::to_string(last[0]) + " want " + std::to_string(total);
+                    return "";
+                });
         } else if (l.op == "Marshal") {
-            s.run(l, [&] {
-                std::vector<std::vector<std::byte>> out;
-                out.reserve(decoded.size());
-                for (const auto& v : decoded) out.push_back(ssz::serialize(*v));
-                return out;
-            });
+            s.run<std::vector<std::byte>>(
+                l, count, [&](auto& out) {
+                    for (const auto& v : decoded) out.push_back(ssz::serialize(*v));
+                },
+                [&](auto last) -> std::string {
+                    for (std::size_t j = 0; j < last.size(); j++) {
+                        if (last[j] != items[j].first) return "item " + std::to_string(j) + " marshal output differs";
+                    }
+                    return "";
+                });
         } else if (l.op == "MarshalTo") {
-            std::vector<std::byte> buf(total);
-            s.run(l, [&] {
-                std::memset(buf.data(), 0, buf.size());
-                std::size_t off = 0;
-                for (std::size_t i = 0; i < decoded.size(); i++) {
-                    ssz::serialize(buf.begin() + static_cast<std::ptrdiff_t>(off), *decoded[i]);
-                    off += p.items[i].first.size();
-                }
-                return off;
-            });
+            // One buffer of the largest object, kept across iterations and
+            // reused for every item; the buffer holds the last item after
+            // the loop.
+            std::vector<std::byte> buf(largest);
+            s.run<std::size_t>(
+                l, 1, [&](auto& out) {
+                    std::size_t n = 0;
+                    for (const auto& v : decoded) {
+                        std::size_t size = v->ssz_size();
+                        std::memset(buf.data(), 0, size);
+                        ssz::serialize(buf.begin(), *v);
+                        n += size;
+                    }
+                    out.push_back(n);
+                },
+                [&](auto last) -> std::string {
+                    const auto& d = items.back().first;
+                    if (last[0] != total || !std::equal(d.begin(), d.end(), buf.begin())) {
+                        return "marshalTo output differs from input";
+                    }
+                    return "";
+                });
         } else if (l.op == "HashTreeRoot") {
-            s.run(l, [&] {
-                std::vector<ssz::chunk_t> out;
-                out.reserve(decoded.size());
-                for (const auto& v : decoded) out.push_back(rootOf(*v));
-                return out;
-            });
+            s.run<ssz::chunk_t>(
+                l, count, [&](auto& out) {
+                    for (const auto& v : decoded) out.push_back(rootOf(*v));
+                },
+                [&](auto last) -> std::string {
+                    for (std::size_t j = 0; j < last.size(); j++) {
+                        if (last[j] != items[j].second) {
+                            return "root " + std::to_string(j) + " mismatch: got " + hex(last[j]) + " want " +
+                                   hex(items[j].second);
+                        }
+                    }
+                    return "";
+                });
         } else {
             s.skip(l);
         }
@@ -236,17 +309,18 @@ void bench(Session& s, const std::vector<Leaf>& ls, const Payload& p, RootOf<T> 
 }
 
 template <class T>
-void one(Session& s, const std::string& object, const fs::path& dir, const std::string& file, RootOf<T> rootOf) {
+void one(Session& s, const std::string& object, const fs::path& dir, const std::string& file, RootOf<T> rootOf,
+         const char* leaveOutOn = nullptr) {
     auto ls = leaves(s, object);
     if (ls.empty()) return;
-    bench<T>(s, ls, loadOne(dir, file), rootOf);
+    bench<T>(s, ls, loadOne(dir, file), rootOf, leaveOutOn);
 }
 
 template <class T>
 void set(Session& s, const std::string& object, const fs::path& dir, const std::string& name, RootOf<T> rootOf) {
     auto ls = leaves(s, object);
     if (ls.empty()) return;
-    bench<T>(s, ls, loadSet(dir, name), rootOf);
+    bench<T>(s, ls, loadSet(dir, name), rootOf, nullptr);
 }
 
 template <class T>
@@ -259,9 +333,18 @@ ssz::chunk_t message(const T& v) {
     return ssz::hash_tree_root(v.Message, 1);
 }
 
+// The message of the library's refusal of a bitlist at its limit, which
+// leaves the minimal-preset block out (see the top of the file).
+constexpr const char* kBitlistAtLimit = "byte slice larger than list limit";
+
 }  // namespace
 
 int main(int argc, char** argv) {
+    // A heap that is never trimmed and serves the large blocks too (see
+    // the top of the file).
+    mallopt(M_MMAP_MAX, 0);
+    mallopt(M_TRIM_THRESHOLD, -1);
+    mallopt(M_TOP_PAD, 64 << 20);
     std::string fork = "fulu";
     for (int i = 1; i + 1 < argc; i++) {
         if (std::strcmp(argv[i], "--fork") == 0) fork = argv[i + 1];
@@ -283,7 +366,8 @@ int main(int argc, char** argv) {
         one<m::ElectraSignedBeaconBlock>(s, "FuluBlock", dir, "block", message<m::ElectraSignedBeaconBlock>);
         set<m::ElectraSignedBeaconBlock>(s, "FuluBlocks", dir, "blocks", message<m::ElectraSignedBeaconBlock>);
         one<n::FuluBeaconState>(s, "FuluMinState", min, "state", own<n::FuluBeaconState>);
-        // FuluMinBlock: a full bitlist, which the library cannot decode (see above).
+        one<n::ElectraSignedBeaconBlock>(s, "FuluMinBlock", min, "block", message<n::ElectraSignedBeaconBlock>,
+                                         kBitlistAtLimit);
     }
     return 0;
 }

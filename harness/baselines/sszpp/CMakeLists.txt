@@ -1,9 +1,9 @@
 # The sszpp benchmark driver: the generated types and the protocol client
 # against the header-only library in work/sszpp, intx in work/intx and the
 # hashtree static library build.sh builds with the library's own Makefile.
-# Release flags are CMake's (-O3), without the library's -march=native, so
-# that the binary runs the same code on every box; hashtree picks its
-# SHA-256 implementation at run time.
+# Release flags are CMake's (-O3 -DNDEBUG), without the library's
+# -march=native and -ffast-math, so that the binary runs the same code on
+# every box; hashtree picks its SHA-256 implementation at run time.
 cmake_minimum_required(VERSION 3.20)
 project(sszpp_bench LANGUAGES CXX)
 
