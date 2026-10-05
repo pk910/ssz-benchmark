@@ -1,0 +1,17 @@
+// A Gradle init script for Teku's own build (work/teku/gradlew -I export.gradle):
+// adds to the ssz module a task that copies its jar and its runtime classpath
+// into the directory given as -PbenchLibDir, so that the driver compiles and
+// runs against exactly the jars Teku's build resolves, without a build file
+// of our own having to repeat its dependency versions.
+allprojects {
+  afterEvaluate { p ->
+    if (p.path == ':infrastructure:ssz') {
+      p.tasks.register('benchExport', Copy) {
+        from(p.tasks.named('jar'))
+        from(p.configurations.runtimeClasspath)
+        into(p.providers.gradleProperty('benchLibDir').map { p.file(it) })
+        duplicatesStrategy = DuplicatesStrategy.INCLUDE
+      }
+    }
+  }
+}
