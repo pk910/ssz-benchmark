@@ -340,8 +340,13 @@ constexpr const char* kBitlistAtLimit = "byte slice larger than list limit";
 }  // namespace
 
 int main(int argc, char** argv) {
-    // A heap that is never trimmed and serves the large blocks too (see
-    // the top of the file).
+    // Before anything allocates: freed memory stays in the heap for the
+    // next iteration, as the kit's untimed warm-up keeps the Go heap
+    // mapped. glibc otherwise serves blocks above 32 MB with mmap and
+    // unmaps them on free, and trims the heap when a batch's results are
+    // destroyed, so that every iteration on a state faults its memory in
+    // again (thousands of faults, tens of ms of kernel time per
+    // iteration). The pad grows the heap in larger steps while it warms.
     mallopt(M_MMAP_MAX, 0);
     mallopt(M_TRIM_THRESHOLD, -1);
     mallopt(M_TOP_PAD, 64 << 20);
@@ -369,5 +374,6 @@ int main(int argc, char** argv) {
         one<n::ElectraSignedBeaconBlock>(s, "FuluMinBlock", min, "block", message<n::ElectraSignedBeaconBlock>,
                                          kBitlistAtLimit);
     }
+    s.finish();
     return 0;
 }

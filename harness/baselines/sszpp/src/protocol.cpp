@@ -4,9 +4,11 @@
 #include <sys/syscall.h>
 #include <unistd.h>
 
+#include <chrono>
 #include <cstdlib>
 #include <cstring>
 #include <sstream>
+#include <thread>
 
 namespace {
 
@@ -115,6 +117,12 @@ void Session::fail(const Leaf& l, const std::string& msg) {
 }
 
 void Session::skip(const Leaf& l) { send("skip " + l.name()); }
+
+void Session::finish() {
+    if (fd_ == 3) close(fd_);
+    fd_ = -1;
+    std::this_thread::sleep_for(std::chrono::milliseconds(100));
+}
 
 // roundUp rounds a count up to 1, 2, 5 times a power of ten, as Go's
 // testing grows its iteration counts.

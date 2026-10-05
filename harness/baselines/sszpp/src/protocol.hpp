@@ -38,6 +38,11 @@ class Session {
     void fail(const Leaf& l, const std::string& msg);
     void skip(const Leaf& l);
 
+    // Ends the session: closes the pipe and keeps the measuring thread
+    // alive a moment, since the wrapper reads the thread's figures from
+    // /proc when it handles the last message.
+    void finish();
+
     // Measures one leaf. One call of f(out) is one iteration: it pushes
     // its results (perIter of them, one per item of the payload) onto
     // out, which has room for them, so that the loop allocates nothing
