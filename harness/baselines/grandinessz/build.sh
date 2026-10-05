@@ -35,6 +35,7 @@ python3 ../convert_foreign.py grandine ../../types/fulu/types.go src/gen_fulu.rs
 python3 ../convert_foreign.py grandine ../../types/gloas/types.go src/gen_gloas.rs --roots GloasBeaconState,GloasSignedBeaconBlock,GloasSignedExecutionPayloadEnvelope \
   --preset mainnet="$PAYLOAD/gloas/spec.json" --preset minimal="$PAYLOAD/gloas/minimal/spec.json"
 
+mkdir -p "$OUT"
 export CARGO_TARGET_DIR="$PWD/target"
 IFS=',' read -r -a SEEDS <<< "${BENCH_SEEDS:-101}"
 for seed in "${SEEDS[@]}"; do

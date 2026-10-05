@@ -77,6 +77,15 @@ impl Session {
         let _ = self.w.flush();
     }
 
+    /// Closes the pipe (the wrapper then reads to its end) and keeps the
+    /// measuring thread alive a moment: the wrapper reads the thread's
+    /// kernel figures from /proc when it handles the last leaf's messages,
+    /// which must find the thread still there.
+    pub fn close(self) {
+        drop(self.w);
+        std::thread::sleep(Duration::from_millis(200));
+    }
+
     pub fn thread(&mut self) {
         let tid = unsafe { libc::syscall(libc::SYS_gettid) };
         self.send(&format!("thread {tid}"));
@@ -94,7 +103,10 @@ impl Session {
     /// operation allocates), then the fixed iterations, or a count grown as
     /// Go's testing does until a batch reaches the benchtime. The results
     /// of a batch are dropped between batches with the counters paused.
-    pub fn run<R, F: FnMut() -> R>(&mut self, l: &Leaf, mut f: F) {
+    /// Returns the last iteration's result with the result line, which
+    /// `finish` sends once the caller has checked the result, as the kit
+    /// checks a leaf's output after its loop.
+    pub fn run<R, F: FnMut() -> R>(&mut self, l: &Leaf, mut f: F) -> Run<R> {
         let fixed = self.iters.iter().find(|(op, _)| *op == l.op).map(|(_, n)| *n).unwrap_or(0);
         let mut n = if fixed > 0 { fixed } else { self.fixed.max(1) };
         let (b0, _) = crate::allocs();
@@ -107,14 +119,18 @@ impl Session {
             1
         };
         loop {
-            let (iters, elapsed, bytes, count) = self.timed(l, n, &mut f);
+            let (iters, elapsed, bytes, count, last) = self.timed(l, n, &mut f);
             match self.target {
                 Some(t) if fixed == 0 && elapsed < t => {
+                    // Go's testing: the count the benchtime predicts, a
+                    // fifth more, at most a hundredfold and at least one
+                    // more, at most 1e9, rounded up to 1, 2, 5 times a
+                    // power of ten.
                     let next = (n as f64 * t.as_secs_f64() / elapsed.as_secs_f64().max(1e-9) * 1.2) as usize;
-                    n = round_up(next.max(n + 1));
+                    n = round_up(next.min(100 * n).max(n + 1).min(1_000_000_000));
                 }
                 _ => {
-                    self.send(&format!(
+                    let end = format!(
                         "end {} iters={} ns={} bytes={} allocs={} warmup={}",
                         l.name(),
                         iters,
@@ -122,24 +138,47 @@ impl Session {
                         bytes,
                         count,
                         warm
-                    ));
-                    return;
+                    );
+                    return Run { last, end };
                 }
             }
         }
     }
 
-    fn timed<R, F: FnMut() -> R>(&mut self, l: &Leaf, n: usize, f: &mut F) -> (usize, Duration, u64, u64) {
-        let mut kept: Vec<R> = Vec::with_capacity(n.min(1 << 16));
+    /// Ends a measured leaf: the result line when the check of its output
+    /// passed, else the failure.
+    pub fn finish<R>(&mut self, l: &Leaf, r: Run<R>, ok: bool, msg: &str) {
+        if ok {
+            self.send(&r.end);
+        } else {
+            self.fail(l, msg);
+        }
+    }
+
+    /// The timed loop of one leaf: n iterations in batches, the results of
+    /// a batch dropped between batches with the counters paused (the final
+    /// batch's after the last pause, the last result returned). The results
+    /// are kept only when the operation allocates (a heap-free result costs
+    /// nothing to drop), in a vector sized to a batch once the first
+    /// iteration has told how much one allocates, so that no bookkeeping
+    /// allocation lands in a timed window; the counters are read after
+    /// every message is sent.
+    fn timed<R, F: FnMut() -> R>(&mut self, l: &Leaf, n: usize, f: &mut F) -> (usize, Duration, u64, u64, R) {
+        let mut kept: Vec<R> = Vec::with_capacity(1);
+        let mut keep = true;
         let mut every = 1usize;
         let mut elapsed = Duration::ZERO;
-        let (mut bytes0, mut count0) = crate::allocs();
         let (mut sum_bytes, mut sum_count) = (0u64, 0u64);
         self.send(&format!("begin {}", l.name()));
+        let (mut bytes0, mut count0) = crate::allocs();
         let mut start = Instant::now();
         for i in 0..n {
-            kept.push(f());
             let last = i + 1 == n;
+            if keep || last {
+                kept.push(f());
+            } else {
+                drop(std::hint::black_box(f()));
+            }
             let batch = i == 0 || (i + 1) % every == 0;
             if !batch && !last {
                 continue;
@@ -148,6 +187,11 @@ impl Session {
             let (b1, c1) = crate::allocs();
             sum_bytes += b1 - bytes0;
             sum_count += c1 - count0;
+            self.send("pause");
+            if last {
+                break;
+            }
+            kept.clear();
             if i == 0 {
                 every = if sum_bytes == 0 {
                     usize::MAX
@@ -156,20 +200,27 @@ impl Session {
                 } else {
                     1
                 };
+                keep = sum_bytes != 0;
+                if keep {
+                    kept.reserve_exact(every.min(n));
+                }
             }
-            if !last {
-                self.send("pause");
-                kept.clear();
-                let (b, c) = crate::allocs();
-                bytes0 = b;
-                count0 = c;
-                self.send("resume");
-                start = Instant::now();
-            }
+            self.send("resume");
+            let (b, c) = crate::allocs();
+            bytes0 = b;
+            count0 = c;
+            start = Instant::now();
         }
-        drop(kept);
-        (n, elapsed, sum_bytes, sum_count)
+        let last = kept.pop().expect("at least one iteration");
+        (n, elapsed, sum_bytes, sum_count, last)
     }
+}
+
+/// A measured leaf before its result line is sent: the last iteration's
+/// result, for the caller's check, and the line.
+pub struct Run<R> {
+    pub last: R,
+    end: String,
 }
 
 fn round_up(n: usize) -> usize {

@@ -125,6 +125,7 @@ fn run(fork: &str) {
             std::process::exit(2);
         }
     }
+    s.close();
 }
 
 /// The leaves of an object the pattern selects.
@@ -184,13 +185,19 @@ fn write_to<T: SszWrite>(v: &T, buf: &mut Vec<u8>) {
 }
 
 /// Decodes every item of the payload and checks it as the kit does:
-/// re-encoded bytes equal the input, the root equals the stored one.
+/// re-encoded bytes (to a new buffer and into a kept one) equal the
+/// input, the root equals the stored one.
 fn verify<T: SszRead<()> + SszWrite + SszHash>(p: &Payload, root_of: &dyn Fn(&T) -> H256) -> Result<Vec<T>, String> {
     let mut out = Vec::with_capacity(p.items.len());
     for (data, root) in &p.items {
         let v = T::from_ssz_default(data).map_err(|e| format!("decode: {e:?}"))?;
         if v.to_ssz().map_err(|e| format!("encode: {e:?}"))? != *data {
             return Err("decoded value does not encode back to the input".to_string());
+        }
+        let mut buf = Vec::with_capacity(data.len());
+        write_to(&v, &mut buf);
+        if buf != *data {
+            return Err("decoded value does not encode into a kept buffer back to the input".to_string());
         }
         let got = root_of(&v);
         if got != *root {
@@ -220,7 +227,12 @@ fn set<T: SszRead<()> + SszWrite + SszHash>(s: &mut Session, object: &str, dir: 
 }
 
 /// Measures the operations of an object; one iteration of a set runs the
-/// operation on every item.
+/// operation on every item. A decoded object lives in the vector the
+/// iteration returns (the one allocation that holds it, as the kit's
+/// `New` does); the encodings of a set likewise. A single object's
+/// encoding and root are returned bare, the roots of a set go into a
+/// vector allocated once, so that no holder allocation is counted where
+/// the kit has none.
 fn bench<T: SszRead<()> + SszWrite + SszHash>(s: &mut Session, ls: &[Leaf], p: &Payload, root_of: &dyn Fn(&T) -> H256) {
     let decoded = match verify::<T>(p, root_of) {
         Ok(v) => v,
@@ -232,25 +244,56 @@ fn bench<T: SszRead<()> + SszWrite + SszHash>(s: &mut Session, ls: &[Leaf], p: &
         }
     };
     let total: usize = p.items.iter().map(|(d, _)| d.len()).sum();
+    let single = decoded.len() == 1;
+    let encodes = |vs: &[T]| vs.iter().zip(&p.items).all(|(v, (d, _))| v.to_ssz().map(|out| out == *d).unwrap_or(false));
     for l in ls {
         match l.op.as_str() {
-            "Unmarshal" => s.run(l, || {
-                p.items
-                    .iter()
-                    .map(|(d, _)| T::from_ssz_default(d).expect("decode"))
-                    .collect::<Vec<T>>()
-            }),
-            "Marshal" => s.run(l, || decoded.iter().map(|v| v.to_ssz().expect("encode")).collect::<Vec<Vec<u8>>>()),
+            "Unmarshal" => {
+                let r = s.run(l, || {
+                    p.items
+                        .iter()
+                        .map(|(d, _)| T::from_ssz_default(d).expect("decode"))
+                        .collect::<Vec<T>>()
+                });
+                let ok = encodes(&r.last);
+                s.finish(l, r, ok, "decoded value does not encode back to the input");
+            }
+            "Marshal" if single => {
+                let r = s.run(l, || decoded[0].to_ssz().expect("encode"));
+                let ok = r.last == p.items[0].0;
+                s.finish(l, r, ok, "marshal output differs from input");
+            }
+            "Marshal" => {
+                let r = s.run(l, || decoded.iter().map(|v| v.to_ssz().expect("encode")).collect::<Vec<Vec<u8>>>());
+                let ok = r.last.iter().zip(&p.items).all(|(out, (d, _))| out == d);
+                s.finish(l, r, ok, "marshal output differs from input");
+            }
             "MarshalTo" => {
                 let mut buf: Vec<u8> = Vec::with_capacity(total);
-                s.run(l, || {
+                let r = s.run(l, || {
                     for v in &decoded {
                         write_to(v, &mut buf);
                     }
                     buf.len()
-                })
+                });
+                // The buffer holds the last item after the loop.
+                let ok = buf == p.items[decoded.len() - 1].0;
+                s.finish(l, r, ok, "marshalTo output differs from input");
             }
-            "HashTreeRoot" => s.run(l, || decoded.iter().map(|v| root_of(v)).collect::<Vec<H256>>()),
+            "HashTreeRoot" if single => {
+                let r = s.run(l, || root_of(&decoded[0]));
+                let ok = r.last == p.items[0].1;
+                s.finish(l, r, ok, "root mismatch");
+            }
+            "HashTreeRoot" => {
+                let mut roots: Vec<H256> = Vec::with_capacity(decoded.len());
+                let r = s.run(l, || {
+                    roots.clear();
+                    roots.extend(decoded.iter().map(|v| root_of(v)));
+                });
+                let ok = roots.iter().zip(&p.items).all(|(got, (_, root))| got == root);
+                s.finish(l, r, ok, "root mismatch");
+            }
             _ => s.skip(l),
         }
     }
