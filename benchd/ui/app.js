@@ -489,12 +489,16 @@
     // Per operation the payload types every measured commit has a value
     // of, so that a line is the same set of types throughout.
     const col = useNs ? 0 : 1, series = [];
-    [...new Set(v.Leaves.filter(l => l.Engine === engine).map(l => l.Op))].sort((a, b) => rank(OPS, a) - rank(OPS, b)).forEach(op => {
-      const ks = v.Leaves.map((l, k) => l.Engine === engine && l.Op === op ? k : -1).filter(k => k >= 0 && chain.every(c => c.Values[k] && c.Values[k][col] > 0));
+    const addSeries = (eng, suffix) => [...new Set(v.Leaves.filter(l => l.Engine === eng).map(l => l.Op))].sort((a, b) => rank(OPS, a) - rank(OPS, b)).forEach(op => {
+      const ks = v.Leaves.map((l, k) => l.Engine === eng && l.Op === op ? k : -1).filter(k => k >= 0 && chain.every(c => c.Values[k] && c.Values[k][col] > 0));
       if (!ks.length) return;
       const data = chain.map(c => agg === 'sum' ? ks.reduce((t, k) => t + c.Values[k][col], 0) : Math.exp(ks.reduce((t, k) => t + Math.log(c.Values[k][col]), 0) / ks.length));
-      series.push({ op, n: ks.length, data, mid: data.slice().sort((a, b) => a - b)[data.length >> 1] });
+      series.push({ op: op + suffix, n: ks.length, data });
     });
+    addSeries(engine, '');
+    // The async variant of the engine is a line of its own next to the
+    // operation it runs. Its cycles are those of all its threads.
+    if (engines.includes(engine + 'Async')) addSeries(engine + 'Async', useNs ? ' (async)' : ' (async, all threads)');
     // The operations of one kind share a chart: unmarshalling,
     // marshalling, hashing; any other stands alone.
     const family = op => op.startsWith('Unmarshal') ? 'Unmarshal' : op.startsWith('Marshal') ? 'Marshal' : /^(HashTreeRoot|GetTree)/.test(op) ? 'Hash' : op;
