@@ -936,10 +936,14 @@ func TestRefinementGivesWay(t *testing.T) {
 		t.Fatal(err)
 	}
 	got, _ := db.getJob(refine.ID)
-	if got.State != stateSkipped || !strings.Contains(got.Note, "stopped at 30%") {
-		t.Fatalf("state %s note %q", got.State, got.Note)
+	if got.State != stateQueued || got.Priority != -1 || !got.Refinement {
+		t.Fatalf("state %s priority %d", got.State, got.Priority)
 	}
+	// The waiting job runs first, the refinement run after it.
 	if next, _ := st.claim("ctl"); next == nil || next.ID != real.ID {
 		t.Fatalf("next %v", next)
+	}
+	if next, _ := st.claim("ctl"); next == nil || next.ID != refine.ID {
+		t.Fatalf("after it %v", next)
 	}
 }

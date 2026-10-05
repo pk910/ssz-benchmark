@@ -32,8 +32,9 @@ type jobStore interface {
 	finish(id int64, passes int, errText string, seconds float64) error
 	interrupted(id int64) error
 	// waiting returns a queued job that is no refinement and that the
-	// runner could take (0: none); giveWay ends a refinement run that
-	// stops for it, without results.
+	// runner could take (0: none); giveWay puts a refinement run that
+	// stops for it back into the queue, behind the other jobs, without
+	// what it measured so far.
 	waiting(runner string) (int64, error)
 	giveWay(id, to int64, percent int) error
 }
@@ -188,12 +189,12 @@ func (s *localStore) waiting(runner string) (int64, error) {
 	return id, err
 }
 
-func (s *localStore) giveWay(id, to int64, percent int) error {
+func (s *localStore) giveWay(id, _ int64, _ int) error {
 	if _, err := s.db.db.Exec(`DELETE FROM samples WHERE job_id = ?`, id); err != nil {
 		return err
 	}
-	_, err := s.db.db.Exec(`UPDATE jobs SET state = ?, finished = ?, note = ? WHERE id = ? AND state = ?`,
-		stateSkipped, time.Now().Unix(), fmt.Sprintf("refinement run stopped at %d%% for job #%d", percent, to), id, stateRunning)
+	// Back into the queue, behind every job that is no refinement.
+	_, err := s.db.db.Exec(`UPDATE jobs SET state = ?, started = NULL, priority = -1 WHERE id = ? AND state = ?`, stateQueued, id, stateRunning)
 	return err
 }
 

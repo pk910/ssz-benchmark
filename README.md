@@ -312,8 +312,9 @@ measures its head, and its base when it has one.
   tightens the intervals of that comparison and spreads it over time.
 - A refinement run gives way: when a job that is no refinement waits and
   the run is less than half through, it stops between two groups of
-  benchmarks, its runs so far are dropped and it ends as skipped with a
-  note; the waiting job starts at once. Past the half it finishes first.
+  benchmarks, its runs so far are dropped and it goes back into the queue
+  behind every job that is no refinement; the waiting job starts at once.
+  Past the half it finishes first.
 - Other libraries: see "Libraries and targets". What each can express:
 
   | library | Fulu state | Fulu block(s) | Gloas block(s), envelope | Gloas state |

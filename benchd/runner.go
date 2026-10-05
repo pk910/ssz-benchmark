@@ -375,7 +375,7 @@ func (r *runner) runJob(ctx context.Context, j *job) bool {
 	passes, err := r.measure(ctx, j, head, base, jobDir, logw)
 	var way gaveWay
 	if errors.As(err, &way) {
-		logw("refinement run stopped at %d%%: job #%d waits", way.percent, way.to)
+		logw("refinement run stopped at %d%%: job #%d waits; queued again behind the other jobs", way.percent, way.to)
 		if err := r.store.giveWay(j.ID, way.to, way.percent); err != nil {
 			logw("give way: %v", err)
 		}
