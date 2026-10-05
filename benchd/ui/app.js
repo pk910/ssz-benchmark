@@ -272,6 +272,28 @@
     if (!r.ok) throw new Error(`${url}: ${r.status}`);
     return r.json();
   }
+  // callout: one floating box for the hover breakdowns of a page, filled
+  // when a marked element is hovered and placed next to it.
+  let calloutEl = null;
+  function showCallout(html, at) {
+    if (!calloutEl) { calloutEl = document.createElement('div'); calloutEl.className = 'callout'; document.body.appendChild(calloutEl); }
+    calloutEl.innerHTML = html;
+    calloutEl.style.display = 'block';
+    const r = at.getBoundingClientRect(), w = calloutEl.offsetWidth, h = calloutEl.offsetHeight;
+    let left = Math.max(8, Math.min(r.left, innerWidth - w - 8)), top = r.bottom + 6;
+    if (top + h > innerHeight - 8) top = Math.max(8, r.top - h - 6);
+    calloutEl.style.left = left + 'px';
+    calloutEl.style.top = top + 'px';
+  }
+  function hideCallout() { if (calloutEl) calloutEl.style.display = 'none'; }
+  // bindCallouts shows a callout for the elements of root matching sel,
+  // with the markup that html(el) gives.
+  function bindCallouts(root, sel, html) {
+    if (!root) return;
+    root.addEventListener('mouseover', ev => { const el = ev.target.closest(sel); if (el && root.contains(el)) showCallout(html(el), el); });
+    root.addEventListener('mouseout', ev => { const el = ev.target.closest(sel); if (el && !el.contains(ev.relatedTarget)) hideCallout(); });
+  }
+
   function destroyCharts() {
     if (refreshing) {
       // Keep the charts whose canvas survived; chart() updates them.
@@ -428,9 +450,20 @@
     return `<span title="committed ${when(d)}">${text}</span>`;
   };
   const tagBadges = c => (c.Tags || []).map(t => ` <span class="chip tag">${esc(t)}</span>`).join('');
+  // commitDesc: the subject of a commit; its pull request, when it has
+  // one, links to GitHub, and for the mirrored library to the measured
+  // history of the pull request.
+  const commitDesc = (v, c) => {
+    const desc = esc(c.Desc).replace(/^[0-9a-f]{7,12} /, '');
+    if (!c.PR) return `<span class="muted desc" style="display:inline-block;vertical-align:bottom">${desc}</span>`;
+    const gh = v.Repo ? `<a href="${v.Repo}/pull/${c.PR}" target="_blank" rel="noopener" title="the pull request on GitHub">#${c.PR}</a>` : `#${c.PR}`;
+    const history = v.Repo && v.Repo === repo ? ` <a href="#/pr/${c.PR}" class="small" title="every measured head of this pull request">history</a>` : '';
+    const text = desc.endsWith(`(#${c.PR})`) ? `${desc.slice(0, -(`(#${c.PR})`.length))}(${gh}${history})` : `${desc} (${gh}${history})`;
+    return `<span class="muted desc" style="display:inline-block;vertical-align:bottom">${text}</span>`;
+  };
   const repoCommits = (v, commits) => !commits.length ? `<p class="muted">${v.Branch ? 'no commit of the main branch known yet' : 'a fixed version: no branch is followed'}</p>`
     : `<table class="commits"><thead><tr><th>Commit</th><th>Date</th><th>Description</th><th>Change against the measured commit before <span class="muted" style="text-transform:none">(per engine)</span></th><th class="num">Runs</th><th>Measured</th></tr></thead><tbody>${commits.map(c =>
-      `<tr class="${c.State ? '' : 'unmeasured'}"><td class="nowrap">${commitLink(c.SHA, v.Name)}${tagBadges(c)}</td><td class="muted nowrap">${commitAge(c.Committed)}</td><td><span class="muted desc" style="display:inline-block;vertical-align:bottom">${esc(c.Desc).replace(/^[0-9a-f]{7,12} /, '')}</span></td><td>${stepChips(c, v)}</td><td class="num">${c.Runs || ''}</td><td class="muted">${c.Jobs ? `${c.Measured ? when(c.Measured * 1000) : esc(c.State)} · <a href="#/jobs?repo=${encodeURIComponent(v.Name)}&sha=${c.SHA}">${c.Jobs} job${c.Jobs === 1 ? '' : 's'}</a>` : ''}</td></tr>`).join('')}</tbody></table>`;
+      `<tr class="${c.State ? '' : 'unmeasured'}"><td class="nowrap">${commitLink(c.SHA, v.Name)}${tagBadges(c)}</td><td class="muted nowrap">${commitAge(c.Committed)}</td><td>${commitDesc(v, c)}</td><td>${stepChips(c, v)}</td><td class="num">${c.Runs || ''}</td><td class="muted">${c.Jobs ? `${c.Measured ? when(c.Measured * 1000) : esc(c.State)} · <a href="#/jobs?repo=${encodeURIComponent(v.Name)}&sha=${c.SHA}">${c.Jobs} job${c.Jobs === 1 ? '' : 's'}</a>` : ''}</td></tr>`).join('')}</tbody></table>`;
   const repoTargets = v => (v.Targets || []).map(t => `<span class="chip">${esc(t.Name)} <b>${esc(t.Label)}</b></span> ${commitLink(t.SHA, v.Name)}`).join(' &nbsp; ');
   const repoTitle = v => `${esc(v.Name)} <span class="muted small">${repoLink(v.Name)}</span>`;
 
@@ -442,27 +475,79 @@
         <p class="note"><a href="#/repo/${encodeURIComponent(v.Name)}">${v.Total > v.Commits.length ? 'view all commits' : 'repository page'} →</a></p></section>`).join('');
   }
 
-  // opBadges: per engine one line with a badge per operation: the change
-  // against the measured commit before, as the geomean over the payload
-  // types (cycles, else time; time for the async hashing).
-  function opBadges(v, c, hidden) {
-    if (!c.Steps) return stepChips(c, v);
+  // The change column of a library's page is a grid: one column per
+  // operation of the page, so that the values line up across the engines
+  // and the commits. The header names the operations in groups; a chip
+  // holds the value only, the breakdown by payload type is its callout.
+  const OP_GROUPS = [['Unmarshal', /^Unmarshal/], ['SizeSSZ', /^SizeSSZ/], ['Marshal', /^Marshal/], ['HashTreeRoot', /^HashTreeRoot/], ['GetTree', /^GetTree/]];
+  const OP_VARIANT = { Unmarshal: 'bytes', UnmarshalReader: 'reader', UnmarshalReaderUnknown: 'unknown', SizeSSZ: '', Marshal: 'bytes', MarshalTo: 'to buf', MarshalWriter: 'writer', HashTreeRoot: 'sync', 'HashTreeRoot (async)': 'async', GetTree: '' };
+  const opGroup = op => (OP_GROUPS.find(g => g[1].test(op)) || [op])[0];
+  const opVariant = op => OP_VARIANT[op] !== undefined ? OP_VARIANT[op] : op;
+  const gridStyle = n => `style="--n:${n}"`;
+  function opGridHead(cols) {
+    const groups = [];
+    cols.forEach(op => { const g = opGroup(op); if (groups.length && groups[groups.length - 1].name === g) groups[groups.length - 1].n++; else groups.push({ name: g, n: 1 }); });
+    return `<div class="opgrid head" ${gridStyle(cols.length)}><span></span>${groups.map(g => `<span class="grp" style="grid-column:span ${g.n}">${esc(g.name)}</span>`).join('')}<span></span>${cols.map(op => `<span class="var">${esc(opVariant(op))}</span>`).join('')}</div>`;
+  }
+  // stepsOf: per engine and operation of a commit, the ratio to the
+  // measured commit before per payload type (cycles, else time; time for
+  // the async hashing), with the commit's own value.
+  function stepsOf(v, c) {
     const acc = {};
+    if (!c.Steps) return acc;
     v.Leaves.forEach((l, k) => {
-      const eng = baseEngine(l.Engine), op = opLabel(l.Engine, l.Op);
-      if (hidden.has(eng)) return;
-      const st = c.Steps[k], r = st ? (isAsync(l.Engine) ? st[0] : (st[1] || st[0])) : 0;
+      const st = c.Steps[k], ns = isAsync(l.Engine) || !(st && st[1] > 0);
+      const r = st ? (ns ? st[0] : st[1]) : 0;
       if (!(r > 0)) return;
-      const e = acc[eng] || (acc[eng] = {}), a = e[op] || (e[op] = { sum: 0, n: 0 });
-      a.sum += Math.log(r); a.n++;
+      const e = baseEngine(l.Engine), op = opLabel(l.Engine, l.Op), val = c.Values && c.Values[k] ? c.Values[k][ns ? 0 : 1] : 0;
+      ((acc[e] = acc[e] || {})[op] = acc[e][op] || []).push({ obj: l.Object, r, ns, val });
     });
-    const engines = sortEngines(Object.keys(acc));
-    if (!engines.length) return '<span class="muted">-</span>';
+    return acc;
+  }
+  const geomean = xs => (Math.exp(xs.reduce((t, x) => t + Math.log(x.r), 0) / xs.length) - 1) * 100;
+  const stepClass = d => Math.abs(d) < 0.5 ? 'flat' : d < 0 ? 'better' : 'worse';
+  const stepPct = d => `<span class="${stepClass(d)}">${pct(d, 1)}</span>`;
+  // opGrid: the rows of one commit, one per engine, in operation precision.
+  function opGrid(v, c, i, cols, hidden) {
+    const steps = stepsOf(v, c), engines = sortEngines(Object.keys(steps).filter(e => !hidden.has(e)));
+    if (!engines.length) return stepChips(c, v);
     const skipped = c.Skipped ? `<div class="muted small">against ${short(c.Against).slice(0, 8)}, ${c.Skipped} unmeasured between</div>` : '';
-    return engines.map(e => `<div class="oprow"><span class="eng">${esc(engName(e).replace(/^dynamic-ssz /, ''))}</span><div class="chips">${Object.keys(acc[e]).sort((a, b) => opRank(a) - opRank(b)).map(op => {
-      const a = acc[e][op], d = (Math.exp(a.sum / a.n) - 1) * 100;
-      return `<span class="chip ${Math.abs(d) < 0.5 ? 'flat' : d < 0 ? 'better' : 'worse'}" title="${esc(engName(e))} ${op}: geomean over ${a.n} payload type${a.n === 1 ? '' : 's'} against the measured commit before">${op} <b>${pct(d, 1)}</b></span>`;
-    }).join('')}</div></div>`).join('') + skipped;
+    return engines.map(e => `<div class="opgrid" ${gridStyle(cols.length)}><span class="eng" title="${esc(engName(e))}">${esc(engName(e).replace(/^dynamic-ssz /, ''))}</span>${cols.map(op => {
+      const xs = steps[e][op];
+      if (!xs) return '<span></span>';
+      const d = geomean(xs);
+      return `<span class="chip ${stepClass(d)}" data-ci="${i}" data-e="${e}" data-op="${esc(op)}"><b>${pct(d, 1)}</b></span>`;
+    }).join('')}</div>`).join('') + skipped;
+  }
+  // engineRows: the rows of one commit in engine precision: one chip per
+  // engine with the count of operations that moved.
+  function engineRows(v, c, i, hidden) {
+    const engines = (c.Engines || []).filter(e => !hidden.has(e.Engine));
+    if (!c.Compared || !engines.length) return stepChips(Object.assign({}, c, { Engines: engines }), v);
+    const skipped = c.Skipped ? `<div class="muted small">against ${short(c.Against).slice(0, 8)}, ${c.Skipped} unmeasured between</div>` : '';
+    return engines.map(e => `<div class="oprow"><span class="eng" title="${esc(engName(e.Engine))}">${esc(engName(e.Engine).replace(/^dynamic-ssz /, ''))}</span><span class="chip ${stepClass(e.Geomean)}" data-ci="${i}" data-e="${e.Engine}"><b>${pct(e.Geomean, 1)}</b></span><span class="muted small">${e.N} operations${e.Faster || e.Slower ? `, <span class="better">▼${e.Faster}</span> <span class="worse">▲${e.Slower}</span> by 1% or more` : ''}</span></div>`).join('') + skipped;
+  }
+  // stepCallout: the breakdown behind a chip: per payload type for an
+  // operation, per operation for an engine.
+  function stepCallout(v, c, e, op) {
+    const steps = stepsOf(v, c), against = `against ${short(c.Against).slice(0, 8)}${c.Skipped ? `, ${c.Skipped} unmeasured between` : ''}`;
+    const ops = steps[e] || {};
+    if (op) {
+      const xs = ops[op] || [];
+      const fmt = x => x.ns ? fmtNs : fmtNum;
+      return `<div><b>${esc(engName(e))} · ${esc(op)}</b> <span class="muted">${against}</span></div>
+        <table class="facts"><thead><tr><th>payload type</th><th class="num">before</th><th class="num">now</th><th class="num">change</th></tr></thead><tbody>
+        ${xs.map(x => `<tr><td>${esc(x.obj)}</td><td class="num">${x.val ? fmt(x)(x.val / x.r) : '-'}</td><td class="num">${x.val ? fmt(x)(x.val) : '-'}${x.ns && !isAsync(e + (op.endsWith('(async)') ? 'Async' : '')) ? ' <span class="muted">time</span>' : ''}</td><td class="num">${stepPct((x.r - 1) * 100)}</td></tr>`).join('')}
+        <tr><td><b>geomean</b></td><td></td><td></td><td class="num"><b>${stepPct(geomean(xs))}</b></td></tr></tbody></table>
+        <div class="muted small">cycles per call; time for the async hashing and where no cycles were counted</div>`;
+    }
+    const names = Object.keys(ops).sort((a, b) => opRank(a) - opRank(b));
+    const all = names.flatMap(n => ops[n]);
+    return `<div><b>${esc(engName(e))}</b> <span class="muted">${against}</span></div>
+      <table class="facts"><thead><tr><th>operation</th><th class="num">types</th><th class="num">change</th></tr></thead><tbody>
+      ${names.map(n => `<tr><td>${esc(n)}</td><td class="num">${ops[n].length}</td><td class="num">${stepPct(geomean(ops[n]))}</td></tr>`).join('')}
+      <tr><td><b>geomean</b></td><td class="num">${all.length}</td><td class="num"><b>${stepPct(geomean(all))}</b></td></tr></tbody></table>
+      <div class="muted small">geomean over the payload types of each operation; hover a value in operation precision for the types</div>`;
   }
 
   async function viewRepo(name, page) {
@@ -483,10 +568,14 @@
     let hidden = new Set((localStorage.getItem('repoHidden') || '').split(',').filter(e => engines.includes(e)));
     if (hidden.size >= engines.length) hidden = new Set();
     const tabs = (id, items, cur) => `<div class="tabs" id="${id}">${items.map(([k, label]) => `<button data-k="${k}" class="${k === cur ? 'active' : ''}">${esc(label)}</button>`).join('')}</div>`;
+    // The operations of the page, the columns of the change grid.
+    const cols = [...new Set((v.Leaves || []).map(l => opLabel(l.Engine, l.Op)))].sort((a, b) => opRank(a) - opRank(b));
+    const changeHead = precision === 'ops'
+      ? `<div>Change against the measured commit before <span class="muted" style="text-transform:none">(per engine and operation, geomean over the payload types; hover a value for the types)</span></div>${opGridHead(cols)}`
+      : `Change against the measured commit before <span class="muted" style="text-transform:none">(per engine, geomean over its operations; hover a value for the operations)</span>`;
     const rows = commits => !commits.length ? repoCommits(v, commits)
-      : `<table class="commits"><thead><tr><th>Commit</th><th>Date</th><th>Description</th><th>Change against the measured commit before <span class="muted" style="text-transform:none">(${precision === 'ops' ? 'per engine and operation, over the payload types' : 'per engine'})</span></th><th class="num">Runs</th><th>Measured</th></tr></thead><tbody>${commits.map(c => {
-        const shown = Object.assign({}, c, { Engines: (c.Engines || []).filter(e => !hidden.has(e.Engine)) });
-        return `<tr class="${c.State ? '' : 'unmeasured'}"><td class="nowrap">${commitLink(c.SHA, v.Name)}${tagBadges(c)}</td><td class="muted nowrap">${commitAge(c.Committed)}</td><td><span class="muted desc" style="display:inline-block;vertical-align:bottom">${esc(c.Desc).replace(/^[0-9a-f]{7,12} /, '')}</span></td><td>${precision === 'ops' && c.Compared ? opBadges(v, c, hidden) : stepChips(shown, v)}</td><td class="num">${c.Runs || ''}</td><td class="muted nowrap">${c.Jobs ? `${c.Measured ? when(c.Measured * 1000) : esc(c.State)} · <a href="#/jobs?repo=${encodeURIComponent(v.Name)}&sha=${c.SHA}">${c.Jobs} job${c.Jobs === 1 ? '' : 's'}</a>` : ''}</td></tr>`;
+      : `<table class="commits"><thead><tr><th>Commit</th><th>Date</th><th>Description</th><th>${changeHead}</th><th class="num">Runs</th><th>Measured</th></tr></thead><tbody>${commits.map((c, i) => {
+        return `<tr class="${c.State ? '' : 'unmeasured'}"><td class="nowrap">${commitLink(c.SHA, v.Name)}${tagBadges(c)}</td><td class="muted nowrap">${commitAge(c.Committed)}</td><td>${commitDesc(v, c)}</td><td>${precision === 'ops' && c.Compared ? opGrid(v, c, i, cols, hidden) : engineRows(v, c, i, hidden)}</td><td class="num">${c.Runs || ''}</td><td class="muted nowrap">${c.Jobs ? `${c.Measured ? when(c.Measured * 1000) : esc(c.State)} · <a href="#/jobs?repo=${encodeURIComponent(v.Name)}&sha=${c.SHA}">${c.Jobs} job${c.Jobs === 1 ? '' : 's'}</a>` : ''}</td></tr>`;
       }).join('')}</tbody></table>`;
     const charted = engines.length && chain.length > 1;
     app.innerHTML = `<h1>${repoTitle(v)} <a class="agent" href="/repo/${encodeURIComponent(name)}.md${page > 1 ? '?page=' + page : ''}" title="this page as text, for an agent">text</a></h1>
@@ -500,6 +589,7 @@
     const again = () => viewRepo(name, page);
     ['repoEngine', 'repoMetric', 'repoAgg', 'repoPrecision'].forEach(id => document.querySelectorAll(`#${id} button`).forEach(b => b.onclick = () => { localStorage.setItem(id, b.dataset.k); again(); }));
     document.querySelectorAll('#repoHidden a').forEach(a => a.onclick = () => { hidden.has(a.dataset.e) ? hidden.delete(a.dataset.e) : hidden.add(a.dataset.e); localStorage.setItem('repoHidden', [...hidden].join(',')); again(); });
+    document.querySelectorAll('table.commits').forEach(t => bindCallouts(t, '.chip[data-ci]', el => stepCallout(v, v.Commits[+el.dataset.ci], el.dataset.e, el.dataset.op)));
     destroyCharts();
     if (!charted) return;
     // Per operation the payload types every measured commit has a value
@@ -1299,6 +1389,7 @@
   async function route(refresh) {
     clearTimeout(refreshTimer);
     refreshing = refresh === true;
+    hideCallout();
     const hash = location.hash || '#/';
     const [path, query] = hash.slice(1).split('?');
     const params = new URLSearchParams(query || '');

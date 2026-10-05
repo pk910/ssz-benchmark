@@ -37,6 +37,7 @@ type repoCommit struct {
 	SHA, Desc string
 	Committed int64    // when the commit was made; zero when the history does not have it
 	Tags      []string // tags at the commit
+	PR        int      // pull request the commit came from: of its jobs, else from its subject "(#N)"
 	Jobs      int      // jobs that measured it as the head of the main branch
 	Runs      int      // runs pooled into its values
 	Measured  int64    // when its newest job finished
@@ -102,7 +103,7 @@ func (w *webServer) repoView(sub *subject, offset, limit int, steps bool) (*repo
 	}
 
 	// The measured commits of the main branch.
-	rows, err = w.db.db.Query(`SELECT head_sha, head_desc, max(id), min(id), count(*), coalesce(max(finished), 0), sum(state = ?), sum(state = ?) FROM jobs
+	rows, err = w.db.db.Query(`SELECT head_sha, head_desc, max(id), min(id), count(*), coalesce(max(finished), 0), sum(state = ?), sum(state = ?), max(pr) FROM jobs
 		WHERE subject = ? AND kind = ? AND (targets LIKE '%master%' OR (targets = '' AND branch = ? AND pr = 0)) GROUP BY head_sha`, stateDone, stateFailed, sub.Name, kindCommit, branch)
 	if err != nil {
 		return nil, err
@@ -114,7 +115,7 @@ func (w *webServer) repoView(sub *subject, offset, limit int, steps bool) (*repo
 		var c repoCommit
 		var newest, oldest int64
 		var done, failed int
-		if err := rows.Scan(&c.SHA, &c.Desc, &newest, &oldest, &c.Jobs, &c.Measured, &done, &failed); err != nil {
+		if err := rows.Scan(&c.SHA, &c.Desc, &newest, &oldest, &c.Jobs, &c.Measured, &done, &failed, &c.PR); err != nil {
 			rows.Close()
 			return nil, err
 		}
@@ -144,10 +145,18 @@ func (w *webServer) repoView(sub *subject, offset, limit int, steps bool) (*repo
 	for _, h := range history {
 		c := measured[h.SHA]
 		c.SHA, c.Desc, c.Committed, c.Tags = h.SHA, h.Title, h.Committed, h.Tags
+		if c.PR == 0 {
+			c.PR = prNumber(h.Title)
+		}
 		commits = append(commits, c)
 	}
 	if len(history) == 0 {
 		sort.Slice(found, func(a, b int) bool { return first[found[a].SHA] > first[found[b].SHA] })
+		for i := range found {
+			if found[i].PR == 0 {
+				found[i].PR = prNumber(found[i].Desc)
+			}
+		}
 		commits = found
 	}
 	v.Total, v.PageSize = len(commits), repoPage

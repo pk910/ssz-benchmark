@@ -170,7 +170,23 @@ table.commits .chip .moved span + span { margin-left: 3px; }
 td.nowrap { white-space: nowrap; }
 tr.unmeasured td { opacity: .55; }
 .oprow { display: flex; align-items: baseline; gap: 8px; margin: 2px 0; }
-.oprow .eng { flex: 0 0 96px; color: var(--muted); font-size: 11.5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.oprow .eng, .opgrid .eng { flex: 0 0 72px; color: var(--muted); font-size: 11.5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+/* the change grid of a library's page: one column per operation */
+.opgrid { display: grid; grid-template-columns: 72px repeat(var(--n), 58px); gap: 2px 4px; align-items: center; margin: 2px 0; }
+.opgrid .chip { text-align: center; padding: 1px 4px; cursor: default; }
+.opgrid .chip.flat b { font-weight: 500; }
+.opgrid.head { margin-top: 5px; font-size: 10px; letter-spacing: .02em; }
+.opgrid.head .grp { text-align: center; border-bottom: 1px solid var(--line); padding-bottom: 1px; }
+.opgrid.head .var { text-align: center; font-weight: 500; text-transform: none; letter-spacing: 0; color: var(--muted); }
+.oprow .chip { cursor: default; }
+/* the hover breakdown of a chip */
+.callout { display: none; position: fixed; z-index: 40; max-width: 460px; padding: 8px 11px; border-radius: 8px; background: var(--card); color: var(--fg); border: 1px solid var(--line); box-shadow: 0 6px 24px rgba(0,0,0,.35); font-size: 12px; line-height: 1.45; pointer-events: none; }
+.callout table.facts { margin: 5px 0 3px; }
+.callout table.facts th, .callout table.facts td { padding: 1px 12px 1px 0; }
+.callout table.facts td:last-child, .callout table.facts th:last-child { padding-right: 0; }
+.callout .better { color: var(--ok); }
+.callout .worse { color: var(--bad); }
+.callout .flat { color: var(--muted); }
 .chip.flat { color: var(--muted); }
 .chip.flat b { font-weight: 500; }
 .chip.toggle { cursor: pointer; user-select: none; }
