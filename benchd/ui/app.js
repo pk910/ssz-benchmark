@@ -460,7 +460,9 @@
     const chain = v.Commits.filter(c => c.Values).reverse();
     const engines = sortEngines([...new Set((v.Leaves || []).map(l => l.Engine))]);
     const pref = (key, def, allowed) => { const x = localStorage.getItem(key); return !allowed || allowed.includes(x) ? (x || def) : def; };
-    const engine = pref('repoEngine', engines[0], engines);
+    // An async variant is charted with its engine, not on its own.
+    const chartEngines = engines.filter(e => !(e.endsWith('Async') && engines.includes(e.slice(0, -5))));
+    const engine = pref('repoEngine', chartEngines[0], chartEngines);
     const useNs = pref('repoMetric', 'ns', ['ns', 'cycles']) === 'ns' || (engine || '').endsWith('Async');
     const agg = pref('repoAgg', 'geomean', ['geomean', 'sum']);
     const precision = pref('repoPrecision', 'engines', ['engines', 'ops']);
@@ -475,7 +477,7 @@
     const charted = engines.length && chain.length > 1;
     app.innerHTML = `<h1>${repoTitle(v)} <a class="agent" href="/repo/${encodeURIComponent(name)}.md${page > 1 ? '?page=' + page : ''}" title="this page as text, for an agent">text</a></h1>
       <div class="toolbar">${repoTargets(v)}<span class="muted">${v.Total} commit${v.Total === 1 ? '' : 's'} of ${esc(v.Branch || 'the main branch')}, ${v.Measured} measured</span></div>
-      ${charted ? `<div class="toolbar">${tabs('repoEngine', engines.map(e => [e, engName(e)]), engine)}${tabs('repoMetric', [['ns', 'Time'], ['cycles', 'Cycles']], useNs ? 'ns' : 'cycles')}${tabs('repoAgg', [['geomean', 'Mean over payload types'], ['sum', 'Sum']], agg)}</div>
+      ${charted ? `<div class="toolbar">${tabs('repoEngine', chartEngines.map(e => [e, engName(e)]), engine)}${tabs('repoMetric', [['ns', 'Time'], ['cycles', 'Cycles']], useNs ? 'ns' : 'cycles')}${tabs('repoAgg', [['geomean', 'Mean over payload types'], ['sum', 'Sum']], agg)}</div>
       <p class="note">One line per operation: its ${useNs ? 'time' : 'cycles'} per call at every measured commit, ${agg === 'sum' ? 'summed over the payload types (the largest type dominates)' : 'as the geometric mean over the payload types (every type counts alike)'}. Operations of one kind (unmarshalling, marshalling, hashing) share a chart and its scale.</p>
       <div id="repoCharts"></div>` : ''}
       <h2>Commits <span class="muted small">newest first</span></h2>
