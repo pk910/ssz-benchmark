@@ -60,11 +60,18 @@ the wrapper.
    operation: drop or collect the results of a batch between batches
    inside `pause` / `resume`, a batch being as many iterations as keep
    under 256 MB of garbage (the kit's rule).
-5. Before exiting, closes the pipe and gives the wrapper a moment (a
+5. Keeps its heap mapped between iterations, as the kit keeps Go's: on
+   glibc, `mallopt(M_MMAP_MAX, 0)` and `mallopt(M_TRIM_THRESHOLD, -1)` at
+   startup, so that the big buffers an iteration frees are not returned
+   to the kernel and faulted in again by the next one (a state decode
+   otherwise spends a third of its time in the kernel; the wrapper's
+   faults/op and sys-ns/op columns show it). A runtime with its own heap
+   (the JVM with a fixed heap, V8) needs nothing.
+6. Before exiting, closes the pipe and gives the wrapper a moment (a
    sleep of 100 ms on the measuring thread): the wrapper reads the
    thread's page faults and kernel time from /proc when it handles the
    last `end`, which must still find the thread.
-6. Writes nothing to stdout that is not for the wrapper (stdout and
+7. Writes nothing to stdout that is not for the wrapper (stdout and
    stderr of the adapter both land in the job's raw log; the result lines
    are the wrapper's).
 
