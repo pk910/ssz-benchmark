@@ -60,6 +60,7 @@ IFS=',' read -r -a SEEDS <<< "${BENCH_SEEDS:-101}"
 # forks that have a launcher).
 FEATURES="--features gloas"
 FORKS="fulu gloas"
+mkdir -p "$CARGO_TARGET_DIR"
 if ! cargo build --release --quiet --bin bench --features gloas 2> "$CARGO_TARGET_DIR/gloas-probe.log"; then
   echo "gloas: the library at this commit cannot build the Gloas types ($(grep -m1 '^error' "$CARGO_TARGET_DIR/gloas-probe.log" | cut -c1-120)); Fulu only" >&2
   FEATURES=""
