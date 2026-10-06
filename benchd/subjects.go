@@ -44,6 +44,7 @@ type target struct {
 	PinRepo   string   // the version PinModule has in the go.mod of this repository's latest release
 	PinModule string
 	Npm       string // the commit the latest version of this npm package was published from
+	NpmTag    string // the tag of a version when npm publishes no commit, a format with the version ("ssz-v%s")
 }
 
 type subject struct {
@@ -88,7 +89,7 @@ var subjects = []subject{
 	{Name: "ethereum-ssz", Repo: "https://github.com/sigp/ethereum_ssz", Adapter: "ethereumssz", Exec: true,
 		Targets: []target{{Name: targetRelease, TagMatch: `^v\d+\.\d+\.\d+(-beta\.\d+)?$`}, {Name: targetMaster, Branch: "main"}}},
 	{Name: "lodestar-ssz", Repo: "https://github.com/ChainSafe/ssz", Adapter: "lodestarssz", Exec: true,
-		Targets: []target{{Name: targetRelease, Npm: "@chainsafe/ssz"}, {Name: targetMaster, Branch: "master"}}},
+		Targets: []target{{Name: targetRelease, Npm: "@chainsafe/ssz", NpmTag: "ssz-v%s"}, {Name: targetMaster, Branch: "master"}}},
 	{Name: "teku-ssz", Repo: "https://github.com/Consensys/teku", Adapter: "tekussz", Exec: true,
 		Targets: []target{{Name: targetRelease, TagMatch: `^\d{2}\.\d+\.\d+$`}, {Name: targetMaster, Branch: "master"}}},
 	{Name: "nim-ssz", Repo: "https://github.com/status-im/nim-ssz-serialization", Adapter: "nimssz", Exec: true,
@@ -408,6 +409,12 @@ func resolveTargets(ctx context.Context, sub *subject) ([]targetState, error) {
 			if err != nil {
 				return nil, err
 			}
+			if sha == "" && t.NpmTag != "" {
+				sha = tags[fmt.Sprintf(t.NpmTag, version)]
+			}
+			if sha == "" {
+				return nil, fmt.Errorf("npm %s %s: no commit published with it", t.Npm, version)
+			}
 			st.SHA, st.Label = sha, "npm "+version
 		case t.PinRepo != "":
 			_, pinTags, err := remoteRefs(ctx, t.PinRepo)
@@ -622,9 +629,13 @@ func npmLatest(ctx context.Context, pkg string) (version, sha string, err error)
 		return "", "", fmt.Errorf("npm %s: %w", pkg, err)
 	}
 	version = meta.DistTags["latest"]
-	sha = meta.Versions[version].GitHead
-	if len(sha) != 40 {
-		return "", "", fmt.Errorf("npm %s %s: no commit published with it", pkg, version)
+	if version == "" {
+		return "", "", fmt.Errorf("npm %s: no latest version", pkg)
+	}
+	// The commit is published with the version when the publisher's
+	// checkout was a git one; empty otherwise, for the caller's tag.
+	if sha = meta.Versions[version].GitHead; len(sha) != 40 {
+		sha = ""
 	}
 	return version, sha, nil
 }
