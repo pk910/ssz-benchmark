@@ -1,6 +1,7 @@
 package bench;
 
 import java.io.IOException;
+import java.io.OutputStream;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
@@ -13,6 +14,7 @@ import org.apache.tuweni.bytes.Bytes32;
 import tech.pegasys.teku.infrastructure.ssz.SszContainer;
 import tech.pegasys.teku.infrastructure.ssz.SszData;
 import tech.pegasys.teku.infrastructure.ssz.schema.SszContainerSchema;
+import tech.pegasys.teku.infrastructure.ssz.sos.SszOutputStreamWriter;
 import tech.pegasys.teku.infrastructure.ssz.sos.SszWriter;
 
 /**
@@ -25,7 +27,8 @@ import tech.pegasys.teku.infrastructure.ssz.sos.SszWriter;
  * the tree are created on access), SizeSSZ (the schema's getSszSize of the tree: read from the
  * length nodes, so microseconds for a state), Marshal (sszSerialize into a new byte array sized by
  * getSszSize), MarshalTo (sszSerialize into a caller's SszWriter over one byte array kept across
- * iterations) and HashTreeRoot. Teku caches every root in its tree nodes, so hashTreeRoot of an
+ * iterations), MarshalWriter (sszSerialize through the library's SszOutputStreamWriter, its
+ * serialization into any OutputStream, here one over a kept byte array) and HashTreeRoot. Teku caches every root in its tree nodes, so hashTreeRoot of an
  * object once hashed is a lookup: HashTreeRoot hashes a freshly deserialized object per iteration,
  * prepared outside the timed window, so that only the hashing counts. Memory is the bytes
  * allocated by the measuring thread (ThreadMXBean); the runtime does not count allocations.
@@ -35,7 +38,9 @@ import tech.pegasys.teku.infrastructure.ssz.sos.SszWriter;
  */
 public final class Main {
   static final String ENGINE = "Teku";
-  static final String[] OPS = {"Unmarshal", "SizeSSZ", "Marshal", "MarshalTo", "HashTreeRoot"};
+  static final String[] OPS = {
+    "Unmarshal", "SizeSSZ", "Marshal", "MarshalTo", "MarshalWriter", "HashTreeRoot"
+  };
 
   /** The part of an object whose root is stored: a state itself, a signed object's Message. */
   static final Function<SszContainer, SszData> SELF = c -> c;
@@ -215,6 +220,9 @@ public final class Main {
         case "MarshalTo":
           marshalTo(p, l, state, decode(schema, data), data, longest);
           break;
+        case "MarshalWriter":
+          marshalWriter(p, l, state, decode(schema, data), data, longest);
+          break;
         case "HashTreeRoot":
           // Teku caches the roots in the tree: every iteration hashes a freshly deserialized
           // object, prepared untimed together with the choice of the part to hash, so that the
@@ -347,6 +355,62 @@ public final class Main {
         () -> {
           for (SszContainer v : values) {
             w.pos = 0;
+            v.sszSerialize(w);
+          }
+          return null;
+        });
+  }
+
+  /** An OutputStream over one byte array, rewound for every object written into it. */
+  static final class ArrayOutputStream extends OutputStream {
+    final byte[] buf;
+    int pos;
+
+    ArrayOutputStream(final int capacity) {
+      buf = new byte[capacity];
+    }
+
+    @Override
+    public void write(final int b) {
+      buf[pos++] = (byte) b;
+    }
+
+    @Override
+    public void write(final byte[] bytes, final int offset, final int length) {
+      System.arraycopy(bytes, offset, buf, pos, length);
+      pos += length;
+    }
+  }
+
+  /**
+   * Encodes through the library's stream writer ({@link SszOutputStreamWriter}, the serialization
+   * into any OutputStream) into one stream kept across iterations and rewound per item: the kit's
+   * MarshalWriter. The output is checked once against the input outside the loop.
+   */
+  static void marshalWriter(
+      final Protocol p,
+      final Protocol.Leaf l,
+      final boolean state,
+      final SszContainer[] values,
+      final Bytes[] data,
+      final int longest) {
+    final ArrayOutputStream out = new ArrayOutputStream(longest);
+    final SszWriter w = new SszOutputStreamWriter(out);
+    for (int i = 0; i < values.length; i++) {
+      out.pos = 0;
+      values[i].sszSerialize(w);
+      final byte[] want = data[i].toArrayUnsafe();
+      if (!Arrays.equals(out.buf, 0, out.pos, want, 0, want.length)) {
+        p.fail(l, "item " + i + " marshalWriter output differs");
+        return;
+      }
+    }
+    p.run(
+        l,
+        state,
+        () -> {
+          for (SszContainer v : values) {
+            out.pos = 0;
             v.sszSerialize(w);
           }
           return null;

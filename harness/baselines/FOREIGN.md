@@ -86,7 +86,10 @@ a signed block's `Message`, an envelope's `Message`.
 
 Operations: `Unmarshal` (bytes to a fresh object), `SizeSSZ`, `Marshal`
 (to a new buffer), `MarshalTo` (into a buffer kept across iterations, when
-the library has such a call), `HashTreeRoot`. HashTreeRoot is bare
+the library has such a call), `MarshalWriter` (through the library's own
+stream writer into a sink kept across iterations, when it has one: Teku's
+SszOutputStreamWriter), `HashTreeRoot`. An operation the library has no
+call for is left out, not imitated with a call of the adapter's own. HashTreeRoot is bare
 hashing in every library: nothing cached from an earlier hash may be
 reused. A tree-backed library whose nodes cache their roots prepares a
 fresh object for every iteration (a new decode) inside `pause` /
