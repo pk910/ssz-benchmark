@@ -30,7 +30,17 @@ type branchCommit struct {
 func branchLog(ctx context.Context, gitDir, ref string, paths []string) ([]branchCommit, error) {
 	args := append([]string{"-C", gitDir, "log", "--first-parent",
 		"--decorate-refs=refs/tags", "--format=%H%x09%ct%x09%D%x09%s", ref, "--"}, paths...)
-	out, err := exec.CommandContext(ctx, "git", args...).Output()
+	cmd := exec.CommandContext(ctx, "git", args...)
+	// Telling the commits that touched a path apart needs their trees; a
+	// repository fetched without them would fetch each one from the
+	// remote as the log walks (minutes for a client's history), so that
+	// is forbidden, and such a repository gives the unfiltered list until
+	// it is fetched again with its trees.
+	cmd.Env = append(os.Environ(), "GIT_NO_LAZY_FETCH=1")
+	out, err := cmd.Output()
+	if err != nil && len(paths) > 0 {
+		return branchLog(ctx, gitDir, ref, nil)
+	}
 	if err != nil {
 		return nil, fmt.Errorf("log of %s: %w", ref, err)
 	}
@@ -116,7 +126,9 @@ func lastTouching(ctx context.Context, gitDir string, sub *subject, branch strin
 		return "", err
 	}
 	args := append([]string{"-C", gitDir, "log", "-1", "--first-parent", "--format=%H", "refs/heads/" + branch, "--"}, sub.Paths...)
-	out, err := exec.CommandContext(ctx, "git", args...).Output()
+	cmd := exec.CommandContext(ctx, "git", args...)
+	cmd.Env = append(os.Environ(), "GIT_NO_LAZY_FETCH=1")
+	out, err := cmd.Output()
 	if err != nil {
 		return "", fmt.Errorf("log of %s: %w", branch, err)
 	}
