@@ -670,7 +670,7 @@ func (r *runner) buildAdapter(ctx context.Context, s *side, lib *subject, logw f
 // per fork and seed, <fork>-<seed>, when the language can shuffle the
 // layout); benchwrap, built here, runs them.
 func (r *runner) buildExecAdapter(ctx context.Context, s *side, lib *subject, logw func(string, ...any)) error {
-	s.wrap = filepath.Join(s.hdir, "benchwrap")
+	s.wrap = filepath.Join(s.hdir, "wrap")
 	register := func() bool {
 		data, err := os.ReadFile(filepath.Join(s.hdir, "ok"))
 		if err != nil {
