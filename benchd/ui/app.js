@@ -57,7 +57,7 @@
   const objName = o => `${o}${objInfo(o)}`;
   // How an engine is named on the pages. The engines of dynamic-ssz carry
   // the library's name like the others do.
-  const ENGINE_LABELS = { Codegen: 'dynamic-ssz codegen', Reflection: 'dynamic-ssz reflection', EthereumSSZ: 'ethereum_ssz', Grandine: 'grandine ssz', Teku: 'teku ssz', LodestarValue: 'lodestar ssz value', LodestarTree: 'lodestar ssz tree', Nimbus: 'nim-ssz', SszPP: 'sszpp' };
+  const ENGINE_LABELS = { Codegen: 'dynamic-ssz codegen', Reflection: 'dynamic-ssz reflection', EthereumSSZ: 'lighthouse ssz', Grandine: 'grandine ssz', Teku: 'teku ssz', LodestarValue: 'lodestar ssz value', LodestarTree: 'lodestar ssz tree', Nimbus: 'nim-ssz', SszPP: 'sszpp' };
   // The language of an engine and of a library, shown as a mark before the
   // name on the pages (the marks are the simple-icons ones under
   // ui/vendor/icons, drawn in the text colour through a CSS mask).
