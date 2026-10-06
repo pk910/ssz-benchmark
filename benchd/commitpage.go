@@ -223,7 +223,7 @@ func (w *webServer) commitView(sub *subject, sha, baseSHA string) (*commitPage, 
 	// The commits offered as a base: the bases its own jobs compared it
 	// with, the library's release and main head, and for a release the one
 	// before it.
-	var bases []commitBase
+	bases := []commitBase{}
 	seen := map[string]bool{sha: true}
 	offer := func(commit, label string) {
 		if commit == "" || seen[commit] {

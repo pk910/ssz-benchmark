@@ -1093,7 +1093,7 @@
     const mode = oneSided ? 'abs' : chartMode;
     const again = () => viewCommit(subject, sha, params);
     const options = [`<option value="none" ${d.Base ? '' : 'selected'}>nothing: the values of this commit alone</option>`]
-      .concat(d.Bases.map(b => `<option value="${b.SHA}" ${b.SHA === d.Base ? 'selected' : ''}>${esc(b.Label)} · ${shortRef(b.SHA)} · ${b.Runs ? b.Runs + ' job' + (b.Runs === 1 ? '' : 's') : 'not measured'}</option>`));
+      .concat((d.Bases || []).map(b => `<option value="${b.SHA}" ${b.SHA === d.Base ? 'selected' : ''}>${esc(b.Label)} · ${shortRef(b.SHA)} · ${b.Runs ? b.Runs + ' job' + (b.Runs === 1 ? '' : 's') : 'not measured'}</option>`));
     app.innerHTML = `<h1>Commit ${commitLink(d.SHA, d.Subject)} <span class="muted small">${repoLink(d.Subject)}</span> <a class="agent" href="/commit/${d.Subject}/${d.SHA}.md${d.Base ? '?base=' + d.Base : ''}" title="this page as text, for an agent">text</a></h1>
       <div class="cards">
         <div class="card"><h3>Commit</h3><div class="mono">${esc((d.Desc || '').replace(/^[0-9a-f]{7,12} /, ''))}</div><div class="sub">everything measured of this commit: ${d.Jobs.length} job${d.Jobs.length === 1 ? '' : 's'}, harness ${esc(d.Harness)}</div></div>
