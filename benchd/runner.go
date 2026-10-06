@@ -878,6 +878,31 @@ func (r *runner) discover(ctx context.Context, s *side, seed, jobDir string, log
 	return leaves, counts, nil
 }
 
+// jobSeeds are the layout seeds a job measures under: the runner's, or
+// the first alone when neither side has a binary per seed (an adapter of
+// another language that cannot shuffle its layout runs the same binary
+// for every seed, so its passes are repeats).
+func (r *runner) jobSeeds(head, base *side) []string {
+	if head.seeded() || base.seeded() {
+		return r.seeds
+	}
+	return r.seeds[:1]
+}
+
+// seeded reports whether the side has a binary of its own per layout seed.
+func (s *side) seeded() bool {
+	for _, bins := range s.bins {
+		paths := map[string]bool{}
+		for _, p := range bins {
+			paths[p] = true
+		}
+		if len(paths) > 1 {
+			return true
+		}
+	}
+	return false
+}
+
 // calibrateGroup fixes the iteration counts of leaves of one package,
 // engine and object that have none yet: the counts Go settles on for the
 // configured benchtime, at least minIters, measured in one process on the
@@ -1070,9 +1095,15 @@ func (r *runner) measure(ctx context.Context, j *job, head, base *side, jobDir s
 	var measured, lastPass time.Duration
 	passes := 0
 	budget := r.cfg.target + r.cfg.target/4
+	// An adapter without layout seeds runs one binary: its passes are
+	// repeats, two at least (a pair per leaf), rather than one per seed.
+	seeds := r.jobSeeds(head, base)
 	minPasses := r.cfg.minPasses
 	if minPasses <= 0 {
-		minPasses = len(r.seeds)
+		minPasses = len(seeds)
+	}
+	if len(seeds) == 1 {
+		minPasses = max(minPasses, 2)
 	}
 	planned := func() int {
 		if lastPass == 0 {
@@ -1088,7 +1119,7 @@ func (r *runner) measure(ctx context.Context, j *job, head, base *side, jobDir s
 	var stored map[string]sample
 	if r.cfg.oneSided && base.sha != "" {
 		j.GoVersion = r.goVersionCached
-		if stored, err = r.store.baseRuns(j, r.seeds); err != nil {
+		if stored, err = r.store.baseRuns(j, seeds); err != nil {
 			return 0, err
 		}
 		if stored == nil {
@@ -1099,7 +1130,7 @@ func (r *runner) measure(ctx context.Context, j *job, head, base *side, jobDir s
 	}
 	seen := map[string][]float64{} // leaf+side+seed -> cycles (or ns) of the kept measurements
 	for round := 0; ; round++ {
-		for i, seed := range r.seeds {
+		for i, seed := range seeds {
 			// A refinement run adds one pass per seed; any other job
 			// fills its budget.
 			if passes >= minPasses && (j.Refinement || measured+lastPass > budget) {
@@ -1115,7 +1146,7 @@ func (r *runner) measure(ctx context.Context, j *job, head, base *side, jobDir s
 				// A refinement run that is less than half through gives
 				// way to a job that waits: its commits were measured
 				// before, the waiting job's were not.
-				if total := len(r.seeds) * len(leaves); j.Refinement && total > 0 && time.Since(waitChecked) > 20*time.Second {
+				if total := len(seeds) * len(leaves); j.Refinement && total > 0 && time.Since(waitChecked) > 20*time.Second {
 					waitChecked = time.Now()
 					if at := passes*len(leaves) + done; 2*at < total {
 						if id, err := r.store.waiting(r.name); err == nil && id != 0 {
@@ -1225,7 +1256,7 @@ func (r *runner) measure(ctx context.Context, j *job, head, base *side, jobDir s
 			passes++
 			lastPass = time.Since(passStart)
 			measured += lastPass
-			logw("pass %d (round %d, seed %s, %d/%d) measured in %s", passes, round+1, seed, i+1, len(r.seeds), lastPass.Round(time.Second))
+			logw("pass %d (round %d, seed %s, %d/%d) measured in %s", passes, round+1, seed, i+1, len(seeds), lastPass.Round(time.Second))
 		}
 	}
 }

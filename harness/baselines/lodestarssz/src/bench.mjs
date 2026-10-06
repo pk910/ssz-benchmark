@@ -143,51 +143,17 @@ function hex(a) {
   return Buffer.from(a.buffer, a.byteOffset, a.length).toString("hex");
 }
 
-// Decodes every item of the payload and checks it as the kit does:
-// re-encoded bytes equal the input, the root equals the stored one.
-function verify(eng, type, msg, payload) {
-  const values = [];
-  for (const {data, root} of payload.items) {
-    let v;
-    try {
-      v = eng.decode(type, data);
-    } catch (e) {
-      return {err: `decode: ${e.message}`};
-    }
-    let enc;
-    let got;
-    try {
-      enc = eng.encode(type, v);
-      got = eng.root(type, v, msg);
-    } catch (e) {
-      return {err: `encode: ${e.message}`};
-    }
-    if (!equal(enc, data)) {
-      return {err: "decoded value does not encode back to the input"};
-    }
-    if (!equal(got, root)) {
-      return {err: `root mismatch: got ${hex(got)} want ${hex(root)}`};
-    }
-    values.push(v);
-  }
-  return {values};
-}
-
 // Measures the operations of an object under one engine; one iteration
 // of a set runs the operation on every item.
 function bench(s, eng, leaves, type, msg, payload) {
-  // Only the verdict of the verification is kept: its values (a hashed
-  // tree view of a state is over 4 GB of heap) must be gone before an
-  // operation that builds fresh objects (Unmarshal, the tree's
-  // HashTreeRoot) runs. The operations on decoded values decode them
-  // again, once, when they come.
-  const {err} = verify(eng, type, msg, payload);
-  if (err) {
-    for (const l of leaves) {
-      s.fail(l, err);
-    }
-    return;
-  }
+  // Nothing is verified up front: every operation checks its own result
+  // after its loop (a decode by re-encoding it, an encoding against the
+  // input, roots against the stored ones), and a decode, encode and hash
+  // of the object beforehand would repeat that at seconds per state. The
+  // operations on decoded values decode them once, when they come; a
+  // hashed tree view of a state is over 4 GB of heap, so they are gone
+  // before an operation that builds fresh objects (Unmarshal, the tree's
+  // HashTreeRoot) runs.
   let values = null;
   const decoded = () => (values ??= payload.items.map(({data}) => eng.decode(type, data)));
   const dropDecoded = () => {
@@ -202,6 +168,21 @@ function bench(s, eng, leaves, type, msg, payload) {
   const equalsInput = (outs) => (outs.every((out, i) => equal(out, items[i].data)) ? null : "marshal output differs from input");
   const rootsEqual = (roots) => (roots.every((r, i) => equal(r, items[i].root)) ? null : "root mismatch after the loop");
   for (const l of leaves) {
+    try {
+      runLeaf(s, eng, l, type, msg, items, total, decoded, dropDecoded, encodesBack, equalsInput, rootsEqual);
+    } catch (e) {
+      // The library refused the operation (an object it cannot decode,
+      // say): this leaf fails, the others go on. A window the loop may
+      // have opened is closed first.
+      s.send("pause");
+      s.fail(l, e.message);
+    }
+  }
+}
+
+// runLeaf measures one operation of an object.
+function runLeaf(s, eng, l, type, msg, items, total, decoded, dropDecoded, encodesBack, equalsInput, rootsEqual) {
+  {
     switch (l.op) {
       case "Unmarshal":
         s.run(l, () => items.map(({data}) => eng.decode(type, data)), undefined, encodesBack);

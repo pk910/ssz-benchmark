@@ -154,33 +154,6 @@ public final class Main {
     bench(p, ls, loadSet(dir, name), schema, target, false);
   }
 
-  /**
-   * Deserializes every item of the payload and checks it as the kit does: the re-serialized bytes
-   * equal the input, the root of the target equals the stored one. The message names the first
-   * difference. Nothing is kept: a hashed Teku object carries a root in every branch node (a
-   * hashed state retains 6 GB against 2.5 GB unhashed), and the measured leaves decode their own.
-   */
-  static void verify(
-      final List<Item> items,
-      final SszContainerSchema<SszContainer> schema,
-      final Function<SszContainer, SszData> target) {
-    for (Item it : items) {
-      final SszContainer v;
-      try {
-        v = schema.sszDeserialize(it.data());
-      } catch (RuntimeException e) {
-        throw new IllegalStateException("decode: " + e, e);
-      }
-      if (!v.sszSerialize().equals(it.data())) {
-        throw new IllegalStateException("decoded value does not encode back to the input");
-      }
-      final Bytes32 got = target.apply(v).hashTreeRoot();
-      if (!got.equals(it.root())) {
-        throw new IllegalStateException("root mismatch: got " + got + " want " + it.root());
-      }
-    }
-  }
-
   /** Measures the operations of an object; one iteration of a set runs the operation on every item. */
   static void bench(
       final Protocol p,
@@ -189,14 +162,10 @@ public final class Main {
       final SszContainerSchema<SszContainer> schema,
       final Function<SszContainer, SszData> target,
       final boolean state) {
-    try {
-      verify(items, schema, target);
-    } catch (RuntimeException e) {
-      for (Protocol.Leaf l : ls) {
-        p.fail(l, e.getMessage());
-      }
-      return;
-    }
+    // Nothing is verified up front: every operation checks its own result after its loop (a
+    // decode by re-encoding it, an encoding against the input, roots against the stored ones),
+    // and a decode, encode and hash of the object beforehand would repeat that at a quarter of
+    // a minute per state.
     final int n = items.size();
     final Bytes[] data = new Bytes[n];
     long total = 0;
@@ -207,6 +176,28 @@ public final class Main {
       longest = Math.max(longest, data[i].size());
     }
     for (Protocol.Leaf l : ls) {
+      try {
+        runLeaf(p, l, items, data, schema, target, state, total, longest);
+      } catch (RuntimeException e) {
+        // The library refused the operation (an object it cannot decode, say): this leaf fails,
+        // the others go on. A window the loop may have opened is closed first.
+        p.abort(l, String.valueOf(e));
+      }
+    }
+  }
+
+  /** Measures one operation of an object. */
+  static void runLeaf(
+      final Protocol p,
+      final Protocol.Leaf l,
+      final List<Item> items,
+      final Bytes[] data,
+      final SszContainerSchema<SszContainer> schema,
+      final Function<SszContainer, SszData> target,
+      final boolean state,
+      final long total,
+      final int longest) {
+    {
       switch (l.op) {
         case "Unmarshal":
           p.run(l, state, () -> decode(schema, data));

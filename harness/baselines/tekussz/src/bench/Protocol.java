@@ -140,6 +140,12 @@ final class Protocol {
     send("skip " + l.name());
   }
 
+  /** Fails a leaf whose loop may have left a window open: the window is closed first. */
+  void abort(final Leaf l, final String msg) {
+    send("pause");
+    fail(l, msg);
+  }
+
   /**
    * Measures one leaf: the warm-up calls until the JIT has settled (at least WARM_ITERS calls and
    * WARM_NS; a state object, whose single call is long, WARM_NS only), then the fixed iterations,
