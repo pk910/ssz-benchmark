@@ -15,6 +15,9 @@ const DROP_BATCH = 256 * 1024 * 1024;
 // iteration takes seconds, stops at the time alone.
 const WARM_ITERS = 50;
 const WARM_NS = 3_000_000_000n;
+// Discovery (BENCH_DISCOVER) wants the leaves and their checks, not
+// figures: the warm-up is one call then.
+const DISCOVER = Boolean(process.env.BENCH_DISCOVER);
 
 export class Leaf {
   constructor(engine, object, op) {
@@ -157,7 +160,7 @@ export class Session {
         garbage = 0;
       }
       const elapsed = process.hrtime.bigint() - start;
-      if (elapsed >= WARM_NS && (l.isState() || k >= WARM_ITERS)) {
+      if (DISCOVER || (elapsed >= WARM_NS && (l.isState() || k >= WARM_ITERS))) {
         break;
       }
       if (prepare) {

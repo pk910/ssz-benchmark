@@ -855,7 +855,9 @@ func (r *runner) discover(ctx context.Context, s *side, seed, jobDir string, log
 		if s.bin(pkg, seed) == "" {
 			continue
 		}
-		out, _, err := r.runBinary(ctx, s, pkg, seed, ".", "1x", "", filepath.Join(jobDir, "discover-"+pkg+".txt"))
+		// Discovery wants the list of leaves and their checks, not figures:
+		// an adapter with a JIT warm-up skips it (BENCH_DISCOVER).
+		out, _, err := r.runBinary(ctx, s, pkg, seed, ".", "1x", "", filepath.Join(jobDir, "discover-"+pkg+".txt"), "BENCH_DISCOVER=1")
 		if err != nil {
 			return nil, fmt.Errorf("%s: %w", pkg, err)
 		}

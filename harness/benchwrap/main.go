@@ -10,8 +10,10 @@
 // The adapter gets BENCH_PATTERN (the -test.bench pattern, Go testing
 // semantics: split at "/", each element matched against the element of
 // the benchmark name), BENCH_TIME (the benchtime, "1x" for one iteration
-// or a duration to calibrate against), BENCH_ITERS and the rest of the
-// runner's environment, and a pipe on file descriptor 3 for its messages:
+// or a duration to calibrate against), BENCH_ITERS, BENCH_DISCOVER (set
+// when the run lists the leaves and no figure of it is kept: a JIT
+// warm-up can be cut to one call) and the rest of the runner's
+// environment, and a pipe on file descriptor 3 for its messages:
 //
 //	thread <tid>                      the measuring thread; counters open on it, and it
 //	                                  is pinned to BENCH_MUTATOR_CPU
