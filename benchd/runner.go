@@ -872,18 +872,36 @@ func (r *runner) discover(ctx context.Context, s *side, seed, jobDir string, log
 	return leaves, nil
 }
 
-// calibrate fixes the iteration count of a leaf that has none yet: the
-// count Go settles on for the configured benchtime, at least minIters,
-// measured on the base side.
+// calibrateGroup fixes the iteration counts of leaves of one package,
+// engine and object that have none yet: the counts Go settles on for the
+// configured benchtime, at least minIters, measured in one process on the
+// given side, by benchmark name.
+func (r *runner) calibrateGroup(ctx context.Context, leaves []leaf, s *side, seed, jobDir string) (map[string]int, error) {
+	parts := strings.Split(leaves[0].name(), "/")
+	ops := make([]string, 0, len(leaves))
+	for _, l := range leaves {
+		ops = append(ops, regexp.QuoteMeta(l.Op))
+	}
+	pattern := benchRegex(strings.Join(parts[:len(parts)-1], "/")) + "/^(" + strings.Join(ops, "|") + ")$"
+	out, _, err := r.runBinary(ctx, s, leaves[0].Pkg, seed, pattern, r.cfg.benchTime, "", filepath.Join(jobDir, "calibrate.txt"))
+	if err != nil {
+		return nil, err
+	}
+	counts := map[string]int{}
+	for _, bl := range parseBenchOutput(out) {
+		counts[bl.name] = max(bl.iters, r.cfg.minIters)
+	}
+	return counts, nil
+}
+
+// calibrate is calibrateGroup for one leaf.
 func (r *runner) calibrate(ctx context.Context, l leaf, s *side, seed, jobDir string) (int, error) {
-	out, _, err := r.runBinary(ctx, s, l.Pkg, seed, benchRegex(l.name()), r.cfg.benchTime, "", filepath.Join(jobDir, "calibrate.txt"))
+	counts, err := r.calibrateGroup(ctx, []leaf{l}, s, seed, jobDir)
 	if err != nil {
 		return 0, err
 	}
-	for _, bl := range parseBenchOutput(out) {
-		if bl.name == l.name() {
-			return max(bl.iters, r.cfg.minIters), nil
-		}
+	if n, ok := counts[l.name()]; ok {
+		return n, nil
 	}
 	return 0, fmt.Errorf("%s produced no result", l.name())
 }
@@ -955,24 +973,57 @@ func (r *runner) measure(ctx context.Context, j *job, head, base *side, jobDir s
 	if err != nil {
 		return 0, err
 	}
-	for i, l := range leaves {
+	// The leaves without a count calibrate in one process per package,
+	// engine, object and side: a process of an adapter of another language
+	// pays its start and its verification of the object before it measures
+	// (a quarter of a minute for the JVM on a state), once per object
+	// rather than once per operation.
+	type calGroup struct {
+		side   *side
+		leaves []leaf
+	}
+	var calOrder []string
+	calGroups := map[string]*calGroup{}
+	for _, l := range leaves {
 		if iters[l.key()] > 0 {
 			continue
 		}
-		r.setPhase(j, fmt.Sprintf("calibrating %s (%d/%d)", l.key(), i+1, len(leaves)))
 		calSide := base
 		if l.Baseline {
 			calSide = head
 		}
-		n, err := r.calibrate(ctx, l, calSide, seed0, jobDir)
+		k := joinKey(l.Pkg, l.Engine, l.Object) + "|" + calSide.name
+		g := calGroups[k]
+		if g == nil {
+			g = &calGroup{side: calSide}
+			calGroups[k] = g
+			calOrder = append(calOrder, k)
+		}
+		g.leaves = append(g.leaves, l)
+	}
+	total, done := 0, 0
+	for _, k := range calOrder {
+		total += len(calGroups[k].leaves)
+	}
+	for _, k := range calOrder {
+		g := calGroups[k]
+		r.setPhase(j, fmt.Sprintf("calibrating %s/%s (%d/%d)", g.leaves[0].Engine, g.leaves[0].Object, done+1, total))
+		counts, err := r.calibrateGroup(ctx, g.leaves, g.side, seed0, jobDir)
 		if err != nil {
-			return 0, fmt.Errorf("calibrate %s: %w", l.key(), err)
+			return 0, fmt.Errorf("calibrate %s/%s: %w", g.leaves[0].Engine, g.leaves[0].Object, err)
 		}
-		logw("calibrated %s: %d iterations", l.key(), n)
-		if err := r.store.setBenchIters(l, n); err != nil {
-			return 0, err
+		for _, l := range g.leaves {
+			n, ok := counts[l.name()]
+			if !ok {
+				return 0, fmt.Errorf("calibrate %s: no result", l.key())
+			}
+			logw("calibrated %s: %d iterations", l.key(), n)
+			if err := r.store.setBenchIters(l, n); err != nil {
+				return 0, err
+			}
+			iters[l.key()] = n
+			done++
 		}
-		iters[l.key()] = n
 	}
 
 	// One process per package, engine and object runs every operation of
