@@ -115,6 +115,14 @@ proc thread*(s: Session) =
       discard
   s.send("thread " & $tid)
 
+proc close*(s: Session) =
+  ## Closes the pipe once every leaf is sent, then keeps the measuring
+  ## thread alive a moment: the wrapper reads the thread's figures from
+  ## /proc when it handles the last line.
+  if s.fd == 3:
+    discard close(s.fd)
+  sleep(100)
+
 proc fail*(s: Session, l: Leaf, msg: string) =
   s.send("fail " & l.name & " " & msg.replace('\n', ' '))
 
@@ -140,61 +148,104 @@ proc roundUp(n: int): int =
   elif n <= 5 * base: 5 * base
   else: 10 * base
 
-proc timed[R](s: Session, l: Leaf, n: int, f: proc(): R): int64 =
-  ## n iterations with the results kept and released between batches
-  ## inside pause/resume: with ORC the release is the destruction of the
-  ## batch, which so stays outside the timed window. The first iteration
-  ## tells how much one retains (the allocator's occupied memory), which
-  ## sizes the batch under dropBatch.
-  var kept = newSeqOfCap[R](min(n, 1 shl 16))
+type
+  Run*[R] = object
+    ## A measured leaf before its result line is sent: the last
+    ## iteration's results, for the caller's check, and the line.
+    last*: seq[R]
+    endLine: string
+
+proc timed[R](s: Session, l: Leaf, n, per: int, f: proc(kept: var seq[R]), last: var seq[R]): int64 =
+  ## n iterations; every iteration appends its per results to kept. With
+  ## ORC a result is freed when it is dropped, so the results of a batch
+  ## are kept and released between batches inside pause/resume, outside
+  ## the timed and counted windows (the final batch's after the last
+  ## pause, the last iteration's moved to last). The first iteration tells
+  ## how much one retains (the allocator's occupied memory), which sizes
+  ## the batch under dropBatch so that it never grows in a timed window;
+  ## results that hold no heap memory are overwritten in place, as the
+  ## kit's loop overwrites its result variable.
+  var kept = newSeqOfCap[R](per)
   var every = 1
+  var overwrite = false
   var elapsed: int64
   s.send("begin " & l.name)
   let occupied0 = getOccupiedMem()
   var start = getMonoTime()
   for i in 0 ..< n:
-    kept.add f()
-    let last = i + 1 == n
+    if overwrite:
+      kept.setLen(0)
+    f(kept)
+    let isLast = i + 1 == n
     let batch = i == 0 or (i + 1) mod every == 0
-    if not batch and not last:
+    if not batch and not isLast:
       continue
     elapsed += inNanoseconds(getMonoTime() - start)
+    s.send("pause")
+    if isLast:
+      last.setLen(0)
+      for j in kept.len - per ..< kept.len:
+        last.add move(kept[j])
+      kept.setLen(0)
+      break
     if i == 0:
       let retained = getOccupiedMem() - occupied0
-      every =
-        if retained <= 0: high(int)
-        elif retained < dropBatch: dropBatch div retained
-        else: 1
-    if not last:
-      s.send("pause")
+      if retained <= 0:
+        every = high(int)
+        overwrite = true
+        kept.setLen(0)
+      else:
+        every = if retained < dropBatch: dropBatch div retained else: 1
+        # Releases the first results and holds a batch without growing.
+        kept = newSeqOfCap[R](per * min(every, n))
+    else:
       kept.setLen(0)
-      s.send("resume")
-      start = getMonoTime()
-  kept.setLen(0)
+    s.send("resume")
+    start = getMonoTime()
   elapsed
 
-proc run*[R](s: Session, l: Leaf, f: proc(): R) =
-  ## Measures one leaf: the untimed warm-up calls (two when the operation
-  ## allocates), then the fixed iterations, or a count grown as Go's
-  ## testing does until a batch reaches the benchtime. Bytes and
-  ## allocations are left out: Nim's allocator counts allocations but not
-  ## bytes, and the wrapper reports them as a pair.
+proc run*[R](s: Session, l: Leaf, per: int, f: proc(kept: var seq[R])): Run[R] =
+  ## Measures one leaf, f appending the per results of one iteration: the
+  ## untimed warm-up calls (two when the operation allocates), then the
+  ## fixed iterations, or a count grown as Go's testing does until a batch
+  ## reaches the benchtime. Returns the last iteration's results with the
+  ## result line, which finish sends once the caller has checked them, as
+  ## the kit checks a leaf's output after its loop. Bytes and allocations
+  ## are left out: Nim's allocator counts allocations but not bytes, and
+  ## the wrapper reports them as a pair.
   var fixed = 0
   for (op, n) in s.iters:
     if op == l.op:
       fixed = n
   var n = if fixed > 0: fixed else: max(1, s.fixed)
+  var warm = newSeqOfCap[R](per)
   let a0 = allocCount()
-  discard f()
-  var warm = 1
+  f(warm)
+  var warmups = 1
   if allocCount() != a0:
-    discard f()
-    warm = 2
+    warm.setLen(0)
+    f(warm)
+    warmups = 2
+  warm = @[]
   while true:
-    let elapsed = timed(s, l, n, f)
+    let elapsed = timed(s, l, n, per, f, result.last)
     if s.target > 0 and fixed == 0 and elapsed < s.target:
-      let next = int(float(n) * float(s.target) / max(float(elapsed), 1.0) * 1.2)
-      n = roundUp(max(next, n + 1))
+      # Go's testing: the count the benchtime predicts, a fifth more, at
+      # most a hundredfold and at least one more, at most 1e9, rounded up
+      # to 1, 2, 5 times a power of ten.
+      var next = int(float(n) * float(s.target) / max(float(elapsed), 1.0) * 1.2)
+      next = min(next, 100 * n)
+      next = max(next, n + 1)
+      n = roundUp(min(next, 1_000_000_000))
       continue
-    s.send("end " & l.name & " iters=" & $n & " ns=" & $elapsed & " warmup=" & $warm)
+    result.endLine = "end " & l.name & " iters=" & $n & " ns=" & $elapsed & " warmup=" & $warmups
     return
+
+proc finish*[R](s: Session, l: Leaf, r: sink Run[R], ok: bool, msg: string) =
+  ## Ends a measured leaf: the result line when the check of its output
+  ## passed, else the failure. The last results are dropped here, after
+  ## the line.
+  if ok:
+    s.send(r.endLine)
+  else:
+    s.fail(l, msg)

@@ -67,8 +67,13 @@ python3 ../convert_foreign.py nim ../../types/gloas/types.go src/gen_gloas.nim -
 
 # The library and its dependencies by path; the SHA-256 backends are the
 # library's defaults (blst for whole messages, hashtree for 64-byte
-# chunks), as Nimbus builds them. ORC with the allocation counters of
-# Nim's allocator, which the driver reads to tell an allocating operation.
+# chunks), as Nimbus builds them. Nimbus's release flags (-d:release
+# --opt:speed --threads:on) without its -march=native and without LTO (the
+# other adapters link without it, and gcc's LTO cannot go through the lld
+# section shuffle); ORC rather than Nimbus's refc, so that freeing is
+# deterministic and the driver can release results outside the timed
+# window; the allocation counters of Nim's allocator, which the driver
+# reads to tell an allocating operation.
 NIMFLAGS=(c -d:release --opt:speed --mm:orc --threads:on -d:nimAllocStats
   --hints:off --warnings:off "--parallelBuild:${BENCH_JOBS:-2}"
   "--nimcache:$PWD/nimcache"

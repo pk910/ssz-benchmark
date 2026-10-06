@@ -4,23 +4,25 @@
 # with the kit's policy, the figures sent over the protocol
 # (harness/benchwrap).
 #
-# Operations: Unmarshal (SSZ.decode), SizeSSZ (sszSize), Marshal
-# (SSZ.encode) and HashTreeRoot (hash_tree_root). Objects of a fork: the
-# state, the block, the block set, and (Gloas) the envelope, plus the
-# minimal-preset state and block.
+# Operations: Unmarshal (a fresh object, readSszBytes), SizeSSZ (sszSize),
+# Marshal (SSZ.encode, a new buffer), MarshalTo (an SszWriter over a
+# buffer kept across iterations) and HashTreeRoot (hash_tree_root).
+# Objects of a fork: the state, the block, the block set, and (Gloas) the
+# envelope, plus the minimal-preset state and block.
 #
 # Memory: ORC frees deterministically, so what an operation frees inside
 # itself is part of it (as in Rust); the results of a batch are released
 # between batches with the counters paused.
 
 import std/[algorithm, os, strutils]
+import faststreams/outputs, stew/ptrops
 import ssz_serialization, ssz_serialization/merkleization
 import ./protocol
 import ./gen_fulu, ./gen_gloas
 
 const
   engine = "Nimbus"
-  ops = ["Unmarshal", "SizeSSZ", "Marshal", "HashTreeRoot"]
+  ops = ["Unmarshal", "SizeSSZ", "Marshal", "MarshalTo", "HashTreeRoot"]
 
 type
   # A payload: the bytes of one or more objects with their roots.
@@ -59,19 +61,23 @@ proc leaves(s: var Session, obj: string): seq[Leaf] =
     if s.matches(l):
       result.add l
 
-proc verify[T](items: seq[Item], decoded: var seq[T], rootOf: proc(v: T): Digest {.nimcall.}): string =
+proc verify[T](items: seq[Item], decoded: var seq[ref T], rootOf: proc(v: T): Digest {.nimcall.}): string =
   ## Decodes every item and checks it as the kit does: re-encoded bytes
-  ## equal the input, the root equals the stored one. Returns the
-  ## message of the first difference, "" when all agree.
+  ## equal the input, the size equals the input length, the root equals
+  ## the stored one. Returns the message of the first difference, "" when
+  ## all agree.
   for it in items:
-    var v: T
+    var v = new T
     try:
-      v = SSZ.decode(it.data, T)
+      readSszBytes(it.data, v[])
     except CatchableError as e:
       return "decode: " & e.msg
-    if SSZ.encode(v) != it.data:
+    if SSZ.encode(v[]) != it.data:
       return "decoded value does not encode back to the input"
-    let got = rootOf(v)
+    let size = sszSize(v[])
+    if size != it.data.len:
+      return "size " & $size & " want " & $it.data.len
+    let got = rootOf(v[])
     if got != it.root:
       return "root mismatch: got " & $got & " want " & $it.root
     decoded.add v
@@ -80,36 +86,91 @@ proc verify[T](items: seq[Item], decoded: var seq[T], rootOf: proc(v: T): Digest
 proc bench[T](s: var Session, ls: seq[Leaf], items: seq[Item], rootOf: proc(v: T): Digest {.nimcall.}) =
   ## Measures the operations of an object; one iteration of a set runs
   ## the operation on every item.
-  var decoded: seq[T]
+  var decoded: seq[ref T]
   let msg = verify[T](items, decoded, rootOf)
   if msg != "":
     for l in ls:
       s.fail(l, msg)
     return
+  var total = 0
+  for it in items:
+    total += it.data.len
+  proc encodes(vs: seq[ref T]): bool =
+    for i, v in vs:
+      if SSZ.encode(v[]) != items[i].data:
+        return false
+    true
   for l in ls:
     case l.op
     of "Unmarshal":
-      s.run(l, proc(): seq[T] =
-        result = newSeqOfCap[T](items.len)
+      # Bytes into a fresh object: a zeroed heap object, decoded in
+      # place, as the kit's New and Unmarshal.
+      let r = s.run(l, items.len, proc(kept: var seq[ref T]) =
         for it in items:
+          var v = new T
           try:
-            result.add SSZ.decode(it.data, T)
+            readSszBytes(it.data, v[])
           except CatchableError as e:
-            raiseAssert "decode: " & e.msg)
+            raiseAssert "decode: " & e.msg
+          kept.add v)
+      s.finish(l, r, encodes(r.last), "decoded value does not encode back to the input")
     of "SizeSSZ":
-      s.run(l, proc(): int =
+      let r = s.run(l, 1, proc(kept: var seq[int]) =
+        var size = 0
         for v in decoded:
-          result += sszSize(v))
+          size += sszSize(v[])
+        kept.add size)
+      s.finish(l, r, r.last[0] == total, "size " & $r.last[0] & " want " & $total)
     of "Marshal":
-      s.run(l, proc(): seq[seq[byte]] =
-        result = newSeqOfCap[seq[byte]](decoded.len)
+      let r = s.run(l, items.len, proc(kept: var seq[seq[byte]]) =
         for v in decoded:
-          result.add SSZ.encode(v))
+          kept.add SSZ.encode(v[]))
+      var ok = true
+      for i, enc in r.last:
+        if enc != items[i].data:
+          ok = false
+      s.finish(l, r, ok, "marshal output differs from input")
+    of "MarshalTo":
+      # One buffer kept across iterations, an unbuffered output stream
+      # over it rewound to its start for every item (the buffer cleared),
+      # the library's writer encoding into it. Every item's encoding is
+      # checked once before the loop; the buffer holds the last item after
+      # it.
+      var buf = newSeq[byte](total)
+      let base = addr buf[0]
+      let stream = unsafeMemoryOutput(base, buf.len).s
+      var w = SszWriter.init(stream)
+      proc rewind() =
+        stream.span = PageSpan(startAddr: base, endAddr: offset(base, buf.len))
+        stream.spanEndPos = buf.len
+      proc holds(it: Item): bool =
+        stream.pos == it.data.len and equalMem(base, unsafeAddr it.data[0], stream.pos)
+      var ok = true
+      for i, v in decoded:
+        rewind()
+        w.writeValue(v[])
+        if not holds(items[i]):
+          ok = false
+      if not ok:
+        s.fail(l, "marshalTo output differs from input")
+        continue
+      let r = s.run(l, 1, proc(kept: var seq[int]) =
+        var size = 0
+        for v in decoded:
+          rewind()
+          w.writeValue(v[])
+          size += stream.pos
+        kept.add size)
+      s.finish(l, r, r.last[0] == total and holds(items[^1]), "marshalTo output differs from input")
     of "HashTreeRoot":
-      s.run(l, proc(): seq[Digest] =
-        result = newSeqOfCap[Digest](decoded.len)
+      let r = s.run(l, items.len, proc(kept: var seq[Digest]) =
         for v in decoded:
-          result.add rootOf(v))
+          kept.add rootOf(v[]))
+      var ok = true
+      for i, got in r.last:
+        if got != items[i].root:
+          ok = false
+      s.finish(l, r, ok, "root mismatch")
     else:
       s.skip(l)
 
@@ -159,5 +220,6 @@ proc main() =
   else:
     stderr.writeLine("unknown fork " & fork)
     quit(2)
+  s.close()
 
 main()
