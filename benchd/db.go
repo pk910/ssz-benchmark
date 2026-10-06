@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -784,6 +785,36 @@ func (s *store) queuedAhead(j *job) (int, error) {
 	var n int
 	err := s.db.QueryRow(`SELECT COUNT(*) FROM jobs WHERE state = ? AND (priority > ? OR (priority = ? AND id < ?))`, stateQueued, j.Priority, j.Priority, j.ID).Scan(&n)
 	return n, err
+}
+
+// supersedeTargetJobs marks the queued target jobs of a library whose
+// commit is none of the commits its targets point to now as skipped (the
+// targets moved on before the job ran) and returns their ids. A job
+// queued by hand has no targets and stays.
+func (s *store) supersedeTargetJobs(subject string, current []string) ([]int64, error) {
+	rows, err := s.db.Query(`SELECT id, head_sha FROM jobs WHERE state = ? AND subject = ? AND targets != '' AND runner = ''`, stateQueued, subject)
+	if err != nil {
+		return nil, err
+	}
+	var ids []int64
+	for rows.Next() {
+		var id int64
+		var sha string
+		if err := rows.Scan(&id, &sha); err != nil {
+			rows.Close()
+			return nil, err
+		}
+		if !slices.Contains(current, sha) {
+			ids = append(ids, id)
+		}
+	}
+	rows.Close()
+	for _, id := range ids {
+		if _, err := s.db.Exec(`UPDATE jobs SET state = ?, finished = ?, note = ? WHERE id = ? AND state = ?`, stateSkipped, time.Now().Unix(), "superseded: the targets moved on", id, stateQueued); err != nil {
+			return nil, err
+		}
+	}
+	return ids, nil
 }
 
 // supersedeQueued marks the queued commit jobs of a branch whose head is

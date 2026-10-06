@@ -1055,6 +1055,12 @@ func (w *webServer) apiNoise(rw http.ResponseWriter, req *http.Request) {
 //	curl -X POST localhost/admin/queue -d kind=noise
 //	curl -X POST localhost/admin/queue -d kind=release
 //	curl -X POST localhost/admin/queue -d kind=commit -d head=<ref> -d base=<ref> [-d priority=1]
+//	curl -X POST localhost/admin/queue -d kind=history -d subject=<library> [-d count=8] [-d priority=-1]
+//
+// A history request queues the newest commits of another library's main
+// branch (through its path gate, for a library kept in a client's
+// repository) that have no job with the current harness version yet,
+// oldest first, each on its own.
 func (w *webServer) adminQueue(rw http.ResponseWriter, req *http.Request) {
 	host, _, _ := net.SplitHostPort(req.RemoteAddr)
 	if ip := net.ParseIP(host); req.Method != http.MethodPost || ip == nil || !ip.IsLoopback() {
@@ -1068,6 +1074,9 @@ func (w *webServer) adminQueue(rw http.ResponseWriter, req *http.Request) {
 	var j *job
 	var err error
 	switch kind := req.Form.Get("kind"); kind {
+	case "history":
+		w.queueHistory(rw, req)
+		return
 	case kindNoise, kindRelease:
 		j, err = w.sched.idleJobOfKind(kind)
 	case kindCommit:
@@ -1086,4 +1095,66 @@ func (w *webServer) adminQueue(rw http.ResponseWriter, req *http.Request) {
 		return
 	}
 	fmt.Fprintf(rw, "queued job %d: %s %s vs %s (priority %d)\n", j.ID, j.Kind, shortSHA(j.HeadSHA), shortSHA(j.BaseSHA), j.Priority)
+}
+
+// queueHistory serves the history kind of adminQueue.
+func (w *webServer) queueHistory(rw http.ResponseWriter, req *http.Request) {
+	sub := subjectByName(req.Form.Get("subject"))
+	if sub == nil || sub.mirrored() {
+		http.Error(rw, "subject must be a library other than the mirrored one", http.StatusBadRequest)
+		return
+	}
+	var branch string
+	for _, t := range sub.Targets {
+		if t.Name == targetMaster && t.Branch != "" {
+			branch = t.Branch
+		}
+	}
+	if branch == "" {
+		http.Error(rw, sub.Name+" has no branch target", http.StatusBadRequest)
+		return
+	}
+	count := 8
+	if n, err := strconv.Atoi(req.Form.Get("count")); err == nil && n > 0 {
+		count = n
+	}
+	priority := -1
+	if n, err := strconv.Atoi(req.Form.Get("priority")); err == nil && req.Form.Get("priority") != "" {
+		priority = n
+	}
+	ctx, cancel := context.WithTimeout(req.Context(), 10*time.Minute)
+	defer cancel()
+	dir := historyDir(w.cfg.dataDir, sub)
+	if err := fetchHistory(ctx, dir, sub.Repo, branch, len(sub.Paths) > 0); err != nil {
+		http.Error(rw, err.Error(), http.StatusBadGateway)
+		return
+	}
+	commits, err := branchLog(ctx, dir, "refs/heads/"+branch, sub.Paths)
+	if err != nil {
+		http.Error(rw, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	hash, err := subjectHash(w.cfg.harnessDir, sub)
+	if err != nil {
+		http.Error(rw, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	commits = commits[:min(count, len(commits))]
+	queued := 0
+	for i := len(commits) - 1; i >= 0; i-- {
+		c := commits[i]
+		if ok, err := w.db.targetJobExists(sub.Name, c.SHA, hash); err != nil || ok {
+			fmt.Fprintf(rw, "%s %s: has a job already\n", shortSHA(c.SHA), c.Title)
+			continue
+		}
+		j := &job{Kind: kindCommit, Subject: sub.Name, Branch: branch, HeadSHA: c.SHA, HeadDesc: shortSHA(c.SHA) + " " + c.Title,
+			Priority: priority, Note: "history of " + branch + ", queued by hand"}
+		if err := w.db.insertJob(j); err != nil {
+			http.Error(rw, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		queued++
+		fmt.Fprintf(rw, "queued job %d: %s %s (priority %d)\n", j.ID, shortSHA(c.SHA), c.Title, j.Priority)
+	}
+	fmt.Fprintf(rw, "%d of the newest %d commits of %s %s queued\n", queued, len(commits), sub.Name, branch)
 }

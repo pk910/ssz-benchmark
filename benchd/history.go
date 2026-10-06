@@ -25,10 +25,12 @@ type branchCommit struct {
 }
 
 // branchLog reads the commits on a branch of a local repository, newest
-// first, following first parents only.
-func branchLog(ctx context.Context, gitDir, ref string) ([]branchCommit, error) {
-	out, err := exec.CommandContext(ctx, "git", "-C", gitDir, "log", "--first-parent",
-		"--decorate-refs=refs/tags", "--format=%H%x09%ct%x09%D%x09%s", ref, "--").Output()
+// first, following first parents only; with paths, only the commits that
+// touched one of them.
+func branchLog(ctx context.Context, gitDir, ref string, paths []string) ([]branchCommit, error) {
+	args := append([]string{"-C", gitDir, "log", "--first-parent",
+		"--decorate-refs=refs/tags", "--format=%H%x09%ct%x09%D%x09%s", ref, "--"}, paths...)
+	out, err := exec.CommandContext(ctx, "git", args...).Output()
 	if err != nil {
 		return nil, fmt.Errorf("log of %s: %w", ref, err)
 	}
@@ -51,8 +53,19 @@ func branchLog(ctx context.Context, gitDir, ref string) ([]branchCommit, error) 
 }
 
 // fetchHistory brings the commits (without their files) and the tags of a
-// branch of another repository into a local repository kept for that.
-func fetchHistory(ctx context.Context, gitDir, repo, branch string) error {
+// branch of another repository into a local repository kept for that;
+// with trees, the directory listings come along, so that the commits
+// touching a path can be told without the network.
+func fetchHistory(ctx context.Context, gitDir, repo, branch string, trees bool) error {
+	filter := "tree:0"
+	if trees {
+		filter = "blob:none"
+		// A repository fetched without trees never gets them for the
+		// commits it has: it starts over.
+		if out, _ := exec.CommandContext(ctx, "git", "-C", gitDir, "config", "--get-regexp", `^remote\..*\.partialclonefilter$`).Output(); strings.Contains(string(out), "tree:0") {
+			_ = os.RemoveAll(gitDir)
+		}
+	}
 	if _, err := os.Stat(filepath.Join(gitDir, "HEAD")); err != nil {
 		if err := os.MkdirAll(filepath.Dir(gitDir), 0o755); err != nil {
 			return err
@@ -61,7 +74,7 @@ func fetchHistory(ctx context.Context, gitDir, repo, branch string) error {
 			return fmt.Errorf("init %s: %v: %s", gitDir, err, out)
 		}
 	}
-	out, err := exec.CommandContext(ctx, "git", "-C", gitDir, "fetch", "-q", "--filter=tree:0", "--force", repo,
+	out, err := exec.CommandContext(ctx, "git", "-C", gitDir, "fetch", "-q", "--filter="+filter, "--force", repo,
 		"+refs/heads/"+branch+":refs/heads/"+branch, "+refs/tags/*:refs/tags/*").CombinedOutput()
 	if err != nil {
 		return fmt.Errorf("fetch %s %s: %v: %s", repo, branch, err, out)
@@ -87,7 +100,29 @@ func (s *scheduler) updateHistory(ctx context.Context, sub *subject, branch stri
 	}
 	fctx, cancel := context.WithTimeout(ctx, 2*time.Minute)
 	defer cancel()
-	if err := fetchHistory(fctx, historyDir(s.cfg.dataDir, sub), sub.Repo, branch); err != nil {
+	if err := fetchHistory(fctx, historyDir(s.cfg.dataDir, sub), sub.Repo, branch, len(sub.Paths) > 0); err != nil {
 		log.Printf("history of %s: %v", sub.Name, err)
 	}
+}
+
+// lastTouching fetches the history of a branch of a library kept in a
+// larger repository and returns the newest commit on the branch (first
+// parents only) that touched one of the library's paths: the commit its
+// branch target points to.
+func lastTouching(ctx context.Context, gitDir string, sub *subject, branch string) (string, error) {
+	fctx, cancel := context.WithTimeout(ctx, 5*time.Minute)
+	defer cancel()
+	if err := fetchHistory(fctx, gitDir, sub.Repo, branch, true); err != nil {
+		return "", err
+	}
+	args := append([]string{"-C", gitDir, "log", "-1", "--first-parent", "--format=%H", "refs/heads/" + branch, "--"}, sub.Paths...)
+	out, err := exec.CommandContext(ctx, "git", args...).Output()
+	if err != nil {
+		return "", fmt.Errorf("log of %s: %w", branch, err)
+	}
+	sha := strings.TrimSpace(string(out))
+	if len(sha) != 40 {
+		return "", fmt.Errorf("%s: no commit of %s touches %s", sub.Name, branch, strings.Join(sub.Paths, ", "))
+	}
+	return sha, nil
 }

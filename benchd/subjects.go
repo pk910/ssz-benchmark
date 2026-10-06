@@ -54,6 +54,12 @@ type subject struct {
 	// commit by its recipe. Empty: the harness packages themselves, built
 	// against a checkout from the mirror.
 	Adapter string
+	// Paths are the directories of a repository that holds more than the
+	// library (a client's monorepo): a branch target then resolves to the
+	// newest commit of the branch that touched one of them, and the
+	// repository page lists those commits only, not every commit of the
+	// client.
+	Paths []string
 	// Exec marks an adapter of another language: its recipe is build.sh,
 	// which leaves one launcher per fork, run through benchwrap (see
 	// harness/benchwrap) instead of a Go test binary.
@@ -91,10 +97,12 @@ var subjects = []subject{
 	{Name: "lodestar-ssz", Repo: "https://github.com/ChainSafe/ssz", Adapter: "lodestarssz", Exec: true,
 		Targets: []target{{Name: targetRelease, Npm: "@chainsafe/ssz", NpmTag: "ssz-v%s"}, {Name: targetMaster, Branch: "master"}}},
 	{Name: "teku-ssz", Repo: "https://github.com/Consensys/teku", Adapter: "tekussz", Exec: true,
+		Paths:   []string{"infrastructure/ssz", "infrastructure/bytes", "infrastructure/crypto"},
 		Targets: []target{{Name: targetRelease, TagMatch: `^\d{2}\.\d+\.\d+$`}, {Name: targetMaster, Branch: "master"}}},
 	{Name: "nim-ssz", Repo: "https://github.com/status-im/nim-ssz-serialization", Adapter: "nimssz", Exec: true,
 		Targets: []target{{Name: targetMaster, Branch: "master"}}},
 	{Name: "grandine-ssz", Repo: "https://github.com/grandinetech/grandine", Adapter: "grandinessz", Exec: true,
+		Paths:   []string{"ssz", "ssz_derive", "hashing"},
 		Targets: []target{{Name: targetRelease, TagMatch: `^\d+\.\d+\.\d+$`}, {Name: targetMaster, Branch: "develop"}}},
 	{Name: "sszpp", Repo: "https://github.com/OffchainLabs/sszpp", Adapter: "sszpp", Exec: true,
 		Targets: []target{{Name: targetMaster, Branch: "main"}}},
@@ -371,8 +379,9 @@ func commitTime(ctx context.Context, repo, sha string) (time.Time, error) {
 	return out.Commit.Committer.Date, nil
 }
 
-// resolveTargets finds the commit of every target of a library.
-func resolveTargets(ctx context.Context, sub *subject) ([]targetState, error) {
+// resolveTargets finds the commit of every target of a library; dataDir
+// holds the history repositories a path-restricted branch is read from.
+func resolveTargets(ctx context.Context, dataDir string, sub *subject) ([]targetState, error) {
 	branches, tags, err := remoteRefs(ctx, sub.Repo)
 	if err != nil {
 		return nil, err
@@ -381,6 +390,12 @@ func resolveTargets(ctx context.Context, sub *subject) ([]targetState, error) {
 	for _, t := range sub.Targets {
 		st := targetState{Subject: sub.Name, Name: t.Name}
 		switch {
+		case t.Branch != "" && len(sub.Paths) > 0:
+			sha, err := lastTouching(ctx, historyDir(dataDir, sub), sub, t.Branch)
+			if err != nil {
+				return nil, err
+			}
+			st.SHA, st.Label = sha, t.Branch
 		case t.Branch != "":
 			st.SHA, st.Label = branches[t.Branch], t.Branch
 		case len(t.Newest) > 0:
@@ -506,7 +521,7 @@ func (s *scheduler) pollTargets(ctx context.Context, remote bool) {
 		if sub.mirrored() {
 			states, err = s.localTargets(sub)
 		} else if remote {
-			states, err = resolveTargets(ctx, sub)
+			states, err = resolveTargets(ctx, s.cfg.dataDir, sub)
 		} else {
 			continue
 		}
@@ -532,6 +547,15 @@ func (s *scheduler) pollTargets(ctx context.Context, remote bool) {
 				order = append(order, st.SHA)
 			}
 			bySHA[st.SHA] = append(bySHA[st.SHA], st)
+		}
+		// A queued job for a commit the targets have moved away from is
+		// superseded: the one queued for the new commit replaces it.
+		if len(order) > 0 {
+			if skipped, err := s.db.supersedeTargetJobs(sub.Name, order); err != nil {
+				log.Printf("targets of %s: %v", sub.Name, err)
+			} else if len(skipped) > 0 {
+				log.Printf("targets of %s: %d queued job(s) superseded", sub.Name, len(skipped))
+			}
 		}
 		for _, sha := range order {
 			if ok, err := s.db.targetJobExists(sub.Name, sha, hash); err != nil || ok {

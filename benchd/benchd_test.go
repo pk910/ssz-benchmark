@@ -614,7 +614,7 @@ func TestResolveTargetsLive(t *testing.T) {
 		if subjects[i].mirrored() {
 			continue
 		}
-		states, err := resolveTargets(context.Background(), &subjects[i])
+		states, err := resolveTargets(context.Background(), t.TempDir(), &subjects[i])
 		t.Logf("%s: %+v %v", subjects[i].Name, states, err)
 		if err != nil {
 			t.Fail()
@@ -912,10 +912,10 @@ func TestBranchHistory(t *testing.T) {
 
 	// From another repository: the commits on the branch, a merge as one.
 	dir := filepath.Join(t.TempDir(), "history", "lib.git")
-	if err := fetchHistory(context.Background(), dir, src, "main"); err != nil {
+	if err := fetchHistory(context.Background(), dir, src, "main", false); err != nil {
 		t.Fatal(err)
 	}
-	commits, err := branchLog(context.Background(), dir, "refs/heads/main")
+	commits, err := branchLog(context.Background(), dir, "refs/heads/main", nil)
 	if err != nil {
 		t.Fatal(err)
 	}

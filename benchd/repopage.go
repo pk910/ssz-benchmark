@@ -253,7 +253,7 @@ func (w *webServer) repoView(sub *subject, offset, limit int, steps bool) (*repo
 	var history []branchCommit
 	if v.Branch != "" {
 		ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
-		history, _ = branchLog(ctx, historyDir(w.cfg.dataDir, sub), "refs/heads/"+v.Branch)
+		history, _ = branchLog(ctx, historyDir(w.cfg.dataDir, sub), "refs/heads/"+v.Branch, sub.Paths)
 		cancel()
 	}
 	var commits []repoCommit
