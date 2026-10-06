@@ -31,7 +31,9 @@ access, in the adapter's directory. Its environment:
 
 The launcher `out/<fork>` (and `out/<fork>-<seed>`) is an executable or a
 script that runs the adapter for that fork with the arguments appended by
-the wrapper.
+the wrapper. A version of the library that cannot build a fork's types (no
+progressive containers yet, say) leaves that fork's launcher out, with a
+line on stderr saying so, and the runner measures the forks that have one.
 
 ## What the adapter does
 

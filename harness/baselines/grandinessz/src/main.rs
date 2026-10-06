@@ -25,6 +25,7 @@
 #![allow(clippy::all)]
 
 mod gen_fulu;
+#[cfg(feature = "gloas")]
 mod gen_gloas;
 mod protocol;
 
@@ -125,6 +126,7 @@ fn run(fork: &str) {
             one::<n::FuluBeaconState>(&mut s, "FuluMinState", &min, "state", |v| v.hash_tree_root());
             one::<n::ElectraSignedBeaconBlock>(&mut s, "FuluMinBlock", &min, "block", |v| v.Message.hash_tree_root());
         }
+        #[cfg(feature = "gloas")]
         "gloas" => {
             use gen_gloas::{mainnet as m, minimal as n};
             one::<m::GloasBeaconState>(&mut s, "GloasState", &dir, "state", |v| v.hash_tree_root());

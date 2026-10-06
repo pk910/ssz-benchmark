@@ -38,14 +38,27 @@ python3 ../convert_foreign.py grandine ../../types/gloas/types.go src/gen_gloas.
 mkdir -p "$OUT"
 export CARGO_TARGET_DIR="$PWD/target"
 IFS=',' read -r -a SEEDS <<< "${BENCH_SEEDS:-101}"
+# The Gloas types need progressive and stable containers, which the
+# library has only from some version on: the build tries them, and a
+# version without them ships the Fulu fork alone (the runner measures the
+# forks that have a launcher).
+FEATURES="--features gloas"
+FORKS="fulu gloas"
+if ! cargo build --release --quiet --bin bench --features gloas 2> "$CARGO_TARGET_DIR/gloas-probe.log"; then
+  echo "gloas: the library at this commit cannot build the Gloas types ($(grep -m1 '^error' "$CARGO_TARGET_DIR/gloas-probe.log" | cut -c1-120)); Fulu only" >&2
+  FEATURES=""
+  FORKS="fulu"
+fi
 for seed in "${SEEDS[@]}"; do
-  cargo rustc --release --quiet --bin bench -- -C link-arg="-Wl,--shuffle-sections=*=$seed"
+  # shellcheck disable=SC2086
+  cargo rustc --release --quiet --bin bench $FEATURES -- -C link-arg="-Wl,--shuffle-sections=*=$seed"
   cp target/release/bench "$OUT/bench-$seed"
-  for fork in fulu gloas; do
+  for fork in $FORKS; do
     printf '#!/bin/sh\nexec "%s/bench-%s" --fork %s "$@"\n' "$OUT" "$seed" "$fork" > "$OUT/$fork-$seed"
     chmod +x "$OUT/$fork-$seed"
   done
 done
-for fork in fulu gloas; do
+rm -f "$OUT/gloas" "$OUT"/gloas-*
+for fork in $FORKS; do
   ln -sf "$fork-${SEEDS[0]}" "$OUT/$fork"
 done

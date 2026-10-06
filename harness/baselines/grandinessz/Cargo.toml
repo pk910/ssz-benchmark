@@ -13,6 +13,12 @@ publish = false
 name = "bench"
 path = "src/main.rs"
 
+# gloas: the Gloas types (progressive and stable containers), which the
+# library has only from some version on; build.sh leaves the feature out
+# when they do not compile and ships the Fulu fork alone.
+[features]
+gloas = []
+
 [dependencies]
 ssz = { path = "work/grandine/ssz" }
 ethereum-types = "0.14"

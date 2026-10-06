@@ -281,10 +281,12 @@ def emit_rust(aliases, structs, order, keep, presets):
     for preset in presets:
         out.append(f'pub mod {preset.name} {{')
         out.append('    use alloy_primitives::U256;')
-        out.append('    use ssz::{BitList, BitVector, ProgressiveBitList};')
+        # The progressive types are imported only when a type uses them: a
+        # library version without them still builds the other fork.
+        imports_at = len(out)
+        out.append(None)
         out.append('    use ssz_derive::{Decode, Encode};')
         out.append('    use ssz_types::typenum::*;')
-        out.append('    use ssz_types::{FixedVector, ProgressiveVariableList, VariableList};')
         out.append('    use tree_hash_derive::TreeHash;')
         out.append('')
         for name in order:
@@ -301,9 +303,21 @@ def emit_rust(aliases, structs, order, keep, presets):
                 out.append(f'        pub {fname}: {rust_type(shape(typ, tags, aliases, preset))},')
             out.append('    }')
             out.append('')
+        body = '\n'.join(line for line in out[imports_at + 1:] if line is not None)
+        out[imports_at] = '\n'.join([
+            '    use ssz::{' + ', '.join(used_names(body, ['BitList', 'BitVector', 'ProgressiveBitList'])) + '};',
+            '    use ssz_types::{' + ', '.join(used_names(body, ['FixedVector', 'ProgressiveVariableList', 'VariableList'])) + '};',
+        ])
         out.append('}')
         out.append('')
     return '\n'.join(out)
+
+
+def used_names(body, names):
+    """The names among `names` that the generated body mentions (an import
+    list without unused members, so that a library version lacking some of
+    the types still compiles the types it has)."""
+    return [n for n in names if re.search(r'\b' + n + r'\b', body)]
 
 
 # ---- main -------------------------------------------------------------------

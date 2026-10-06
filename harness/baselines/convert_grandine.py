@@ -1,3 +1,4 @@
+import re
 """The Grandine dialect of convert_foreign.py: the harness types as Rust
 structs deriving Grandine's `Ssz` (grandinetech/grandine, crate ssz), one
 module per preset with the preset's sizes and limits as typenum constants.
@@ -81,8 +82,11 @@ def emit(aliases, structs, order, keep, presets):
         out.append(f'pub mod {preset.name} {{')
         out.append('    use ethereum_types::{H160, H256, H32};')
         out.append('    use primitive_types::H384;')
-        out.append('    use ssz::{BitList, BitVector, ByteList, ByteVector, ContiguousList, ContiguousVector};')
-        out.append('    use ssz::{ProgressiveBitList, ProgressiveByteList, ProgressiveList, Ssz, Uint256};')
+        # The progressive types are imported only when a type uses them: a
+        # library version without them still builds the other fork.
+        imports_at = len(out)
+        out.append(None)
+        out.append('    use ssz::{BitList, BitVector, ByteList, ByteVector, ContiguousList, ContiguousVector, Ssz, Uint256};')
         out.append('    use typenum::consts::*;')
         out.append('    use typenum::{UInt, UTerm, B0, B1};')
         out.append('')
@@ -99,6 +103,9 @@ def emit(aliases, structs, order, keep, presets):
                 out.append(f'        pub {fname}: {rust_type(shape(typ, tags, aliases, preset))},')
             out.append('    }')
             out.append('')
+        body = '\n'.join(line for line in out[imports_at + 1:] if line is not None)
+        names = [n for n in ('ProgressiveBitList', 'ProgressiveByteList', 'ProgressiveList') if re.search(r'\b' + n + r'\b', body)]
+        out[imports_at] = '    use ssz::{' + ', '.join(names) + '};' if names else '    // no progressive types in this fork'
         out.append('}')
         out.append('')
     return '\n'.join(out)

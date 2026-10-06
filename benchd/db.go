@@ -792,7 +792,7 @@ func (s *store) queuedAhead(j *job) (int, error) {
 // targets moved on before the job ran) and returns their ids. A job
 // queued by hand has no targets and stays.
 func (s *store) supersedeTargetJobs(subject string, current []string) ([]int64, error) {
-	rows, err := s.db.Query(`SELECT id, head_sha FROM jobs WHERE state = ? AND subject = ? AND targets != '' AND runner = ''`, stateQueued, subject)
+	rows, err := s.db.Query(`SELECT id, head_sha FROM jobs WHERE state = ? AND subject = ? AND targets != ''`, stateQueued, subject)
 	if err != nil {
 		return nil, err
 	}

@@ -93,7 +93,7 @@ var subjects = []subject{
 	// ethereum_ssz is the one followed, the adapter pins ssz_types and
 	// tree_hash to the revisions Lighthouse builds with.
 	{Name: "lighthouse-ssz", Repo: "https://github.com/sigp/ethereum_ssz", Adapter: "ethereumssz", Exec: true,
-		Targets: []target{{Name: targetRelease, TagMatch: `^v\d+\.\d+\.\d+(-beta\.\d+)?$`}, {Name: targetMaster, Branch: "main"}}},
+		Targets: []target{{Name: targetRelease, TagMatch: `^v\d+\.\d+\.\d+$`}, {Name: targetMaster, Branch: "main"}}},
 	{Name: "lodestar-ssz", Repo: "https://github.com/ChainSafe/ssz", Adapter: "lodestarssz", Exec: true,
 		Targets: []target{{Name: targetRelease, Npm: "@chainsafe/ssz", NpmTag: "ssz-v%s"}, {Name: targetMaster, Branch: "master"}}},
 	{Name: "teku-ssz", Repo: "https://github.com/Consensys/teku", Adapter: "tekussz", Exec: true,
