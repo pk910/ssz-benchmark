@@ -237,11 +237,23 @@ measures its head, and its base when it has one.
 | fastssz | adapter `baselines/fastssz2` | | latest `v2.x.y` tag | `main` |
 | karalabe-ssz | adapter `baselines/karalabessz` | | latest tag | `main` |
 | prysm-ssz (methodical-ssz) | adapter `baselines/prysmssz` | | the version the latest Prysm release pins | `main` or `progression`, whichever has the newer head (Prysm ships from `progression`, which is ahead of `main` today) |
+| lighthouse-ssz (ethereum_ssz, Rust) | adapter `baselines/ethereumssz` through benchwrap | | latest tag | `main` |
+| lodestar-ssz (@chainsafe/ssz, TypeScript) | adapter `baselines/lodestarssz` through benchwrap | | the version npm has as latest (the repo's `ssz-v<version>` tag) | `master` |
+| teku-ssz (Teku's ssz module, Java) | adapter `baselines/tekussz` through benchwrap | | latest `yy.m.p` tag | `master`, gated: the newest commit touching `infrastructure/ssz`, `infrastructure/bytes` or `infrastructure/crypto` |
+| nim-ssz (nim-ssz-serialization, Nim) | adapter `baselines/nimssz` through benchwrap | | | `master` |
+| grandine-ssz (Grandine's ssz crate, Rust) | adapter `baselines/grandinessz` through benchwrap | | latest `x.y.z` tag | `develop`, gated: the newest commit touching `ssz`, `ssz_derive` or `hashing` |
+| sszpp (C++) | adapter `baselines/sszpp` through benchwrap | | | `main` |
 
 - Targets are resolved from the mirror for the mirrored library on every
   tick, and with `git ls-remote` (and Prysm's go.mod) every 15 minutes
   (`-target-poll`) for the others. A commit a target points to that has
   no job with the current harness version gets one, ahead of the queue.
+  A library kept in a client's repository (Teku, Grandine) has a path
+  gate: its branch target is the newest commit that touched the
+  directories the adapter builds, and its repository page lists those
+  commits only. `curl -X POST localhost/admin/queue -d kind=history -d
+  subject=<library> -d count=8 -d priority=-1` queues the newest commits
+  of a library's branch (through the gate) that have no job yet.
 - The mirrored library additionally has every commit of its main branch
   measured against its parent, its pull requests against their base, and
   GitHub checks reported.
