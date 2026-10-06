@@ -236,7 +236,7 @@ measures its head, and its base when it has one.
 | fastssz-v1 | adapter `baselines/fastssz1` | `v1.0.0` | | |
 | fastssz | adapter `baselines/fastssz2` | | latest `v2.x.y` tag | `main` |
 | karalabe-ssz | adapter `baselines/karalabessz` | | latest tag | `main` |
-| methodical-ssz | adapter `baselines/prysmssz` | | the version the latest Prysm release pins | `main` or `progression`, whichever has the newer head (Prysm ships from `progression`, which is ahead of `main` today) |
+| prysm-ssz (methodical-ssz) | adapter `baselines/prysmssz` | | the version the latest Prysm release pins | `main` or `progression`, whichever has the newer head (Prysm ships from `progression`, which is ahead of `main` today) |
 
 - Targets are resolved from the mirror for the mirrored library on every
   tick, and with `git ls-remote` (and Prysm's go.mod) every 15 minutes
@@ -364,7 +364,7 @@ measures its head, and its base when it has one.
 
   | library | Fulu state | Fulu block(s) | Gloas block(s), envelope | Gloas state |
   |---|---|---|---|---|
-  | PrysmSSZ (methodical-ssz) | everything | everything | everything, hashing included | everything |
+  | PrysmSSZ (prysm-ssz) | everything | everything | everything, hashing included | everything |
   | FastSSZv1, FastSSZv2 | everything | everything | serialization only | not expressible |
   | KaralabeSSZ | not expressible | everything | serialization only | not expressible |
 

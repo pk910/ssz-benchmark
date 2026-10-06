@@ -358,6 +358,15 @@ func openDB(path string) (*store, error) {
 	for _, stmt := range migrations {
 		_, _ = db.Exec(stmt) // fails when the column exists
 	}
+	// Libraries renamed after the client that ships them: the rows keyed
+	// by the old name follow (idempotent).
+	for _, r := range [][2]string{{"ethereum-ssz", "lighthouse-ssz"}, {"methodical-ssz", "prysm-ssz"}} {
+		for _, table := range []string{"jobs", "targets", "commit_values"} {
+			if _, err := db.Exec(`UPDATE `+table+` SET subject = ? WHERE subject = ?`, r[1], r[0]); err != nil {
+				return nil, fmt.Errorf("rename %s in %s: %w", r[0], table, err)
+			}
+		}
+	}
 	s := &store{db: db, dataDir: filepath.Dir(path)}
 	if err := s.refreshResults("results:threads"); err != nil {
 		return nil, err

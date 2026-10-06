@@ -80,13 +80,13 @@ var subjects = []subject{
 	// ahead of main (and has what the adapter uses). The master target
 	// follows whichever of the two has the newer head, so it returns to
 	// main once the work is merged there.
-	{Name: "methodical-ssz", Repo: "https://github.com/OffchainLabs/methodical-ssz", Adapter: "prysmssz",
+	{Name: "prysm-ssz", Repo: "https://github.com/OffchainLabs/methodical-ssz", Adapter: "prysmssz",
 		Targets: []target{{Name: targetRelease, PinRepo: "https://github.com/OffchainLabs/prysm", PinModule: "github.com/OffchainLabs/methodical-ssz"}, {Name: targetMaster, Newest: []string{"main", "progression"}}}},
 	// The libraries of other languages (adapters with build.sh, run through
 	// benchwrap). The Rust crates of Sigma Prime are three repositories;
 	// ethereum_ssz is the one followed, the adapter pins ssz_types and
 	// tree_hash to the revisions Lighthouse builds with.
-	{Name: "ethereum-ssz", Repo: "https://github.com/sigp/ethereum_ssz", Adapter: "ethereumssz", Exec: true,
+	{Name: "lighthouse-ssz", Repo: "https://github.com/sigp/ethereum_ssz", Adapter: "ethereumssz", Exec: true,
 		Targets: []target{{Name: targetRelease, TagMatch: `^v\d+\.\d+\.\d+(-beta\.\d+)?$`}, {Name: targetMaster, Branch: "main"}}},
 	{Name: "lodestar-ssz", Repo: "https://github.com/ChainSafe/ssz", Adapter: "lodestarssz", Exec: true,
 		Targets: []target{{Name: targetRelease, Npm: "@chainsafe/ssz", NpmTag: "ssz-v%s"}, {Name: targetMaster, Branch: "master"}}},
