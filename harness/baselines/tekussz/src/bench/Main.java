@@ -4,38 +4,43 @@ import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.List;
 import java.util.function.Function;
 import java.util.stream.Stream;
 import org.apache.tuweni.bytes.Bytes;
 import org.apache.tuweni.bytes.Bytes32;
 import tech.pegasys.teku.infrastructure.ssz.SszContainer;
+import tech.pegasys.teku.infrastructure.ssz.SszData;
 import tech.pegasys.teku.infrastructure.ssz.schema.SszContainerSchema;
+import tech.pegasys.teku.infrastructure.ssz.sos.SszWriter;
 
 /**
  * The adapter of Teku's SSZ library for benchwrap: the harness objects deserialized with the
  * generated schemas (GenFulu.java, GenGloas.java, one class per preset), every operation measured
  * with the kit's policy, the figures sent over the protocol (harness/benchwrap).
  *
- * <p>Operations: Unmarshal (sszDeserialize into the tree-backed container; Teku builds the backing
- * tree eagerly, so this is the decode), SizeSSZ (the schema's getSszSize of the tree), Marshal
- * (sszSerialize to a new Bytes) and HashTreeRoot. Teku caches every hash in its tree nodes, so
- * hashTreeRoot of an object once hashed is a lookup: HashTreeRoot hashes a freshly deserialized
- * object per iteration, prepared outside the timed window, so that only the hashing counts.
- * Memory is the bytes allocated by the measuring thread (ThreadMXBean); the runtime does not
- * count allocations.
+ * <p>Operations: Unmarshal (sszDeserialize: Teku builds the whole backing tree eagerly, a leaf per
+ * 32-byte chunk and every branch above it, so this is the full decode; only the typed views over
+ * the tree are created on access), SizeSSZ (the schema's getSszSize of the tree: read from the
+ * length nodes, so microseconds for a state), Marshal (sszSerialize into a new byte array sized by
+ * getSszSize), MarshalTo (sszSerialize into a caller's SszWriter over one byte array kept across
+ * iterations) and HashTreeRoot. Teku caches every root in its tree nodes, so hashTreeRoot of an
+ * object once hashed is a lookup: HashTreeRoot hashes a freshly deserialized object per iteration,
+ * prepared outside the timed window, so that only the hashing counts. Memory is the bytes
+ * allocated by the measuring thread (ThreadMXBean); the runtime does not count allocations.
  *
  * <p>Objects of a fork: the state, the block, the block set, and (Gloas) the envelope, plus the
  * minimal-preset state and block. Roots: a state's own, a signed block's or envelope's Message.
  */
 public final class Main {
   static final String ENGINE = "Teku";
-  static final String[] OPS = {"Unmarshal", "SizeSSZ", "Marshal", "HashTreeRoot"};
+  static final String[] OPS = {"Unmarshal", "SizeSSZ", "Marshal", "MarshalTo", "HashTreeRoot"};
 
-  /** The root of a signed object is its Message's, the first field. */
-  static final Function<SszContainer, Bytes32> SELF = SszContainer::hashTreeRoot;
+  /** The part of an object whose root is stored: a state itself, a signed object's Message. */
+  static final Function<SszContainer, SszData> SELF = c -> c;
 
-  static final Function<SszContainer, Bytes32> MESSAGE = c -> c.get(0).hashTreeRoot();
+  static final Function<SszContainer, SszData> MESSAGE = c -> c.get(0);
 
   public static void main(final String[] args) throws IOException {
     final String fork = args.length > 0 ? args[0] : "fulu";
@@ -119,14 +124,14 @@ public final class Main {
       final Path dir,
       final String file,
       final SszContainerSchema<SszContainer> schema,
-      final Function<SszContainer, Bytes32> rootOf,
+      final Function<SszContainer, SszData> target,
       final boolean state)
       throws IOException {
     final List<Protocol.Leaf> ls = leaves(p, object);
     if (ls.isEmpty()) {
       return;
     }
-    bench(p, ls, loadOne(dir, file), schema, rootOf, state);
+    bench(p, ls, loadOne(dir, file), schema, target, state);
   }
 
   static void set(
@@ -135,25 +140,25 @@ public final class Main {
       final Path dir,
       final String name,
       final SszContainerSchema<SszContainer> schema,
-      final Function<SszContainer, Bytes32> rootOf)
+      final Function<SszContainer, SszData> target)
       throws IOException {
     final List<Protocol.Leaf> ls = leaves(p, object);
     if (ls.isEmpty()) {
       return;
     }
-    bench(p, ls, loadSet(dir, name), schema, rootOf, false);
+    bench(p, ls, loadSet(dir, name), schema, target, false);
   }
 
   /**
    * Deserializes every item of the payload and checks it as the kit does: the re-serialized bytes
-   * equal the input, the root equals the stored one. The message names the first difference.
-   * Nothing is kept: a hashed Teku object carries a root in every branch node, and a state so
-   * enlarged next to the one an iteration builds does not fit the heap.
+   * equal the input, the root of the target equals the stored one. The message names the first
+   * difference. Nothing is kept: a hashed Teku object carries a root in every branch node (a
+   * hashed state retains 6 GB against 2.5 GB unhashed), and the measured leaves decode their own.
    */
   static void verify(
       final List<Item> items,
       final SszContainerSchema<SszContainer> schema,
-      final Function<SszContainer, Bytes32> rootOf) {
+      final Function<SszContainer, SszData> target) {
     for (Item it : items) {
       final SszContainer v;
       try {
@@ -164,7 +169,7 @@ public final class Main {
       if (!v.sszSerialize().equals(it.data())) {
         throw new IllegalStateException("decoded value does not encode back to the input");
       }
-      final Bytes32 got = rootOf.apply(v);
+      final Bytes32 got = target.apply(v).hashTreeRoot();
       if (!got.equals(it.root())) {
         throw new IllegalStateException("root mismatch: got " + got + " want " + it.root());
       }
@@ -177,11 +182,11 @@ public final class Main {
       final List<Protocol.Leaf> ls,
       final List<Item> items,
       final SszContainerSchema<SszContainer> schema,
-      final Function<SszContainer, Bytes32> rootOf,
+      final Function<SszContainer, SszData> target,
       final boolean state) {
     try {
-      verify(items, schema, rootOf);
-    } catch (IllegalStateException e) {
+      verify(items, schema, target);
+    } catch (RuntimeException e) {
       for (Protocol.Leaf l : ls) {
         p.fail(l, e.getMessage());
       }
@@ -189,41 +194,40 @@ public final class Main {
     }
     final int n = items.size();
     final Bytes[] data = new Bytes[n];
+    long total = 0;
+    int longest = 0;
     for (int i = 0; i < n; i++) {
       data[i] = items.get(i).data();
+      total += data[i].size();
+      longest = Math.max(longest, data[i].size());
     }
     for (Protocol.Leaf l : ls) {
       switch (l.op) {
         case "Unmarshal":
-          p.run(
-              l,
-              state,
-              () -> {
-                final SszContainer[] out = new SszContainer[n];
-                for (int i = 0; i < n; i++) {
-                  out[i] = schema.sszDeserialize(data[i]);
-                }
-                return out;
-              });
+          p.run(l, state, () -> decode(schema, data));
           break;
         case "SizeSSZ":
-          sizeSSZ(p, l, state, decode(schema, data), schema);
+          sizeSSZ(p, l, state, decode(schema, data), schema, total);
           break;
         case "Marshal":
           marshal(p, l, state, decode(schema, data));
           break;
+        case "MarshalTo":
+          marshalTo(p, l, state, decode(schema, data), data, longest);
+          break;
         case "HashTreeRoot":
           // Teku caches the roots in the tree: every iteration hashes a freshly deserialized
-          // object, prepared untimed, so that the measured work is the hashing alone.
+          // object, prepared untimed together with the choice of the part to hash, so that the
+          // measured work is the hashing alone.
           p.run(
               l,
               state,
-              () -> decode(schema, data),
+              () -> targets(decode(schema, data), target),
               in -> {
-                final SszContainer[] objs = (SszContainer[]) in;
-                final Bytes32[] out = new Bytes32[n];
-                for (int i = 0; i < n; i++) {
-                  out[i] = rootOf.apply(objs[i]);
+                final SszData[] objs = (SszData[]) in;
+                final Bytes32[] out = new Bytes32[objs.length];
+                for (int i = 0; i < objs.length; i++) {
+                  out[i] = objs[i].hashTreeRoot();
                 }
                 return out;
               });
@@ -243,13 +247,36 @@ public final class Main {
     return out;
   }
 
-  /** The size is a walk of the tree; the sum goes to a sink so that nothing is kept. */
+  /** The parts of the decoded objects whose roots are measured (a view over the tree, unhashed). */
+  static SszData[] targets(
+      final SszContainer[] values, final Function<SszContainer, SszData> target) {
+    final SszData[] out = new SszData[values.length];
+    for (int i = 0; i < values.length; i++) {
+      out[i] = target.apply(values[i]);
+    }
+    return out;
+  }
+
+  /**
+   * The size is read from the tree's length nodes (a walk of the variable-size fields); it is
+   * checked once against the input length outside the loop, and the sum goes to a sink so that
+   * nothing is kept.
+   */
   static void sizeSSZ(
       final Protocol p,
       final Protocol.Leaf l,
       final boolean state,
       final SszContainer[] values,
-      final SszContainerSchema<SszContainer> schema) {
+      final SszContainerSchema<SszContainer> schema,
+      final long total) {
+    long size = 0;
+    for (SszContainer v : values) {
+      size += schema.getSszSize(v.getBackingNode());
+    }
+    if (size != total) {
+      p.fail(l, "size " + size + " want " + total);
+      return;
+    }
     p.run(
         l,
         state,
@@ -274,6 +301,55 @@ public final class Main {
             out[i] = values[i].sszSerialize();
           }
           return out;
+        });
+  }
+
+  /** An SszWriter over one byte array, rewound for every object written into it. */
+  static final class ArrayWriter implements SszWriter {
+    final byte[] buf;
+    int pos;
+
+    ArrayWriter(final int capacity) {
+      buf = new byte[capacity];
+    }
+
+    @Override
+    public void write(final byte[] bytes, final int offset, final int length) {
+      System.arraycopy(bytes, offset, buf, pos, length);
+      pos += length;
+    }
+  }
+
+  /**
+   * Encodes into a buffer kept across iterations (the kit's MarshalTo: the buffer of the longest
+   * item, rewound per item); the output is checked once against the input outside the loop.
+   */
+  static void marshalTo(
+      final Protocol p,
+      final Protocol.Leaf l,
+      final boolean state,
+      final SszContainer[] values,
+      final Bytes[] data,
+      final int longest) {
+    final ArrayWriter w = new ArrayWriter(longest);
+    for (int i = 0; i < values.length; i++) {
+      w.pos = 0;
+      values[i].sszSerialize(w);
+      final byte[] want = data[i].toArrayUnsafe();
+      if (!Arrays.equals(w.buf, 0, w.pos, want, 0, want.length)) {
+        p.fail(l, "item " + i + " marshalTo output differs");
+        return;
+      }
+    }
+    p.run(
+        l,
+        state,
+        () -> {
+          for (SszContainer v : values) {
+            w.pos = 0;
+            v.sszSerialize(w);
+          }
+          return null;
         });
   }
 

@@ -10,8 +10,15 @@
 # jars into out/lib), compiles the driver against them and leaves the
 # launchers out/<fork>, which run the JVM with fixed flags: a 12 GB heap
 # sized up front, the serial collector (one mutator thread, no concurrent
-# collector threads next to it) and no perf data file. The JVM has no
-# layout to shuffle, so the layout seeds leave no launcher of their own.
+# collector threads next to it) and no perf data file. The young
+# generation takes 8 GB of the heap with 7.5 GB of eden (the survivor
+# spaces are of no use: the driver collects between batches itself), so
+# that a batch of iterations, at most 256 MB of garbage or one iteration
+# on a state (a state decode allocates 5.5 GB, its hashing 3.1 GB), fits
+# the eden and no collection starts inside a timed window; the 4 GB old
+# generation holds what lives across a batch (the payload and one decoded
+# state, 2.9 GB). The JVM has no layout to shuffle, so the layout seeds
+# leave no launcher of their own.
 set -euo pipefail
 cd "$(dirname "${BASH_SOURCE[0]}")"
 COMMIT="$1"
@@ -54,7 +61,7 @@ jar --create --file "$OUT/lib/bench.jar" -C build/classes .
 for fork in fulu gloas; do
   cat > "$OUT/$fork" <<EOF
 #!/bin/sh
-exec "$JAVA_HOME/bin/java" -Xms12g -Xmx12g -XX:+UseSerialGC -XX:-UsePerfData -cp "$OUT/lib/*" bench.Main $fork "\$@"
+exec "$JAVA_HOME/bin/java" -Xms12g -Xmx12g -Xmn8g -XX:SurvivorRatio=30 -XX:+UseSerialGC -XX:-UsePerfData -cp "$OUT/lib/*" bench.Main $fork "\$@"
 EOF
   chmod +x "$OUT/$fork"
 done

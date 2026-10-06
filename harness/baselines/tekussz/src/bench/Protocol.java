@@ -157,6 +157,9 @@ final class Protocol {
       final Function<Object, Object> f) {
     final int count = iters.getOrDefault(l.op, 0);
     int n = count > 0 ? count : Math.max(fixed, 1);
+    // The leaf's setup (a decode of its objects) leaves its garbage behind: collected here, so
+    // that the warm-up's calls are the operation's and not a collection the first one trips.
+    System.gc();
     int warm = 0;
     final long t0 = System.nanoTime();
     do {
@@ -181,13 +184,22 @@ final class Protocol {
   /** Keeps the warm-up results alive until the loop is over, so that the calls are not elided. */
   private static volatile Object sink;
 
-  /** Runs n iterations: {elapsed ns, bytes allocated by the measuring thread}. */
+  /**
+   * Runs n iterations: {elapsed ns, bytes allocated by the measuring thread}. A batch is as many
+   * iterations as keep the garbage under DROP_BATCH, judged from the first iteration: what the
+   * operation allocates plus what its preparation leaves behind. A preparation that alone leaves
+   * more than a batch's worth (a state decoded for its hashing: 5.5 GB) is collected right after it,
+   * inside the pause, so that the young generation is empty when the timed window opens and no
+   * collection can start inside it.
+   */
   private long[] timed(
       final Leaf l, final int n, final Supplier<Object> prepare, final Function<Object, Object> f) {
     final ArrayList<Object> kept = new ArrayList<>(Math.min(n, 1 << 16));
     long every = 1;
     long elapsed = 0;
     long sumBytes = 0;
+    long prepBytes = 0;
+    boolean collectPrepared = false;
     // The counter is read after the messages, whose strings are not the operation's.
     send("begin " + l.name());
     long bytes0 = threads.getCurrentThreadAllocatedBytes();
@@ -198,7 +210,16 @@ final class Protocol {
         elapsed += System.nanoTime() - start;
         sumBytes += threads.getCurrentThreadAllocatedBytes() - bytes0;
         send("pause");
+        final long p0 = threads.getCurrentThreadAllocatedBytes();
         in = prepare.get();
+        final long p = threads.getCurrentThreadAllocatedBytes() - p0;
+        if (i == 0) {
+          collectPrepared = p >= DROP_BATCH;
+          prepBytes = collectPrepared ? 0 : p;
+        }
+        if (collectPrepared) {
+          System.gc();
+        }
         send("resume");
         bytes0 = threads.getCurrentThreadAllocatedBytes();
         start = System.nanoTime();
@@ -216,13 +237,16 @@ final class Protocol {
       elapsed += System.nanoTime() - start;
       sumBytes += threads.getCurrentThreadAllocatedBytes() - bytes0;
       if (i == 0) {
-        if (sumBytes == 0) {
+        final long perIter = sumBytes + prepBytes;
+        if (perIter == 0) {
           every = Long.MAX_VALUE;
-        } else if (sumBytes < DROP_BATCH) {
-          every = DROP_BATCH / sumBytes;
+        } else if (perIter < DROP_BATCH) {
+          every = DROP_BATCH / perIter;
         } else {
           every = 1;
         }
+        // The results list grows, if at all, outside the window.
+        kept.ensureCapacity((int) Math.min(n, every));
       }
       if (!last) {
         send("pause");
