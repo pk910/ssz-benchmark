@@ -57,7 +57,14 @@
   const objName = o => `${o}${objInfo(o)}`;
   // How an engine is named on the pages. The engines of dynamic-ssz carry
   // the library's name like the others do.
-  const ENGINE_LABELS = { Codegen: 'dynamic-ssz codegen', Reflection: 'dynamic-ssz reflection', EthereumSSZ: 'ethereum_ssz (Rust)', Grandine: 'grandine ssz (Rust)', Teku: 'teku ssz (Java)', LodestarValue: 'lodestar ssz value (TS)', LodestarTree: 'lodestar ssz tree (TS)', Nimbus: 'nim-ssz (Nim)', SszPP: 'sszpp (C++)' };
+  const ENGINE_LABELS = { Codegen: 'dynamic-ssz codegen', Reflection: 'dynamic-ssz reflection', EthereumSSZ: 'ethereum_ssz', Grandine: 'grandine ssz', Teku: 'teku ssz', LodestarValue: 'lodestar ssz value', LodestarTree: 'lodestar ssz tree', Nimbus: 'nim-ssz', SszPP: 'sszpp' };
+  // The language of an engine and of a library, shown as a mark before the
+  // name on the pages (the marks are the simple-icons ones under
+  // ui/vendor/icons, drawn in the text colour through a CSS mask).
+  const ENGINE_LANG = { EthereumSSZ: 'rust', Grandine: 'rust', Teku: 'java', LodestarValue: 'typescript', LodestarTree: 'typescript', Nimbus: 'nim', SszPP: 'cplusplus' };
+  const SUBJECT_LANG = { 'lighthouse-ssz': 'rust', 'grandine-ssz': 'rust', 'teku-ssz': 'java', 'lodestar-ssz': 'typescript', 'nim-ssz': 'nim', sszpp: 'cplusplus' };
+  const LANG_NAMES = { go: 'Go', rust: 'Rust', java: 'Java', typescript: 'TypeScript', nim: 'Nim', cplusplus: 'C++' };
+  const langMark = lang => `<i class="lang" style="--icon:url(/ui/vendor/icons/${lang || 'go'}.svg)" title="${LANG_NAMES[lang || 'go']}"></i>`;
   // An engine named *Async is its parent engine hashing with background
   // workers. The harness runs it as an engine of its own; the pages show
   // it as an operation of the parent, "HashTreeRoot (async)", so an engine
@@ -67,6 +74,9 @@
   const opLabel = (e, op) => isAsync(e) ? op + ' (async)' : op;
   const opRank = op => rank(OPS, op.replace(/ \(async\)$/, '')) * 2 + (/\(async\)$/.test(op) ? 1 : 0);
   const engName = e => ENGINE_LABELS[baseEngine(e)] || baseEngine(e);
+  // engHTML is the name with the language mark, for the pages' HTML (the
+  // charts, tabs and titles take the plain name).
+  const engHTML = e => langMark(ENGINE_LANG[baseEngine(e)]) + esc(engName(e));
   const ENGINES = ['Codegen', 'Reflection', 'CodegenAsync', 'ReflectionAsync', 'FastSSZ', 'FastSSZv1', 'FastSSZv2', 'PrysmSSZ', 'KaralabeSSZ', 'KaralabeSSZAsync', 'EthereumSSZ', 'Grandine', 'Teku', 'LodestarValue', 'LodestarTree', 'Nimbus', 'SszPP'];
   const COLORS = ['#2f5fd1', '#d97706', '#7c3aed', '#0f9d8a', '#6b7280', '#db2777'];
   const METRICS = {
@@ -482,7 +492,7 @@
   async function viewRepos() {
     const repos = await get('/api/repos');
     app.innerHTML = `<h1>Repositories</h1><p class="note">Every measured library in a box of its own: its targets, the newest commits of its main branch, each compared with the one before it over everything measured of both, and its open pull requests.</p>` +
-      repos.map(v => `<section class="repobox"><h2><a href="#/repo/${encodeURIComponent(v.Name)}">${esc(v.Name)}</a> <span class="muted small">${repoLink(v.Name)}</span></h2>
+      repos.map(v => `<section class="repobox"><h2>${langMark(SUBJECT_LANG[v.Name])}<a href="#/repo/${encodeURIComponent(v.Name)}">${esc(v.Name)}</a> <span class="muted small">${repoLink(v.Name)}</span></h2>
         <div class="toolbar">${repoTargets(v)}<span class="muted">${repoFacts(v)}</span></div>${repoCommits(v, v.Commits)}
         <p class="note"><a href="#/repo/${encodeURIComponent(v.Name)}">${v.Total > v.Commits.length ? 'all commits' : 'repository page'}${v.PullRequests && v.PullRequests.length ? ' and pull requests' : ''} →</a></p></section>`).join('');
   }
@@ -524,7 +534,7 @@
     const steps = stepsOf(v, c), engines = sortEngines(Object.keys(steps).filter(e => !hidden.has(e)));
     if (!engines.length) return stepChips(c, v, what);
     const skipped = c.Skipped ? `<div class="muted small">against ${short(c.Against).slice(0, 8)}, ${c.Skipped} unmeasured between</div>` : '';
-    return engines.map(e => `<div class="opgrid" ${gridStyle(cols.length)}><span class="eng" title="${esc(engName(e))}">${esc(engName(e).replace(/^dynamic-ssz /, ''))}</span>${cols.map(op => {
+    return engines.map(e => `<div class="opgrid" ${gridStyle(cols.length)}><span class="eng" title="${esc(engName(e))}">${langMark(ENGINE_LANG[baseEngine(e)])}${esc(engName(e).replace(/^dynamic-ssz /, ''))}</span>${cols.map(op => {
       const xs = steps[e][op];
       if (!xs) return '<span></span>';
       const d = geomean(xs);
@@ -537,7 +547,7 @@
     const engines = (c.Engines || []).filter(e => !hidden.has(e.Engine));
     if (!c.Compared || !engines.length) return stepChips(Object.assign({}, c, { Engines: engines }), v, what);
     const skipped = c.Skipped ? `<div class="muted small">against ${short(c.Against).slice(0, 8)}, ${c.Skipped} unmeasured between</div>` : '';
-    return engines.map(e => `<div class="oprow"><span class="eng" title="${esc(engName(e.Engine))}">${esc(engName(e.Engine).replace(/^dynamic-ssz /, ''))}</span><span class="chip ${stepClass(e.Geomean)}" data-ci="${i}" data-src="${src || 'c'}" data-e="${e.Engine}"><b>${pct(e.Geomean, 1)}</b></span><span class="muted small">${e.N} operations${e.Faster || e.Slower ? `, <span class="better">▼${e.Faster}</span> <span class="worse">▲${e.Slower}</span> by 1% or more` : ''}</span></div>`).join('') + skipped;
+    return engines.map(e => `<div class="oprow"><span class="eng" title="${esc(engName(e.Engine))}">${langMark(ENGINE_LANG[baseEngine(e.Engine)])}${esc(engName(e.Engine).replace(/^dynamic-ssz /, ''))}</span><span class="chip ${stepClass(e.Geomean)}" data-ci="${i}" data-src="${src || 'c'}" data-e="${e.Engine}"><b>${pct(e.Geomean, 1)}</b></span><span class="muted small">${e.N} operations${e.Faster || e.Slower ? `, <span class="better">▼${e.Faster}</span> <span class="worse">▲${e.Slower}</span> by 1% or more` : ''}</span></div>`).join('') + skipped;
   }
   // stepCallout: the breakdown behind a chip: per payload type for an
   // operation, per operation for an engine.
@@ -547,7 +557,7 @@
     if (op) {
       const xs = ops[op] || [];
       const fmt = x => x.ns ? fmtNs : fmtNum;
-      return `<div><b>${esc(engName(e))} · ${esc(op)}</b> <span class="muted">${against}</span></div>
+      return `<div><b>${engHTML(e)} · ${esc(op)}</b> <span class="muted">${against}</span></div>
         <table class="facts"><thead><tr><th>payload type</th><th class="num">before</th><th class="num">now</th><th class="num">change</th></tr></thead><tbody>
         ${xs.map(x => `<tr><td>${esc(x.obj)}</td><td class="num">${x.val ? fmt(x)(x.val / x.r) : '-'}</td><td class="num">${x.val ? fmt(x)(x.val) : '-'}${x.ns && !isAsync(e + (op.endsWith('(async)') ? 'Async' : '')) ? ' <span class="muted">time</span>' : ''}</td><td class="num">${stepPct((x.r - 1) * 100)}</td></tr>`).join('')}
         <tr><td><b>geomean</b></td><td></td><td></td><td class="num"><b>${stepPct(geomean(xs))}</b></td></tr></tbody></table>
@@ -555,7 +565,7 @@
     }
     const names = Object.keys(ops).sort((a, b) => opRank(a) - opRank(b));
     const all = names.flatMap(n => ops[n]);
-    return `<div><b>${esc(engName(e))}</b> <span class="muted">${against}</span></div>
+    return `<div><b>${engHTML(e)}</b> <span class="muted">${against}</span></div>
       <table class="facts"><thead><tr><th>operation</th><th class="num">types</th><th class="num">change</th></tr></thead><tbody>
       ${names.map(n => `<tr><td>${esc(n)}</td><td class="num">${ops[n].length}</td><td class="num">${stepPct(geomean(ops[n]))}</td></tr>`).join('')}
       <tr><td><b>geomean</b></td><td class="num">${all.length}</td><td class="num"><b>${stepPct(geomean(all))}</b></td></tr></tbody></table>
@@ -712,9 +722,9 @@
         const r = mx.cells[e + '/' + op];
         if (!r || unmeasured(r[m.key]) || !(ref[m.key].Head > 0)) return '';
         const x = r[m.key].Head / ref[m.key].Head;
-        return `<span class="${x < 0.95 ? 'better' : x > 1.05 ? 'worse' : 'muted'}">${engName(e)} ${x.toFixed(2)}×</span>`;
+        return `<span class="${x < 0.95 ? 'better' : x > 1.05 ? 'worse' : 'muted'}">${engHTML(e)} ${x.toFixed(2)}×</span>`;
       }).filter(Boolean).join(' ');
-      const line = `<div class="ref"><span class="muted">${engName(b)}${isAsync(b) ? ' (async)' : ''}${m !== mAll ? ' (time)' : ''}</span><b>${m.fmt(ref[m.key].Head)}</b><span class="ours">${ours}</span></div>`;
+      const line = `<div class="ref"><span class="muted">${engHTML(b)}${isAsync(b) ? ' (async)' : ''}${m !== mAll ? ' (time)' : ''}</span><b>${m.fmt(ref[m.key].Head)}</b><span class="ours">${ours}</span></div>`;
       m = mAll;
       return line;
     }).filter(Boolean).join('');
@@ -722,7 +732,7 @@
   }
 
   function matrixTable(mx, m, jobID) {
-    const head = `<tr><th>Operation</th>${mx.engines.map(e => `<th class="grp">${engName(e)}${mx.oneSided ? '' : ' <span class="muted" style="text-transform:none;letter-spacing:0">base → head</span>'}</th>`).join('')}${mx.baselines.length ? '<th class="grp">Other libraries <span class="muted" style="text-transform:none;letter-spacing:0">their value · ours ÷ theirs</span></th>' : ''}</tr>`;
+    const head = `<tr><th>Operation</th>${mx.engines.map(e => `<th class="grp">${engHTML(e)}${mx.oneSided ? '' : ' <span class="muted" style="text-transform:none;letter-spacing:0">base → head</span>'}</th>`).join('')}${mx.baselines.length ? '<th class="grp">Other libraries <span class="muted" style="text-transform:none;letter-spacing:0">their value · ours ÷ theirs</span></th>' : ''}</tr>`;
     const rows = mx.ops.map(op => {
       const tds = mx.engines.map(e => {
         const r = mx.cells[e + '/' + op], ra = mx.cells[e + 'Async/' + op];
@@ -1132,7 +1142,7 @@
     const stat = (M, f) => r.Baseline
       ? `<div class="big">${f(M.Head)}</div><div class="sub">cv ${M.CVHead.toFixed(2)}%</div>`
       : `<div class="big">${badge(M)}</div><div class="sub">${f(M.Base)} → ${f(M.Head)} · 95% [${pct(M.Lo, 1)}, ${pct(M.Hi, 1)}] · p ${M.P.toFixed(3)} · median Δ ${pct(M.MedDelta)} · cv ${M.CVBase.toFixed(2)}% / ${M.CVHead.toFixed(2)}%</div>`;
-    app.innerHTML = `<h1><span class="mono">${engName(engine)} / ${object} / ${opLabel(engine, op)}</span> <span class="muted small">job <a href="#/job/${id}">#${id}</a>${d.Runs.length > 1 ? `, pooled over ${d.Runs.length} runs` : ''}</span></h1>
+    app.innerHTML = `<h1><span class="mono">${engHTML(engine)} / ${object} / ${opLabel(engine, op)}</span> <span class="muted small">job <a href="#/job/${id}">#${id}</a>${d.Runs.length > 1 ? `, pooled over ${d.Runs.length} runs` : ''}</span></h1>
       <div class="cards">
         <div class="card"><h3>Time per op</h3>${stat(r.Ns, fmtNs)}</div>
         ${r.Cycles.Head ? `<div class="card"><h3>Cycles per op</h3>${stat(r.Cycles, fmtNum)}</div><div class="card"><h3>Instructions per op</h3>${stat(r.Instrs, fmtNum)}</div>` : ''}
@@ -1217,7 +1227,7 @@
         <span class="muted">${opsMode === 'master' ? 'every library at the head of its main branch, with the change against its latest release' : 'every library at its latest release'}; a value is the median over all runs of that commit in every job that measured it, and idle time adds runs</span></div>
       <div class="cards">${d.Subjects.map(subjectChip).join('')}</div>
       <div class="toolbar chips" id="engsel">${all.map(e => `<a href="#" data-e="${e}" class="chip ${opsHidden.has(e) ? '' : 'commit'}" title="show or hide this column">${engName(e)}</a>`).join(' ')}<a href="#" data-e="*" class="chip">all</a><a href="#" data-e="-" class="chip">dynamic-ssz only</a></div>
-      <div style="overflow-x:auto"><table><thead><tr><th>Object</th><th>Operation</th>${engines.map(e => `<th class="grp">${engName(e)}</th>`).join('')}</tr></thead><tbody>
+      <div style="overflow-x:auto"><table><thead><tr><th>Object</th><th>Operation</th>${engines.map(e => `<th class="grp">${engHTML(e)}</th>`).join('')}</tr></thead><tbody>
       ${rows.map((r, i) => `<tr><td>${i > 0 && rows[i - 1].Object === r.Object ? `<span class="muted">${r.Object}</span>` : objName(r.Object)}</td><td class="mono"><a href="#/op/${r.Object}/${r.Op}">${r.Op}</a></td>${engines.map(e => cell(r, e)).join('')}</tr>${asyncRow(r)}`).join('')}
       </tbody></table></div>${rows.length ? '' : '<p class="muted">no commit of this mode has been measured yet</p>'}
       <p class="note">HashTreeRoot (async) is the hash tree root with background hashing workers, an operation of the engine above it; a library or version without that option has none.</p>`;
@@ -1311,12 +1321,12 @@
       <div class="cards">${engines.map((e, i) => {
         const l = v.Latest[e], t = v.Trends[e], n = v.Noise[e], a = asyncOf(e), la = a && v.Latest[a], ta = a && v.Trends[a];
         if (!l) return '';
-        return `<div class="card"><h3><i class="legend"><i style="background:${COLORS[i]}"></i></i>${engName(e)}</h3><div class="big">${fmtNs(l.Ns.Head)}</div><div class="sub">${fmtBytes(l.Bytes.Head)} · ${fmtNum(l.Allocs.Head)} allocs/op · latest head (job <a href="#/job/${l.JobID}">#${l.JobID}</a>)</div>${t && t.N >= 3 ? `<div class="sub">master trend ${pct(t.SlopePct30d, 1)} / 30d over ${t.N} points (R² ${t.R2.toFixed(2)}), projected ${fmtNs(t.Projected30d)}</div>` : ''}${n ? `<div class="sub">noise floor p95 |Δ| ${n.toFixed(2)}%</div>` : ''}${la ? `<div class="sub">async: <b>${latest(a)}</b>${ta && ta.N >= 3 ? `, trend ${pct(ta.SlopePct30d, 1)} / 30d` : ''}${v.Noise[a] ? `, noise floor p95 ${v.Noise[a].toFixed(2)}%` : ''}</div>` : ''}</div>`;
+        return `<div class="card"><h3><i class="legend"><i style="background:${COLORS[i]}"></i></i>${engHTML(e)}</h3><div class="big">${fmtNs(l.Ns.Head)}</div><div class="sub">${fmtBytes(l.Bytes.Head)} · ${fmtNum(l.Allocs.Head)} allocs/op · latest head (job <a href="#/job/${l.JobID}">#${l.JobID}</a>)</div>${t && t.N >= 3 ? `<div class="sub">master trend ${pct(t.SlopePct30d, 1)} / 30d over ${t.N} points (R² ${t.R2.toFixed(2)}), projected ${fmtNs(t.Projected30d)}</div>` : ''}${n ? `<div class="sub">noise floor p95 |Δ| ${n.toFixed(2)}%</div>` : ''}${la ? `<div class="sub">async: <b>${latest(a)}</b>${ta && ta.N >= 3 ? `, trend ${pct(ta.SlopePct30d, 1)} / 30d` : ''}${v.Noise[a] ? `, noise floor p95 ${v.Noise[a].toFixed(2)}%` : ''}</div>` : ''}</div>`;
       }).join('')}</div>
       <div class="toolbar">${metricTabs()}<span class="muted">master history: head value of every ${esc(main)} job, newest right</span></div>
       <div class="chart h300"><canvas id="hc"></canvas></div>
       <h2>Every job</h2>
-      <table><thead><tr><th>Job</th><th>Kind</th><th>Repository</th><th>Branch</th><th>Head</th><th>Base</th>${engines.map(e => `<th class="grp">${engName(e)}</th>`).join('')}</tr></thead><tbody>
+      <table><thead><tr><th>Job</th><th>Kind</th><th>Repository</th><th>Branch</th><th>Head</th><th>Base</th>${engines.map(e => `<th class="grp">${engHTML(e)}</th>`).join('')}</tr></thead><tbody>
       ${v.History.map(row => `<tr><td><a href="#/job/${row.Job.ID}">#${row.Job.ID}</a></td><td>${kindChips(row.Job)}</td><td>${repoLink(row.Job.Subject)}</td><td class="mono">${esc(row.Job.Branch)}</td><td>${commitLink(row.Job.HeadSHA, row.Job.Subject)}</td><td>${commitLink(row.Job.BaseSHA, row.Job.Subject)}</td>${engines.map(e => {
         const r = row.Results[e], ra = asyncOf(e) && row.Results[asyncOf(e)];
         const one = (x, label) => { const xm = metricFor(m, x.Engine, x), body = `${label ? `<span class="muted small">${label}${xm !== m ? ' (time)' : ''}</span> ` : ''}${cellAbs(x, xm)}`; return `<a href="#/job/${row.Job.ID}/leaf/${x.Engine}/${x.Object}/${x.Op}">${body}</a>`; };
@@ -1359,7 +1369,7 @@
           <div class="card"><h3>Source</h3><div class="big">${d.AJob.ID === d.BJob.ID ? 'same job' : 'different jobs'}</div><div class="sub">${d.AJob.ID === d.BJob.ID ? 'interleaved measurement' : 'measured at different times; the noise floor applies on top'}</div></div></div>
           <div class="toolbar">${metricTabs()}</div>
           <table><thead><tr><th>Engine</th><th>Object</th><th>Operation</th><th class="num">A</th><th class="num">B</th><th class="num">Δ</th></tr></thead><tbody>
-          ${d.Rows.map(r => { const dl = r[key[1]]; return `<tr><td>${engName(r.Engine)}</td><td>${r.Object}</td><td class="mono"><a href="#/op/${r.Object}/${r.Op}">${opLabel(r.Engine, r.Op)}</a></td><td class="num">${m.fmt(r.A[key[0]])}</td><td class="num">${m.fmt(r.B[key[0]])}</td><td class="num"><span class="badge ${Math.abs(dl) < 1 ? 'same' : dl < 0 ? 'better' : 'worse'}">${pct(dl)}</span></td></tr>`; }).join('')}
+          ${d.Rows.map(r => { const dl = r[key[1]]; return `<tr><td>${engHTML(r.Engine)}</td><td>${r.Object}</td><td class="mono"><a href="#/op/${r.Object}/${r.Op}">${opLabel(r.Engine, r.Op)}</a></td><td class="num">${m.fmt(r.A[key[0]])}</td><td class="num">${m.fmt(r.B[key[0]])}</td><td class="num"><span class="badge ${Math.abs(dl) < 1 ? 'same' : dl < 0 ? 'better' : 'worse'}">${pct(dl)}</span></td></tr>`; }).join('')}
           </tbody></table>`;
       } else body = '<p class="err">One of the commits has no finished measurement.</p>';
     }
@@ -1386,7 +1396,7 @@
       else if (sortKey === 'cv') rows.sort((a, b) => st(b).CV - st(a).CV);
       else rows.sort(sortLeaf);
       return `<table><thead><tr><th>Runner</th><th>Engine</th><th>Object</th><th>Operation</th><th class="num">n</th><th class="num">median |Δ|</th><th class="num sortable" data-k="p95">p95 |Δ| ▾</th><th class="num">max |Δ|</th><th class="num sortable" data-k="cv">median CV ▾</th><th class="num">steal</th></tr></thead><tbody>
-        ${rows.map(r => { const s = st(r); return `<tr><td class="mono muted">${esc(r.Runner)}</td><td>${engName(r.Engine)}</td><td>${r.Object}</td><td class="mono"><a href="#/op/${r.Object}/${r.Op}">${opLabel(r.Engine, r.Op)}</a></td><td class="num">${r.N}</td><td class="num">${s.MedianAbs.toFixed(2)}%</td><td class="num"><span class="badge ${s.P95Abs < 1 ? 'better' : s.P95Abs < 3 ? 'same' : 'worse'}">${s.P95Abs.toFixed(2)}%</span></td><td class="num">${s.MaxAbs.toFixed(2)}%</td><td class="num">${s.CV.toFixed(2)}%</td><td class="num">${r.Steal}</td></tr>`; }).join('')}
+        ${rows.map(r => { const s = st(r); return `<tr><td class="mono muted">${esc(r.Runner)}</td><td>${engHTML(r.Engine)}</td><td>${r.Object}</td><td class="mono"><a href="#/op/${r.Object}/${r.Op}">${opLabel(r.Engine, r.Op)}</a></td><td class="num">${r.N}</td><td class="num">${s.MedianAbs.toFixed(2)}%</td><td class="num"><span class="badge ${s.P95Abs < 1 ? 'better' : s.P95Abs < 3 ? 'same' : 'worse'}">${s.P95Abs.toFixed(2)}%</span></td><td class="num">${s.MaxAbs.toFixed(2)}%</td><td class="num">${s.CV.toFixed(2)}%</td><td class="num">${r.Steal}</td></tr>`; }).join('')}
         </tbody></table>`;
     };
     const draw = () => {

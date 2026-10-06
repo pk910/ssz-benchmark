@@ -155,6 +155,10 @@ table.facts tbody tr:hover td { background: none; }
 #metricTabsMore button { font-size: 11px; }
 .chip.refine { background: none; border: 1px dashed var(--muted); color: var(--muted); }
 a.gh { margin-left: 4px; color: var(--muted); vertical-align: -1px; opacity: .7; }
+/* The language mark before an engine's or a library's name: the icon as
+   a mask over the current text colour, so it follows the theme. */
+i.lang { display: inline-block; width: 12px; height: 12px; margin-right: 5px; vertical-align: -1px; background: currentColor; opacity: .8; -webkit-mask: var(--icon) center / contain no-repeat; mask: var(--icon) center / contain no-repeat; }
+h1 i.lang, h2 i.lang { width: 16px; height: 16px; vertical-align: -2px; margin-right: 7px; }
 a.gh:hover { color: var(--fg); opacity: 1; }
 .tabs a { color: var(--muted); padding: 4px 11px; border-radius: 5px; font-weight: 600; text-decoration: none; }
 .tabs a.active { background: var(--card); color: var(--fg); box-shadow: 0 1px 2px rgba(0,0,0,.08); }
