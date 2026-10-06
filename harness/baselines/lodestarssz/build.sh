@@ -23,6 +23,11 @@ export COREPACK_HOME="$BENCH_TOOLCHAINS/corepack"
 export COREPACK_ENABLE_DOWNLOAD_PROMPT=0
 export npm_config_store_dir="$BENCH_TOOLCHAINS/pnpm-store"
 export YARN_CACHE_FOLDER="$BENCH_TOOLCHAINS/yarn-cache"
+# The repository's own package scripts call pnpm (and yarn) by name:
+# corepack's shims for them live with the toolchains and lead the PATH.
+mkdir -p "$COREPACK_HOME/bin"
+corepack enable --install-directory "$COREPACK_HOME/bin" pnpm yarn
+export PATH="$COREPACK_HOME/bin:$PATH"
 
 # checkout <repo> <dir> <rev>: a shallow fetch of one revision.
 checkout() {
