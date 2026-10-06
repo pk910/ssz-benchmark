@@ -485,7 +485,7 @@
     : `<table class="commits"><thead><tr><th>Commit</th><th>Date</th><th>Description</th><th>Change against the measured commit before <span class="muted" style="text-transform:none">(per engine)</span></th><th class="num">Runs</th><th>Measured</th></tr></thead><tbody>${commits.map(c =>
       `<tr class="${c.State ? '' : 'unmeasured'}"><td class="nowrap">${commitLink(c.SHA, v.Name)}${tagBadges(c)}</td><td class="muted nowrap">${commitAge(c.Committed)}</td><td>${commitDesc(v, c)}</td><td>${stepChips(c, v)}</td><td class="num">${c.Runs || ''}</td><td class="muted">${c.Jobs ? `${c.Measured ? when(c.Measured * 1000) : esc(c.State)} · <a href="#/jobs?repo=${encodeURIComponent(v.Name)}&sha=${c.SHA}">${c.Jobs} job${c.Jobs === 1 ? '' : 's'}</a>` : ''}</td></tr>`).join('')}</tbody></table>`;
   const repoTargets = v => (v.Targets || []).map(t => `<span class="chip">${esc(t.Name)} <b>${esc(t.Label)}</b></span> ${commitLink(t.SHA, v.Name)}`).join(' &nbsp; ');
-  const repoTitle = v => `${esc(v.Name)} <span class="muted small">${repoLink(v.Name)}</span>`;
+  const repoTitle = v => `${langMark(SUBJECT_LANG[v.Name])}${esc(v.Name)} <span class="muted small">${repoLink(v.Name)}</span>`;
   // repoFacts: what the page knows of the library in one line.
   const repoFacts = v => [v.Branch ? `${v.Total} commit${v.Total === 1 ? '' : 's'} of ${esc(v.Branch)}, ${v.Measured} measured` : '', v.PullRequests && v.PullRequests.length ? `<a href="#/repo/${encodeURIComponent(v.Name)}">${v.PullRequests.length} open pull request${v.PullRequests.length === 1 ? '' : 's'}</a>` : ''].filter(Boolean).join(' · ');
 
@@ -1220,7 +1220,7 @@
       const link = commitLink(s.SHA, s.Name);
       const state = !s.Jobs ? ' · <span class="muted">not measured</span>' : ` · <a href="${commitHref(s.Name, s.SHA)}" title="everything measured of this commit">${s.Jobs} job${s.Jobs === 1 ? '' : 's'}, ${s.Runs} runs</a>`;
       const wanted = s.Wanted ? ` · <span class="worse" title="the target points to ${esc(s.Wanted)}, which is not measured yet or does not build; an older commit is shown">stale</span>` : '';
-      return `<div class="card"><h3>${esc(s.Name)}${s.Target === 'fixed' ? ' <span class="muted" style="text-transform:none">(fixed version)</span>' : ''}</h3><div class="sub">${esc(s.Label)} · ${link}${state}${wanted}</div></div>`;
+      return `<div class="card"><h3>${langMark(SUBJECT_LANG[s.Name])}${esc(s.Name)}${s.Target === 'fixed' ? ' <span class="muted" style="text-transform:none">(fixed version)</span>' : ''}</h3><div class="sub">${esc(s.Label)} · ${link}${state}${wanted}</div></div>`;
     };
     app.innerHTML = `<h1>Operations</h1>
       <div class="toolbar">${metricTabs()}<div class="tabs" id="opsMode"><button data-mode="master" class="${opsMode === 'master' ? 'active' : ''}" title="every library at the head of its main branch">master</button><button data-mode="release" class="${opsMode === 'release' ? 'active' : ''}" title="every library at its latest release">release</button></div>
