@@ -4,8 +4,8 @@
 pub mod mainnet {
     use ethereum_types::{H160, H256, H32};
     use primitive_types::H384;
-    use ssz::{BitList, BitVector, ByteList, ByteVector, ContiguousList, ContiguousVector};
-    use ssz::{ProgressiveBitList, ProgressiveByteList, ProgressiveList, Ssz, Uint256};
+    // no progressive types in this fork
+    use ssz::{BitList, BitVector, ByteList, ByteVector, ContiguousList, ContiguousVector, Ssz, Uint256};
     use typenum::consts::*;
     use typenum::{UInt, UTerm, B0, B1};
 
@@ -330,8 +330,8 @@ pub mod mainnet {
 pub mod minimal {
     use ethereum_types::{H160, H256, H32};
     use primitive_types::H384;
-    use ssz::{BitList, BitVector, ByteList, ByteVector, ContiguousList, ContiguousVector};
-    use ssz::{ProgressiveBitList, ProgressiveByteList, ProgressiveList, Ssz, Uint256};
+    // no progressive types in this fork
+    use ssz::{BitList, BitVector, ByteList, ByteVector, ContiguousList, ContiguousVector, Ssz, Uint256};
     use typenum::consts::*;
     use typenum::{UInt, UTerm, B0, B1};
 

@@ -3,10 +3,10 @@
 
 pub mod mainnet {
     use alloy_primitives::U256;
-    use ssz::{BitList, BitVector, ProgressiveBitList};
+    use ssz::{BitList, BitVector};
+    use ssz_types::{FixedVector, VariableList};
     use ssz_derive::{Decode, Encode};
     use ssz_types::typenum::*;
-    use ssz_types::{FixedVector, ProgressiveVariableList, VariableList};
     use tree_hash_derive::TreeHash;
 
     #[derive(Debug, Clone, PartialEq, Encode, Decode, TreeHash)]
@@ -329,10 +329,10 @@ pub mod mainnet {
 
 pub mod minimal {
     use alloy_primitives::U256;
-    use ssz::{BitList, BitVector, ProgressiveBitList};
+    use ssz::{BitList, BitVector};
+    use ssz_types::{FixedVector, VariableList};
     use ssz_derive::{Decode, Encode};
     use ssz_types::typenum::*;
-    use ssz_types::{FixedVector, ProgressiveVariableList, VariableList};
     use tree_hash_derive::TreeHash;
 
     #[derive(Debug, Clone, PartialEq, Encode, Decode, TreeHash)]
