@@ -9,8 +9,12 @@
 # it depends on with Teku's own Gradle wrapper (export.gradle copies the
 # jars into out/lib), compiles the driver against them and leaves the
 # launchers out/<fork>, which run the JVM with fixed flags: a 12 GB heap
-# sized up front, the serial collector (one mutator thread, no concurrent
-# collector threads next to it) and no perf data file. The young
+# sized up front, the parallel collector with one worker per cpu of the
+# benchmark set (the collections run between batches with the clock and
+# the counters stopped, so their speed is all that matters for them, and
+# a stop-the-world collector leaves no concurrent thread next to the
+# measuring one inside a window; its adaptive sizing is off so that the
+# generations stay as set) and no perf data file. The young
 # generation takes 8 GB of the heap with 7.5 GB of eden (the survivor
 # spaces are of no use: the driver collects between batches itself), so
 # that a batch of iterations, at most 256 MB of garbage or one iteration
@@ -61,7 +65,7 @@ jar --create --file "$OUT/lib/bench.jar" -C build/classes .
 for fork in fulu gloas; do
   cat > "$OUT/$fork" <<EOF
 #!/bin/sh
-exec "$JAVA_HOME/bin/java" -Xms12g -Xmx12g -Xmn8g -XX:SurvivorRatio=30 -XX:+UseSerialGC -XX:-UsePerfData -cp "$OUT/lib/*" bench.Main $fork "\$@"
+exec "$JAVA_HOME/bin/java" -Xms12g -Xmx12g -Xmn8g -XX:SurvivorRatio=30 -XX:+UseParallelGC -XX:ParallelGCThreads=\$(nproc) -XX:-UseAdaptiveSizePolicy -XX:-UsePerfData -cp "$OUT/lib/*" bench.Main $fork "\$@"
 EOF
   chmod +x "$OUT/$fork"
 done
