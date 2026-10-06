@@ -176,13 +176,25 @@ function verify(eng, type, msg, payload) {
 // Measures the operations of an object under one engine; one iteration
 // of a set runs the operation on every item.
 function bench(s, eng, leaves, type, msg, payload) {
-  const {values, err} = verify(eng, type, msg, payload);
+  // Only the verdict of the verification is kept: its values (a hashed
+  // tree view of a state is over 4 GB of heap) must be gone before an
+  // operation that builds fresh objects (Unmarshal, the tree's
+  // HashTreeRoot) runs. The operations on decoded values decode them
+  // again, once, when they come.
+  const {err} = verify(eng, type, msg, payload);
   if (err) {
     for (const l of leaves) {
       s.fail(l, err);
     }
     return;
   }
+  let values = null;
+  const decoded = () => (values ??= payload.items.map(({data}) => eng.decode(type, data)));
+  const dropDecoded = () => {
+    values = null;
+    global.gc();
+  };
+  dropDecoded();
   const items = payload.items;
   const total = items.reduce((sum, {data}) => sum + data.length, 0);
   // The checks of the last result after each loop, as the kit makes them.
@@ -194,22 +206,27 @@ function bench(s, eng, leaves, type, msg, payload) {
       case "Unmarshal":
         s.run(l, () => items.map(({data}) => eng.decode(type, data)), undefined, encodesBack);
         break;
-      case "SizeSSZ":
-        s.run(l, () => values.reduce((sum, v) => sum + eng.size(type, v), 0), undefined, (size) => (size === total ? null : `size ${size} want ${total}`));
+      case "SizeSSZ": {
+        const vs = decoded();
+        s.run(l, () => vs.reduce((sum, v) => sum + eng.size(type, v), 0), undefined, (size) => (size === total ? null : `size ${size} want ${total}`));
         break;
-      case "Marshal":
-        s.run(l, () => values.map((v) => eng.encode(type, v)), undefined, equalsInput);
+      }
+      case "Marshal": {
+        const vs = decoded();
+        s.run(l, () => vs.map((v) => eng.encode(type, v)), undefined, equalsInput);
         break;
+      }
       case "MarshalTo": {
         // One buffer kept across the iterations, large enough for the
         // largest item; each item is written from its start.
         const uint8Array = new Uint8Array(Math.max(...items.map(({data}) => data.length)));
         const out = {uint8Array, dataView: new DataView(uint8Array.buffer)};
+        const vs = decoded();
         s.run(
           l,
           () => {
             let n = 0;
-            for (const v of values) {
+            for (const v of vs) {
               n = eng.encodeTo(type, v, out);
             }
             return n;
@@ -228,6 +245,7 @@ function bench(s, eng, leaves, type, msg, payload) {
           // fresh view (the one of the Message for a signed object),
           // decoded with the counters paused so that only the walk of the
           // uncached tree is timed.
+          dropDecoded();
           s.run(
             l,
             (views) => views.map((v) => v.hashTreeRoot()),
@@ -239,7 +257,8 @@ function bench(s, eng, leaves, type, msg, payload) {
             rootsEqual
           );
         } else {
-          s.run(l, () => values.map((v) => eng.root(type, v, msg)), undefined, rootsEqual);
+          const vs = decoded();
+          s.run(l, () => vs.map((v) => eng.root(type, v, msg)), undefined, rootsEqual);
         }
         break;
       default:

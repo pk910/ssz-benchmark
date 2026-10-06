@@ -207,8 +207,12 @@ export class Session {
       elapsed += process.hrtime.bigint() - start;
       this.send("pause");
       if (!last) {
+        // Nothing of the batch survives into the next one, the last
+        // result included: a state's tree is gigabytes, and the next
+        // iteration builds another.
         kept.fill(undefined);
         k = 0;
+        result = undefined;
         global.gc();
         this.send("resume");
         start = process.hrtime.bigint();
