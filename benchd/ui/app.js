@@ -288,10 +288,28 @@
   const engineTotals = sums => foldSummaries(sums, s => baseEngine(s.Engine));
   const objectTotals = sums => foldSummaries(sums, s => baseEngine(s.Engine) + '/' + s.Object);
 
-  async function get(url) {
-    const r = await fetch(url);
+  // The requests of a page are tied to the navigation that started it:
+  // navigating elsewhere aborts them, and their late answers never land
+  // on the new page. The live status in the header runs on its own.
+  let nav = { gen: 0, abort: null };
+  async function get(url, opts = {}) {
+    const signal = opts.own ? undefined : nav.abort && nav.abort.signal;
+    const r = await fetch(url, { signal });
     if (!r.ok) throw new Error(`${url}: ${r.status}`);
     return r.json();
+  }
+  // The progress bar under the header shows while a page's data is on
+  // its way for longer than a moment; the stale page dims meanwhile.
+  const progressEl = document.getElementById('progress');
+  let progressTimer = null;
+  function loading(on) {
+    clearTimeout(progressTimer);
+    if (on) {
+      progressTimer = setTimeout(() => { progressEl.classList.add('on'); if (!refreshing) appEl.classList.add('stale'); }, 150);
+    } else {
+      progressEl.classList.remove('on');
+      appEl.classList.remove('stale');
+    }
   }
   // callout: one floating box for the hover breakdowns of a page, filled
   // when a marked element is hovered and placed next to it.
@@ -372,7 +390,7 @@
   /* ---------- live header ---------- */
   async function refreshLive() {
     try {
-      const s = await get('/api/status');
+      const s = await get('/api/status', { own: true });
       repo = s.Repo || repo;
       subjectRepos = s.Subjects || subjectRepos;
       const active = (s.Runners || []).filter(r => r.Current && !r.Down);
@@ -1422,6 +1440,10 @@
     clearTimeout(refreshTimer);
     refreshing = refresh === true;
     hideCallout();
+    if (nav.abort) nav.abort.abort();
+    nav = { gen: nav.gen + 1, abort: new AbortController() };
+    const gen = nav.gen;
+    loading(true);
     const hash = location.hash || '#/';
     const [path, query] = hash.slice(1).split('?');
     const params = new URLSearchParams(query || '');
@@ -1442,8 +1464,12 @@
       else if (parts[0] === 'noise') await viewNoise();
       else app.innerHTML = '<p class="muted">not found</p>';
     } catch (e) {
+      // A navigation that was left for another one ends here, silently.
+      if (gen !== nav.gen) return;
       app.innerHTML = `<p class="err">${esc(e.message)}</p>`;
     }
+    if (gen !== nav.gen) return;
+    loading(false);
     if (!refreshing) window.scrollTo(0, 0);
     refreshing = false;
     refreshLive();
