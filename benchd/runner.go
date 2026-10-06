@@ -842,10 +842,12 @@ func (r *runner) parseLeaf(name string) (leaf, bool) {
 	return l, true
 }
 
-// discover lists the leaves of the harness by running every benchmark of
+// discover lists the leaves of the harness and calibrates them in one go:
+// every benchmark of
 // every package for one iteration, once per harness version.
-func (r *runner) discover(ctx context.Context, s *side, seed, jobDir string, logw func(string, ...any)) ([]leaf, error) {
+func (r *runner) discover(ctx context.Context, s *side, seed, jobDir string, logw func(string, ...any)) ([]leaf, map[string]int, error) {
 	var leaves []leaf
+	counts := map[string]int{}
 	pkgs := make([]string, 0, len(s.bins))
 	for pkg := range s.bins {
 		pkgs = append(pkgs, pkg)
@@ -855,11 +857,12 @@ func (r *runner) discover(ctx context.Context, s *side, seed, jobDir string, log
 		if s.bin(pkg, seed) == "" {
 			continue
 		}
-		// Discovery wants the list of leaves and their checks, not figures:
-		// an adapter with a JIT warm-up skips it (BENCH_DISCOVER).
-		out, _, err := r.runBinary(ctx, s, pkg, seed, ".", "1x", "", filepath.Join(jobDir, "discover-"+pkg+".txt"), "BENCH_DISCOVER=1")
+		// The run is at the configured benchtime: the result lines name
+		// the leaves and carry the iteration counts the operations settle
+		// on, the calibration of every leaf in one run per package.
+		out, _, err := r.runBinary(ctx, s, pkg, seed, ".", r.cfg.benchTime, "", filepath.Join(jobDir, "discover-"+pkg+".txt"))
 		if err != nil {
-			return nil, fmt.Errorf("%s: %w", pkg, err)
+			return nil, nil, fmt.Errorf("%s: %w", pkg, err)
 		}
 		for _, bl := range parseBenchOutput(out) {
 			l, ok := r.parseLeaf(bl.name)
@@ -868,10 +871,11 @@ func (r *runner) discover(ctx context.Context, s *side, seed, jobDir string, log
 			}
 			l.Pkg = pkg
 			leaves = append(leaves, l)
+			counts[l.key()] = max(bl.iters, r.cfg.minIters)
 		}
 	}
 	logw("discovered %d leaves", len(leaves))
-	return leaves, nil
+	return leaves, counts, nil
 }
 
 // calibrateGroup fixes the iteration counts of leaves of one package,
@@ -920,12 +924,14 @@ func (r *runner) measure(ctx context.Context, j *job, head, base *side, jobDir s
 		return 0, err
 	}
 	if len(leaves) == 0 {
-		// Discovery runs every benchmark once: the count of result lines
-		// so far is its progress.
-		r.setPhase(j, "discovering benchmarks")
+		// The first job of a harness version runs every benchmark once per
+		// package at the benchtime: that lists the leaves and calibrates
+		// them at once. The count of result lines so far is its progress.
+		r.setPhase(j, "discovering and calibrating")
 		found := 0
-		r.onResult = func() { found++; r.setPhase(j, fmt.Sprintf("discovering benchmarks: %d found", found)) }
-		leaves, err = r.discover(ctx, head, seed0, jobDir, logw)
+		r.onResult = func() { found++; r.setPhase(j, fmt.Sprintf("discovering and calibrating: %d found", found)) }
+		var counts map[string]int
+		leaves, counts, err = r.discover(ctx, head, seed0, jobDir, logw)
 		r.onResult = nil
 		if err != nil {
 			return 0, fmt.Errorf("discover: %w", err)
@@ -938,6 +944,18 @@ func (r *runner) measure(ctx context.Context, j *job, head, base *side, jobDir s
 		if len(head.tags) == 0 {
 			if err := r.store.setHarnessLeaves(j.Harness, leaves); err != nil {
 				return 0, err
+			}
+		}
+		known, err := r.store.benchIters()
+		if err != nil {
+			return 0, err
+		}
+		for _, l := range leaves {
+			if n := counts[l.key()]; n > 0 && known[l.key()] == 0 {
+				logw("calibrated %s: %d iterations", l.key(), n)
+				if err := r.store.setBenchIters(l, n); err != nil {
+					return 0, err
+				}
 			}
 		}
 	}

@@ -44,10 +44,7 @@ the wrapper.
    trailing elements match everything), `BENCH_ITERS` (`Op=N,Op=N`, the
    fixed count per operation) and `BENCH_TIME` (`Nx` iterations, or a
    duration to calibrate against: grow the count 1, 2, 5, 10, ... until a
-   batch reaches it and report the count). `BENCH_DISCOVER` is set when
-   the runner only wants the list of leaves and their checks (one run of
-   everything): an adapter with a JIT warm-up makes one warm-up call then
-   instead of its full warm-up.
+   batch reaches it and report the count).
 3. For each object the pattern selects: loads `REAL_DATA/<fork>[/minimal]/
    {spec.json, <name>.ssz, <name>.root}` (or `blocks/*.ssz` with their
    roots for a set), decodes, re-encodes and compares with the input, hashes

@@ -30,9 +30,6 @@ final class Protocol {
 
   static final long WARM_NS = 3_000_000_000L;
 
-  /** Discovery (BENCH_DISCOVER) wants the leaves and their checks, not figures: one warm-up call. */
-  static final boolean DISCOVER = System.getenv("BENCH_DISCOVER") != null;
-
   static final class Leaf {
     final String engine;
     final String object;
@@ -168,7 +165,7 @@ final class Protocol {
     do {
       sink = f.apply(prepare == null ? null : prepare.get());
       warm++;
-    } while (!DISCOVER && ((!state && warm < WARM_ITERS) || System.nanoTime() - t0 < WARM_NS));
+    } while ((!state && warm < WARM_ITERS) || System.nanoTime() - t0 < WARM_NS);
     sink = null;
     System.gc();
     while (true) {
