@@ -25,7 +25,12 @@ final class Protocol {
   /** A batch of iterations may leave this much behind before it is collected, as the kit's. */
   static final long DROP_BATCH = 256L << 20;
 
-  /** The warm-up of a leaf: this many calls and this long; a state object only this long. */
+  /**
+   * The warm-up of a leaf: this many calls and this long; a state object only this long. A
+   * calibration run (BENCH_TIME a duration, no fixed count) makes one warm-up call: its growth
+   * loop warms the code itself before the count settles, and a call that outlasts the benchtime
+   * settles the count at one without another call. Nothing of such a run is kept but the count.
+   */
   static final int WARM_ITERS = 50;
 
   static final long WARM_NS = 3_000_000_000L;
@@ -156,18 +161,27 @@ final class Protocol {
       final Supplier<Object> prepare,
       final Function<Object, Object> f) {
     final int count = iters.getOrDefault(l.op, 0);
+    final boolean calibrating = targetNs > 0 && count == 0;
     int n = count > 0 ? count : Math.max(fixed, 1);
     // The leaf's setup (a decode of its objects) leaves its garbage behind: collected here, so
     // that the warm-up's calls are the operation's and not a collection the first one trips.
     System.gc();
     int warm = 0;
+    long last = 0;
     final long t0 = System.nanoTime();
     do {
-      sink = f.apply(prepare == null ? null : prepare.get());
+      final Object arg = prepare == null ? null : prepare.get();
+      final long c0 = System.nanoTime();
+      sink = f.apply(arg);
+      last = System.nanoTime() - c0;
       warm++;
-    } while ((!state && warm < WARM_ITERS) || System.nanoTime() - t0 < WARM_NS);
+    } while (!calibrating && ((!state && warm < WARM_ITERS) || System.nanoTime() - t0 < WARM_NS));
     sink = null;
     System.gc();
+    if (calibrating && last >= targetNs) {
+      send("end " + l.name() + " iters=1 ns=" + last + " bytes=0 warmup=" + warm);
+      return;
+    }
     while (true) {
       final long[] r = timed(l, n, prepare, f);
       final long elapsed = r[0];

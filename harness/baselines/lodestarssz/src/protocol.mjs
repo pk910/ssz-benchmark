@@ -12,7 +12,11 @@ const DROP_BATCH = 256 * 1024 * 1024;
 // The warm-up of a leaf: V8 compiles and optimizes the code paths on the
 // first iterations, so a leaf runs untimed until it has both this many
 // iterations and this much time behind it; a state object, whose single
-// iteration takes seconds, stops at the time alone.
+// iteration takes seconds, stops at the time alone. A calibration run
+// (BENCH_TIME a duration, no fixed count) makes one warm-up call: its
+// growth loop warms the code itself before the count settles, and a call
+// that outlasts the benchtime settles the count at one without another
+// call. Nothing of such a run is kept but the count.
 const WARM_ITERS = 50;
 const WARM_NS = 3_000_000_000n;
 
@@ -118,8 +122,13 @@ export class Session {
   // returns a message when it is wrong: the leaf then fails.
   run(l, f, prepare, check) {
     const fixed = this.iters.get(l.op) || 0;
+    const calibrating = fixed === 0 && this.target !== null;
     let n = fixed > 0 ? fixed : Math.max(this.fixed, 1);
-    const {warm, grown} = this.warmup(l, f, prepare);
+    const {warm, grown, last} = this.warmup(l, f, prepare, calibrating);
+    if (calibrating && last >= this.target) {
+      this.send(`end ${l.name()} iters=1 ns=${last} warmup=${warm}`);
+      return;
+    }
     for (;;) {
       const {elapsed, last} = prepare ? this.timedPrepared(l, n, f, prepare) : this.timed(l, n, f, grown);
       if (this.target !== null && fixed === 0 && elapsed < this.target) {
@@ -141,12 +150,14 @@ export class Session {
   // batch; returns their count and the growth of the first iteration,
   // the estimate of what one iteration leaves behind. With `prepare`,
   // every iteration works on a fresh object, as the timed ones do.
-  warmup(l, f, prepare) {
+  warmup(l, f, prepare, once) {
     const start = process.hrtime.bigint();
     global.gc();
     let arg = prepare ? prepare() : undefined;
     const h0 = used();
+    const c0 = process.hrtime.bigint();
     f(arg);
+    const last = process.hrtime.bigint() - c0;
     const grown = Math.max(used() - h0, 0);
     let k = 1;
     let garbage = grown;
@@ -157,7 +168,7 @@ export class Session {
         garbage = 0;
       }
       const elapsed = process.hrtime.bigint() - start;
-      if (elapsed >= WARM_NS && (l.isState() || k >= WARM_ITERS)) {
+      if (once || (elapsed >= WARM_NS && (l.isState() || k >= WARM_ITERS))) {
         break;
       }
       if (prepare) {
@@ -169,7 +180,7 @@ export class Session {
     }
     arg = undefined;
     global.gc();
-    return {warm: k, grown};
+    return {warm: k, grown, last};
   }
 
   // The timed loop: n iterations in batches of as many as keep under a
