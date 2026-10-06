@@ -900,8 +900,13 @@ func (r *runner) measure(ctx context.Context, j *job, head, base *side, jobDir s
 		return 0, err
 	}
 	if len(leaves) == 0 {
+		// Discovery runs every benchmark once: the count of result lines
+		// so far is its progress.
 		r.setPhase(j, "discovering benchmarks")
+		found := 0
+		r.onResult = func() { found++; r.setPhase(j, fmt.Sprintf("discovering benchmarks: %d found", found)) }
 		leaves, err = r.discover(ctx, head, seed0, jobDir, logw)
+		r.onResult = nil
 		if err != nil {
 			return 0, fmt.Errorf("discover: %w", err)
 		}
@@ -950,11 +955,11 @@ func (r *runner) measure(ctx context.Context, j *job, head, base *side, jobDir s
 	if err != nil {
 		return 0, err
 	}
-	for _, l := range leaves {
+	for i, l := range leaves {
 		if iters[l.key()] > 0 {
 			continue
 		}
-		r.setPhase(j, "calibrating "+l.key())
+		r.setPhase(j, fmt.Sprintf("calibrating %s (%d/%d)", l.key(), i+1, len(leaves)))
 		calSide := base
 		if l.Baseline {
 			calSide = head
